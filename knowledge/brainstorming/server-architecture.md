@@ -1,4 +1,4 @@
-# Bubbling Point — Server Architecture
+# Boiling Point — Server Architecture
 
 The server stack is decided: **Rust (Axum + Tokio), PostgreSQL, MessagePack over WebSocket** (see [tech-stack-exploration.md](tech-stack-exploration.md)). This document explores the open architectural questions — how rooms live and die, what messages flow on the wire, how secrets are managed, what happens on disconnect, and more.
 
@@ -18,12 +18,13 @@ Nothing here is final. Each section presents options with tradeoffs and a "start
 
 **Start here:** Logical separation within a single binary. The game's scale (3–4 players per room, rooms lasting minutes) means a single process handles thousands of concurrent games. Design the internal module boundaries so a future split is a deployment change, not a rewrite.
 
+**Approved**
+
 ```
 src/
 ├── main.rs            # Axum router setup, config
-├── lobby/             # room creation, join, listing
-├── matchmaking/       # queue management (later)
-├── room/              # game state machine, room task
+├── lobby-matchmaking/ # queue management and room creation
+├── game/              # game state machine, room task
 ├── protocol/          # message types (or in shared crate)
 ├── persistence/       # PostgreSQL queries
 └── observability/     # metrics, tracing setup
@@ -42,6 +43,8 @@ src/
 | **Both** | Ship invite links first, add matchmaking later | Phased approach |
 
 **Room ID scheme:** Short human-readable codes for invite links (`BREW-7K3F`), UUIDs internally for storage and logging.
+
+**MY INPUT**: let's do both, invite link to group up and then matchmaking (launch automatically if 4 players). no settings, no hosts, always 4 players. 
 
 ### Lifecycle Diagram
 
@@ -304,7 +307,7 @@ If the `broadcast` channel lags (slow client, network stall), Tokio's broadcast 
 - **Large broadcast buffer** — game events are small and infrequent (~50–100 per round). A buffer of 256 is generous
 - **Detect `RecvError::Lagged`** — force-disconnect the slow client with a reconnection prompt, they'll get a `StateSnapshot` on rejoin
 
-**Start here:** `broadcast` with buffer of 256. Detect lag → trigger reconnection flow.
+**Start here:** Bounded `mpsc` per player
 
 ---
 
@@ -399,6 +402,8 @@ struct StateSnapshot {
 
 **Start here:** Post-game only. Games are short (5–10 minutes). Losing a game to a server crash is annoying but not catastrophic. Add checkpoint-per-round if crash recovery matters later. Full event sourcing only if replay/spectating features are wanted.
 
+**Approved**
+
 ### Schema Sketch
 
 ```sql
@@ -414,8 +419,7 @@ CREATE TABLE games (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     started_at  TIMESTAMPTZ NOT NULL,
     ended_at    TIMESTAMPTZ NOT NULL,
-    round_count SMALLINT NOT NULL,
-    player_count SMALLINT NOT NULL
+    round_count SMALLINT NOT NULL
 );
 
 CREATE TABLE game_players (
@@ -473,6 +477,8 @@ Anonymous with a session token. Player picks a display name, gets a UUID + sessi
 - **Distributed tracing:** Not needed for single-binary monolith. Add Jaeger/Tempo when/if services split
 
 **Start here:** `tracing` + `metrics` + Prometheus. Structured JSON logs to stdout. Good enough for a long time.
+
+**Approved**
 
 ---
 
@@ -579,6 +585,8 @@ For a 20-second timer, the ~100–500ms network discrepancy is negligible. Don't
 | Revealing | 4s | All `AckReveal` received |
 | Resolving | Instant (computed) | Displayed client-side for 3–5s |
 | Scoring | 5s | — |
+
+**Not Approved, wait for design updates**
 
 ---
 

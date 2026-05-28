@@ -1,4 +1,4 @@
-# Bubbling Point — Initial Game Design
+# Boiling Point — Initial Game Design
 
 ## Core Loop
 
@@ -13,6 +13,8 @@ Every ingredient has a **volatility value (1–3)**. The cauldron has a **hidden
 
 - **"The cauldron rumbles"** when you cross 50%
 - **"It's glowing"** at 75%
+
+notes: we might remove cues
 
 If total volatility exceeds the threshold → **BOOM**. The cauldron explodes:
 - Whoever added the **last ingredient** before the bang **loses big**
@@ -119,6 +121,8 @@ A player who can't win anymore still has power: their cards can decide who does 
 
 ### How They Interact Across a Game
 
+note: multipliers could be attached to stacking cauldrons modifiers
+
 A typical 5-round game might produce this emotional arc:
 
 | Round | Multiplier | Dominant Dilemma | Typical Feel |
@@ -156,6 +160,8 @@ Separate from round objectives (which modify scoring), cauldron modifiers change
 ---
 
 ## Scoring System (Work in Progress)
+
+Note : score values depends on cards in the cauldron instead of fixed 0, 5, etc
 
 ### Core Concept: Unified Score Track
 

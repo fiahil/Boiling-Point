@@ -1,4 +1,4 @@
-# Bubbling Point — Tech Stack Exploration
+# Boiling Point — Tech Stack Exploration
 
 ## Design Constraints
 
