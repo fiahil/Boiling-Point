@@ -2,12 +2,14 @@
 //!
 //! Each connection talks to the room only through [`RoomCommand`]s on an mpsc
 //! channel; the room pushes [`ServerMessage`]s back out through each seat's own
-//! mpsc sender. This keeps the room the sole writer of its state (no locks). For
-//! this milestone the room handles the lobby (join, leave, auto-start at four,
-//! heartbeat, emotes); the in-room game loop is wired in a later task.
+//! mpsc sender. This keeps the room the sole writer of its state (no locks). The
+//! room serves the lobby (join, leave, heartbeat, emotes), auto-starts at four
+//! and hands off to the in-room game loop (`session::run_game`), enforces an idle
+//! timeout, and deregisters itself from the registry when it ends.
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 
@@ -19,8 +21,12 @@ use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::session::{self, SeatInfo};
 
+use super::registry::RoomRegistry;
+
 /// Exactly four players to a table.
 const TABLE_SIZE: usize = 4;
+/// A room sitting in the lobby this long without starting is destroyed.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// A command delivered to a room's task by a connection.
 pub enum RoomCommand {
@@ -67,12 +73,20 @@ struct Seat {
 /// Spawn a room task and return a handle to it.
 pub fn spawn(
     code: RoomCode,
+    rooms: Arc<RoomRegistry>,
     registry: Arc<ContentRegistry>,
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
 ) -> RoomHandle {
     let (tx, rx) = mpsc::channel(64);
-    tokio::spawn(run(code.clone(), rx, registry, config, emote_palette));
+    tokio::spawn(run(
+        code.clone(),
+        rx,
+        rooms,
+        registry,
+        config,
+        emote_palette,
+    ));
     RoomHandle { code, tx }
 }
 
@@ -103,13 +117,28 @@ async fn broadcast_except(seats: &[Seat], except: PlayerId, msg: ServerMessage) 
 async fn run(
     code: RoomCode,
     mut rx: mpsc::Receiver<RoomCommand>,
+    rooms: Arc<RoomRegistry>,
     registry: Arc<ContentRegistry>,
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
 ) {
     let mut seats: Vec<Seat> = Vec::new();
 
-    while let Some(cmd) = rx.recv().await {
+    // Lobby loop: serve commands until the game starts, everyone leaves, or the
+    // room sits idle past the timeout.
+    let idle = tokio::time::sleep(IDLE_TIMEOUT);
+    tokio::pin!(idle);
+    loop {
+        let cmd = tokio::select! {
+            _ = &mut idle => {
+                tracing::info!(code = %code.0, "room idle timeout — destroying");
+                break;
+            }
+            cmd = rx.recv() => match cmd {
+                Some(c) => c,
+                None => break,
+            },
+        };
         match cmd {
             RoomCommand::Join { player, name, out } => {
                 if seats.len() >= TABLE_SIZE {
@@ -223,6 +252,7 @@ async fn run(
             },
         }
     }
+    rooms.remove(&code);
     crate::observability::metric::room_closed();
     tracing::debug!(code = %code.0, "room closed");
 }

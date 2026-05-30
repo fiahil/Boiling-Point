@@ -39,7 +39,7 @@
 - [x] 5.2 Implement the `DashMap<RoomCode, RoomHandle>` room registry and invite-code generation (BREW-7K3F) + UUID internal key
 - [x] 5.3 Implement create/join-by-code with unknown-code rejection
 - [ ] 5.4 Implement the auto-match queue assembling groups of exactly 4 and spawning a room
-- [ ] 5.5 Implement hostless auto-start at 4 (no host role, no settings, no manual start) and the 5-minute idle-room cleanup
+- [x] 5.5 Implement hostless auto-start at 4 (no host role, no settings, no manual start) and the 5-minute idle-room cleanup
 
 ## 6. Game Core: Domain Model, Phase Machine, Deck & Dealing (`server/game/`)
 
@@ -68,7 +68,7 @@
 - [x] 8.4 Implement Peek privacy (peeker gets the value; others see an anonymous "someone peeked")
 - [x] 8.5 Implement Shield round-scope state (immunity + safe-resolution scoring forfeit) and thread it to scoring
 - [x] 8.6 Implement silent-by-default effect visibility: emit no play notification except SomeonePeeked (anonymous), Exposed (public card reveal), and the Recall-driven contribution-count drop; Dampen/Volatile Surge/Copycat/Double Down stay fully silent until the depile
-- [ ] 8.7 Unit-test resolution ordering, snapshot semantics, the Double Down stacking edge case, and that silent effects emit no leak
+- [x] 8.7 Unit-test resolution ordering, snapshot semantics, the Double Down stacking edge case, and that silent effects emit no leak
 
 ## 9. Cauldron Modifiers (`server/game/` + `content/modifier.rs`)
 

@@ -311,6 +311,41 @@ mod tests {
     }
 
     #[test]
+    fn silent_effects_emit_no_information_leak() {
+        let reg = registry();
+        let mut pot = Pot::new(0);
+        let mut shielded = HashSet::new();
+        let recalls = HashMap::new();
+        // Dampen and Copycat are silent — they must produce no peek/expose signal.
+        let out = resolve_wave(
+            &reg,
+            &mut pot,
+            99,
+            &mut shielded,
+            vec![
+                (pid(1), card(1, Color::Ruby, 1, 0, Some(EffectKind::Dampen))),
+                (
+                    pid(2),
+                    card(2, Color::Ruby, 1, 1, Some(EffectKind::Copycat)),
+                ),
+            ],
+            &recalls,
+        );
+        assert!(out.peeked.is_empty());
+        assert!(out.exposed.is_empty());
+        // Peek, by contrast, does signal (privately, to its player).
+        let out2 = resolve_wave(
+            &reg,
+            &mut pot,
+            99,
+            &mut shielded,
+            vec![(pid(3), card(3, Color::Ruby, 2, 1, Some(EffectKind::Peek)))],
+            &recalls,
+        );
+        assert_eq!(out2.peeked, vec![pid(3)]);
+    }
+
+    #[test]
     fn shield_marks_actor() {
         let reg = registry();
         let mut pot = Pot::new(0);

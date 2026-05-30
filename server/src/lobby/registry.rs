@@ -45,13 +45,15 @@ impl RoomRegistry {
     }
 
     /// Create a fresh room with a unique invite code; returns the code and its
-    /// command channel.
-    pub fn create(&self) -> (RoomCode, mpsc::Sender<RoomCommand>) {
+    /// command channel. Takes `Arc<Self>` so the room can deregister itself when
+    /// it ends (idle timeout or game over).
+    pub fn create(self: &Arc<Self>) -> (RoomCode, mpsc::Sender<RoomCommand>) {
         loop {
             let code = generate_code();
             if !self.rooms.contains_key(&code) {
                 let handle = spawn(
                     code.clone(),
+                    Arc::clone(self),
                     self.registry.clone(),
                     self.config.clone(),
                     self.emote_palette.clone(),
@@ -67,6 +69,11 @@ impl RoomRegistry {
     /// Look up an existing room's command channel by code.
     pub fn get(&self, code: &RoomCode) -> Option<mpsc::Sender<RoomCommand>> {
         self.rooms.get(code).map(|r| r.clone())
+    }
+
+    /// Remove a room from the registry (called by a room when it ends).
+    pub fn remove(&self, code: &RoomCode) {
+        self.rooms.remove(code);
     }
 
     /// Number of live rooms (for metrics/tests).
