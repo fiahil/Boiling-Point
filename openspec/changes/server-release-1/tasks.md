@@ -96,11 +96,11 @@
 
 ## 12. Deathmatch (`server/game/deathmatch.rs`)
 
-- [ ] 12.1 Implement trigger + setup (tied players only, frozen main scores, fresh BP 8–14, no modifiers, empty-hand-at-start eliminated last)
-- [ ] 12.2 Implement forced 1-card/wave commits (no passing), volatility-only
-- [ ] 12.3 Implement Detonator elimination (most volatility out; tie-for-most all out; 1 survivor champion; 2+ fresh Deathmatch; all-out → co-champions)
-- [ ] 12.4 Implement the Shield redirect cascade (redirect to next-highest; all-shielded → no casualty, fresh Deathmatch)
-- [ ] 12.5 Implement no-explosion co-champions and unit-test all Deathmatch outcomes
+- [x] 12.1 Implement trigger + setup (tied players only, frozen main scores, fresh BP 8–14, no modifiers, empty-hand-at-start eliminated last)
+- [x] 12.2 Implement forced 1-card/wave commits (no passing), volatility-only
+- [x] 12.3 Implement Detonator elimination (most volatility out; tie-for-most all out; 1 survivor champion; 2+ fresh Deathmatch; all-out → co-champions)
+- [x] 12.4 Implement the Shield redirect cascade (redirect to next-highest; all-shielded → no casualty, fresh Deathmatch)
+- [x] 12.5 Implement no-explosion co-champions and unit-test all Deathmatch outcomes
 
 ## 13. Reconnection (`server/`)
 
@@ -138,6 +138,6 @@
 ## 18. End-to-End Integration & Doc Sync
 
 - [x] 18.1 Engine-level integration test: drive a complete 5-round game in-process (scripted commits) to `GameOver` and assert the persistence write
-- [ ] 18.2 Engine-level integration test: a forced score tie routes into a full Deathmatch and produces a champion (include a Shield-redirect case)
+- [x] 18.2 Engine-level integration test: a forced score tie routes into a full Deathmatch and produces a champion (include a Shield-redirect case)
 - [ ] 18.3 Property/integration test: many in-process games run without illegal-state panics and exercise a reshuffle at least once
 - [ ] 18.4 Annotate `server-architecture.md` as partially superseded, pointing to this change's specs as authoritative

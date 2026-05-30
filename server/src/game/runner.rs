@@ -4,8 +4,7 @@
 //!
 //! This is the synchronous heart that the async room task (a later task) drives
 //! over the network; here it is fully testable in-process via a decision
-//! callback. Tie-break by Deathmatch is a separate task — for now a tied lead
-//! yields co-winners.
+//! callback. A tie for the lead is broken by a Deathmatch among the tied players.
 
 use std::collections::HashMap;
 
@@ -20,6 +19,7 @@ use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::persistence::{GameResult, PlayerResult, RoundResult};
 
+use super::deathmatch::{run_deathmatch, DeathmatchResult};
 use super::deck::Deck;
 use super::modifiers::ActiveModifiers;
 use super::round::{Round, RoundEnd, WaveChoice, WaveInput};
@@ -83,6 +83,7 @@ pub struct Game<'a> {
     bp_max: u8,
     rounds: Vec<RoundLog>,
     cards_played: HashMap<PlayerId, u32>,
+    seed: u64,
 }
 
 impl<'a> Game<'a> {
@@ -121,6 +122,7 @@ impl<'a> Game<'a> {
             bp_max: config.boiling_point.max,
             rounds: Vec::new(),
             cards_played,
+            seed,
         }
     }
 
@@ -130,17 +132,54 @@ impl<'a> Game<'a> {
             self.play_round(round, decider);
         }
         let best = self.scores.values().copied().max().unwrap_or(0);
-        let winners = self
+        let leaders: Vec<PlayerId> = self
             .players
             .iter()
             .map(|p| p.id)
             .filter(|id| self.scores[id] == best)
             .collect();
+        // A tie for the lead is broken by a Deathmatch among the tied players,
+        // using their remaining hands (whole-game hand management matters).
+        let winners = if leaders.len() > 1 {
+            self.break_tie(&leaders)
+        } else {
+            leaders
+        };
         GameOutcome {
             scores: self.scores.clone(),
             winners,
             rounds: self.rounds.clone(),
             cards_played: self.cards_played.clone(),
+        }
+    }
+
+    /// Resolve a tie for the lead via a Deathmatch among `leaders`, shedding the
+    /// lowest-volatility card each forced wave. Falls back to co-winners if the
+    /// Deathmatch can produce no champion (e.g. all tied hands are empty).
+    fn break_tie(&self, leaders: &[PlayerId]) -> Vec<PlayerId> {
+        let tied: Vec<(PlayerId, Hand)> = leaders
+            .iter()
+            .map(|id| (*id, self.hands[id].clone()))
+            .collect();
+        let mut shed_lowest = |_p: PlayerId, hand: &Hand| {
+            hand.views()
+                .iter()
+                .min_by_key(|c| c.view.volatility)
+                .unwrap()
+                .id
+        };
+        let result = run_deathmatch(
+            self.registry,
+            tied,
+            self.bp_min,
+            self.bp_max,
+            &mut shed_lowest,
+            self.seed ^ 0xD3A7_4A7C,
+        );
+        match result {
+            DeathmatchResult::Champion(p) => vec![p],
+            DeathmatchResult::CoChampions(ps) if !ps.is_empty() => ps,
+            DeathmatchResult::CoChampions(_) => leaders.to_vec(),
         }
     }
 
@@ -315,7 +354,9 @@ impl<'a> Game<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::game::card::Card;
     use boiling_point_protocol::vocab::Color;
+    use boiling_point_protocol::CardId;
     use uuid::Uuid;
 
     fn registry_and_config() -> (ContentRegistry, ContentConfig) {
@@ -370,6 +411,41 @@ mod tests {
             g.play_out(&mut d).scores
         };
         assert_eq!(run(), run());
+    }
+
+    #[test]
+    fn tie_routes_into_deathmatch_and_produces_a_champion() {
+        let (reg, cfg) = registry_and_config();
+        let game = {
+            let mut g = Game::new(&reg, &cfg, four_players(), 5);
+            let p1 = PlayerId(Uuid::from_u128(1));
+            let p2 = PlayerId(Uuid::from_u128(2));
+            // p1 carries a huge-volatility card; p2 a tiny one. A forced wave
+            // explodes for sure (21 > any bp), so p1 is the Detonator.
+            let mut h1 = Hand::new();
+            h1.add([Card {
+                id: CardId(100),
+                color: Color::Ruby,
+                volatility: 20,
+                points: 0,
+                effect: None,
+            }]);
+            let mut h2 = Hand::new();
+            h2.add([Card {
+                id: CardId(101),
+                color: Color::Sapphire,
+                volatility: 1,
+                points: 0,
+                effect: None,
+            }]);
+            g.hands.insert(p1, h1);
+            g.hands.insert(p2, h2);
+            g
+        };
+        let p1 = PlayerId(Uuid::from_u128(1));
+        let p2 = PlayerId(Uuid::from_u128(2));
+        let winners = game.break_tie(&[p1, p2]);
+        assert_eq!(winners, vec![p2], "the lower-volatility player survives");
     }
 
     /// End-to-end: play a complete game in-process, then persist and read back

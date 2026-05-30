@@ -11,6 +11,7 @@
 //! - [`scoring`]: dominance, winner-takes-all, and explosions.
 
 pub mod card;
+pub mod deathmatch;
 pub mod deck;
 pub mod modifiers;
 pub mod pot;
@@ -21,6 +22,7 @@ pub mod scoring;
 pub mod state;
 
 pub use card::Card;
+pub use deathmatch::{run_deathmatch, DeathmatchDecider, DeathmatchResult};
 pub use deck::Deck;
 pub use modifiers::ActiveModifiers;
 pub use pot::{Pot, PotCard};
