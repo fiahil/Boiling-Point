@@ -1,29 +1,29 @@
 ## 1. Workspace & Scaffolding
 
-- [ ] 1.1 Create the cargo workspace with `protocol/`, `server/`, `bot-harness/` member crates
-- [ ] 1.2 Add core dependencies (axum, tokio, tower, serde, rmp-serde, dashmap, sqlx, tracing, tracing-subscriber, metrics, metrics-exporter-prometheus, toml, tokio-tungstenite) and pin versions
-- [ ] 1.3 Set up workspace-level lints requiring `missing_docs` so every module/type/public fn carries a purpose doc-comment (Constraint #5)
-- [ ] 1.4 Add a CI/check task (fmt, clippy, test) and a README note on running it
+- [x] 1.1 Create the cargo workspace with `protocol/`, `server/`, `bot-harness/` member crates
+- [x] 1.2 Add core dependencies (axum, tokio, tower, serde, rmp-serde, dashmap, sqlx, tracing, tracing-subscriber, metrics, metrics-exporter-prometheus, toml, tokio-tungstenite) and pin versions
+- [x] 1.3 Set up workspace-level lints requiring `missing_docs` so every module/type/public fn carries a purpose doc-comment (Constraint #5)
+- [x] 1.4 Add a CI/check task (fmt, clippy, test) and a README note on running it
 
 ## 2. Wire Protocol Crate (`protocol/`)
 
-- [ ] 2.1 In `protocol/`, define ONLY the public value-types that appear on the wire (PlayerId, RoomCode, Color) — no behavior-bearing domain structs and no server-only secrets (the boiling point must not exist as a protocol type)
-- [ ] 2.2 Define `ClientMessage` enum (JoinRoom w/ protocol_version, CreateRoom, EnqueueMatch, CommitCard, CommitPass, LockIn, Emote, Heartbeat) — enum-tagged for JSON fallback
-- [ ] 2.3 Define `ServerMessage` enum with explicit audience (RoomJoined, GameStarting, YourHand[private], WaveOpened, WaveResolved, ModifierRevealed, SomeonePeeked, Exposed, DeckReshuffled, EmoteBroadcast, PeekResult[private], Depile, RoundScored, Explosion, ScoreUpdate, GameOver, Error[private], StateSnapshot[private], Heartbeat[private], Player(Dis)connected)
-- [ ] 2.4 Encode the private-vs-broadcast audience at the type level (separate enums or an Audience wrapper) per `wire-protocol`
-- [ ] 2.5 Provide standalone `encode`/`decode` helpers (MessagePack, JSON-fallback) in `protocol/` so the entire wire is testable with neither server nor bot present
-- [ ] 2.6 Unit-test round-trip encode/decode for every message variant, and assert no message type carries the boiling point or other secret fields
+- [x] 2.1 In `protocol/`, define ONLY the public value-types that appear on the wire (PlayerId, RoomCode, Color) — no behavior-bearing domain structs and no server-only secrets (the boiling point must not exist as a protocol type)
+- [x] 2.2 Define `ClientMessage` enum (JoinRoom w/ protocol_version, CreateRoom, EnqueueMatch, CommitCard, CommitPass, LockIn, Emote, Heartbeat) — enum-tagged for JSON fallback
+- [x] 2.3 Define `ServerMessage` enum with explicit audience (RoomJoined, GameStarting, YourHand[private], WaveOpened, WaveResolved, ModifierRevealed, SomeonePeeked, Exposed, DeckReshuffled, EmoteBroadcast, PeekResult[private], Depile, RoundScored, Explosion, ScoreUpdate, GameOver, Error[private], StateSnapshot[private], Heartbeat[private], Player(Dis)connected)
+- [x] 2.4 Encode the private-vs-broadcast audience at the type level (separate enums or an Audience wrapper) per `wire-protocol`
+- [x] 2.5 Provide standalone `encode`/`decode` helpers (MessagePack, JSON-fallback) in `protocol/` so the entire wire is testable with neither server nor bot present
+- [x] 2.6 Unit-test round-trip encode/decode for every message variant, and assert no message type carries the boiling point or other secret fields
 
 ## 3. Content Module & Config (`server/content/`, `server/config/`)
 
-- [ ] 3.1 Define distinct content kinds in separate files: `Card`, `Effect`, `Modifier` — never a shared union (Constraint #1, spec `game-content-config`)
-- [ ] 3.2 Define the `Effect` trait (strategy) with a `resolve(&self, ctx: &mut WaveResolution)` method and stub the 8 effect strategy objects
-- [ ] 3.3 Define the `Modifier` trait exposing pure offsets/multipliers (boiling_point_delta, start_volatility, pot_point_delta_per_card, pot_multiplier, reverses_dominance) and the 6 modifier objects
-- [ ] 3.4 Add `enabled: bool` to every content definition (Constraint #2)
-- [ ] 3.5 Implement the `ContentRegistry` (registry pattern): build id→definition maps from config, filtering out disabled items
-- [ ] 3.6 Define the TOML config schema (deck composition, per-effect copies, modifier pool weights, deck size, ratio bounds, wave timers, boiling-point range) and a checked-in default config
-- [ ] 3.7 Implement `config::validate()` fail-fast checks: counts sum to deck size, ratio bounds, required effects present, modifier pool ≥ 4, deck large enough for the initial deal (4×5) with margin (reshuffle covers later exhaustion); abort startup with a specific error on any failure (Constraint #3)
-- [ ] 3.8 Unit-test validation: a malformed/undersized config aborts; a valid config builds the registry
+- [x] 3.1 Define distinct content kinds in separate files: `Card`, `Effect`, `Modifier` — never a shared union (Constraint #1, spec `game-content-config`)
+- [x] 3.2 Define the `Effect` trait (strategy) with a `resolve(&self, ctx: &mut WaveResolution)` method and stub the 8 effect strategy objects
+- [x] 3.3 Define the `Modifier` trait exposing pure offsets/multipliers (boiling_point_delta, start_volatility, pot_point_delta_per_card, pot_multiplier, reverses_dominance) and the 6 modifier objects
+- [x] 3.4 Add `enabled: bool` to every content definition (Constraint #2)
+- [x] 3.5 Implement the `ContentRegistry` (registry pattern): build id→definition maps from config, filtering out disabled items
+- [x] 3.6 Define the TOML config schema (deck composition, per-effect copies, modifier pool weights, deck size, ratio bounds, wave timers, boiling-point range) and a checked-in default config
+- [x] 3.7 Implement `config::validate()` fail-fast checks: counts sum to deck size, ratio bounds, required effects present, modifier pool ≥ 4, deck large enough for the initial deal (4×5) with margin (reshuffle covers later exhaustion); abort startup with a specific error on any failure (Constraint #3)
+- [x] 3.8 Unit-test validation: a malformed/undersized config aborts; a valid config builds the registry
 
 ## 4. Transport Layer (`server/transport/`)
 

@@ -1,0 +1,23 @@
+[package]
+name = "boiling-point-server"
+description = "Boiling Point authoritative game server: owns the full domain model (incl. secrets) and the game loop."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "boiling_point_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "boiling-point-server"
+path = "src/main.rs"
+
+[dependencies]
+boiling-point-protocol = { path = "../protocol" }
+serde = { workspace = true }
+toml = "0.8"
+thiserror = { workspace = true }

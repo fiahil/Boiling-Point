@@ -1,0 +1,16 @@
+[package]
+name = "boiling-point-protocol"
+description = "Boiling Point wire protocol: client/server message DTOs + MessagePack/JSON codec. No game logic, no server secrets."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+rmp-serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
