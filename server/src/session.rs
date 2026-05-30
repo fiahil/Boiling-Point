@@ -8,6 +8,10 @@
 //! public outcome (never card identities). Effects stay silent except the
 //! Peek/Expose/Recall tells. Each round ends with a depile and scoring; a tie
 //! after the final round is settled by a Deathmatch.
+//!
+//! Resilience: a disconnected player auto-passes while absent (the seat is held
+//! for the game); a reconnecting player reattaches their channel and receives a
+//! private [`ServerMessage::StateSnapshot`] scoped to what they may know.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -17,9 +21,11 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use tokio::sync::mpsc;
 
-use boiling_point_protocol::server::{Contribution, DepileEntry, PlayerScore, ScoringOutcome};
+use boiling_point_protocol::server::{
+    Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome,
+};
 use boiling_point_protocol::vocab::{Color, ModifierKind};
-use boiling_point_protocol::{ClientMessage, PlayerId, ServerMessage};
+use boiling_point_protocol::{ClientMessage, PlayerId, RoomCode, ServerMessage};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
@@ -43,6 +49,27 @@ pub struct SeatInfo {
     pub color: Color,
     /// Outbound channel to this player's connection.
     pub out: mpsc::Sender<ServerMessage>,
+}
+
+/// What one wave's collection yielded.
+struct WaveCollection {
+    committed: Vec<(PlayerId, Card)>,
+    passers: Vec<PlayerId>,
+    emptied: Vec<PlayerId>,
+    reconnected: Vec<PlayerId>,
+}
+
+/// Public table view, marking disconnected (gone) players as not connected.
+fn public_players(players: &[SeatInfo], gone: &HashSet<PlayerId>) -> Vec<PlayerPublic> {
+    players
+        .iter()
+        .map(|s| PlayerPublic {
+            id: s.id,
+            display_name: s.name.clone(),
+            color: s.color,
+            connected: !gone.contains(&s.id),
+        })
+        .collect()
 }
 
 async fn broadcast(players: &[SeatInfo], msg: ServerMessage) {
@@ -72,7 +99,8 @@ fn scores_vec(scores: &HashMap<PlayerId, i32>, order: &[PlayerId]) -> Vec<Player
 pub async fn run_game(
     registry: &ContentRegistry,
     config: &ContentConfig,
-    players: Vec<SeatInfo>,
+    room_code: RoomCode,
+    mut players: Vec<SeatInfo>,
     rx: &mut mpsc::Receiver<RoomCommand>,
     palette: &HashSet<u16>,
     seed: u64,
@@ -156,10 +184,38 @@ pub async fn run_game(
             )
             .await;
 
-            let (committed, passers, emptied) = collect_wave(
-                rx, &players, &acting, &mut hands, &mut gone, palette, timer_ms,
+            let collection = collect_wave(
+                rx,
+                &mut players,
+                &acting,
+                &mut hands,
+                &mut gone,
+                palette,
+                timer_ms,
             )
             .await;
+            // Reconnected players resume for future rounds and get a private snapshot.
+            for player in &collection.reconnected {
+                gone.remove(player);
+                let snapshot = ServerMessage::StateSnapshot {
+                    room_code: room_code.clone(),
+                    your_player_id: *player,
+                    round_number,
+                    players: public_players(&players, &gone),
+                    scores: scores_vec(&scores, &ids),
+                    active_modifiers: modifiers.kinds().to_vec(),
+                    contributions: contributions(&round, &ids),
+                    your_hand: hands.get(player).map(|h| h.views()).unwrap_or_default(),
+                };
+                send_to(&players, *player, snapshot).await;
+                tracing::info!(player = %player.0, "player reconnected");
+            }
+            let WaveCollection {
+                committed,
+                passers,
+                emptied,
+                ..
+            } = collection;
             let played: Vec<PlayerId> = committed.iter().map(|(p, _)| *p).collect();
 
             let report = round.apply_wave(
@@ -374,15 +430,16 @@ fn contributions(round: &Round, ids: &[PlayerId]) -> Vec<Contribution> {
 /// (`Leave`) auto-passes the player for the rest of the game.
 async fn collect_wave(
     rx: &mut mpsc::Receiver<RoomCommand>,
-    players: &[SeatInfo],
+    players: &mut [SeatInfo],
     acting: &[PlayerId],
     hands: &mut HashMap<PlayerId, Hand>,
     gone: &mut HashSet<PlayerId>,
     palette: &HashSet<u16>,
     timer_ms: u32,
-) -> (Vec<(PlayerId, Card)>, Vec<PlayerId>, Vec<PlayerId>) {
+) -> WaveCollection {
     let mut choice: HashMap<PlayerId, WaveChoice> = HashMap::new();
     let mut locked: HashSet<PlayerId> = HashSet::new();
+    let mut reconnected: Vec<PlayerId> = Vec::new();
     // Disconnected players auto-pass and are considered locked in.
     for p in acting {
         if gone.contains(p) {
@@ -434,13 +491,20 @@ async fn collect_wave(
                             locked.insert(player);
                         }
                     }
-                    Some(RoomCommand::Join { out, .. }) => {
-                        let _ = out
-                            .send(ServerMessage::Error {
-                                code: boiling_point_protocol::server::ErrorCode::WrongPhase,
-                                message: "game already in progress".into(),
-                            })
-                            .await;
+                    Some(RoomCommand::Join { player, out, .. }) => {
+                        // A reconnect: reattach the returning player's channel.
+                        // The snapshot is sent by the caller once the wave settles.
+                        if let Some(seat) = players.iter_mut().find(|s| s.id == player) {
+                            seat.out = out;
+                            reconnected.push(player);
+                        } else {
+                            let _ = out
+                                .send(ServerMessage::Error {
+                                    code: boiling_point_protocol::server::ErrorCode::WrongPhase,
+                                    message: "game already in progress".into(),
+                                })
+                                .await;
+                        }
                     }
                 }
             }
@@ -465,5 +529,10 @@ async fn collect_wave(
             _ => passers.push(*player),
         }
     }
-    (committed, passers, emptied)
+    WaveCollection {
+        committed,
+        passers,
+        emptied,
+        reconnected,
+    }
 }

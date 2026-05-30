@@ -104,10 +104,10 @@
 
 ## 13. Reconnection (`server/`)
 
-- [ ] 13.1 Implement 60s disconnect grace with auto-pass while absent (identical to timer-expiry lockout)
-- [ ] 13.2 Implement the StateSnapshot on rejoin, scoped strictly to player-permitted info
-- [ ] 13.3 Implement abandonment after grace (auto-pass future waves, keep tracking score) and all-disconnected room cleanup
-- [ ] 13.4 Unit-test snapshot scoping (no hidden data leaks) and the abandon-then-continue path
+- [x] 13.1 Implement 60s disconnect grace with auto-pass while absent (identical to timer-expiry lockout)
+- [x] 13.2 Implement the StateSnapshot on rejoin, scoped strictly to player-permitted info
+- [x] 13.3 Implement abandonment after grace (auto-pass future waves, keep tracking score) and all-disconnected room cleanup
+- [x] 13.4 Unit-test snapshot scoping (no hidden data leaks) and the abandon-then-continue path
 
 ## 14. Persistence (`server/persistence/`)
 

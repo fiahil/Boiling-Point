@@ -198,6 +198,7 @@ async fn run(
                     session::run_game(
                         registry.as_ref(),
                         config.as_ref(),
+                        code.clone(),
                         seat_infos,
                         &mut rx,
                         emote_palette.as_ref(),

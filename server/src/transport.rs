@@ -456,6 +456,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn abandoned_player_does_not_stall_the_game() {
+        let url = start_server().await;
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
+                break room_code;
+            }
+        };
+
+        // Players 2 and 3 play to the end.
+        let mut players = Vec::new();
+        for i in 2..=3 {
+            let url = url.clone();
+            let code = code.clone();
+            players.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(&format!("p{i}"), code)).await;
+                while !matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {}
+                play_loop(&mut ws).await
+            }));
+        }
+        // Player 4 joins, sees the game start, then abandons (drops the socket).
+        let abandoner = {
+            let url = url.clone();
+            let code = code.clone();
+            tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join("p4", code)).await;
+                loop {
+                    match recv_opt(&mut ws).await {
+                        Some(ServerMessage::GameStarting { .. }) => break true,
+                        Some(_) => continue,
+                        None => break false,
+                    }
+                } // ws dropped here → disconnect
+            })
+        };
+        let creator = tokio::spawn(async move { play_loop(&mut ws1).await });
+
+        let ok = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let mut all = creator.await.unwrap();
+            for p in players {
+                all &= p.await.unwrap();
+            }
+            let abandoned_saw_start = abandoner.await.unwrap();
+            all && abandoned_saw_start
+        })
+        .await
+        .expect("game completed despite an abandonment");
+        assert!(ok, "remaining players reached GameOver after one abandoned");
+    }
+
+    #[tokio::test]
     async fn four_clients_play_a_full_game_to_game_over() {
         let url = start_server().await;
 

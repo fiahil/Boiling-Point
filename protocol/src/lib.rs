@@ -170,6 +170,25 @@ mod tests {
                 player: p,
                 connected: false,
             },
+            ServerMessage::StateSnapshot {
+                room_code: RoomCode("BREW-7K3F".into()),
+                your_player_id: p,
+                round_number: 3,
+                players: vec![],
+                scores: vec![PlayerScore {
+                    player: p,
+                    score: 5,
+                }],
+                active_modifiers: vec![ModifierKind::ThinIce],
+                contributions: vec![Contribution {
+                    player: p,
+                    count: 2,
+                }],
+                your_hand: vec![HandCard {
+                    id: CardId(1),
+                    view: sample_card(),
+                }],
+            },
             ServerMessage::Heartbeat,
         ];
         for m in msgs {
@@ -204,6 +223,16 @@ mod tests {
                 exploded: false,
                 boiling_point: None, // safe brew: must be None
                 crossing_index: None,
+            },
+            ServerMessage::StateSnapshot {
+                room_code: RoomCode("BREW-7K3F".into()),
+                your_player_id: p,
+                round_number: 2,
+                players: vec![],
+                scores: vec![],
+                active_modifiers: vec![],
+                contributions: vec![],
+                your_hand: vec![],
             },
         ];
         for m in non_secret {

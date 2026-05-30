@@ -221,6 +221,28 @@ pub enum ServerMessage {
         /// Whether they are now connected.
         connected: bool,
     },
+    /// Full state for a reconnecting player, scoped to what they may know. (private)
+    ///
+    /// Deliberately omits secrets: no boiling point, no other players' hands, no
+    /// face-down cauldron card identities.
+    StateSnapshot {
+        /// The room's invite code.
+        room_code: RoomCode,
+        /// The recipient's id.
+        your_player_id: PlayerId,
+        /// Current 1-based round number.
+        round_number: u8,
+        /// The table.
+        players: Vec<PlayerPublic>,
+        /// Current cumulative scores.
+        scores: Vec<PlayerScore>,
+        /// Active cauldron modifiers.
+        active_modifiers: Vec<ModifierKind>,
+        /// Per-player contributed-card counts in the current pot.
+        contributions: Vec<Contribution>,
+        /// The recipient's own hand.
+        your_hand: Vec<HandCard>,
+    },
     /// Liveness acknowledgement. (private)
     Heartbeat,
 }
@@ -255,6 +277,7 @@ impl ServerMessage {
                 | ServerMessage::Error { .. }
                 | ServerMessage::Heartbeat
                 | ServerMessage::RoomJoined { .. }
+                | ServerMessage::StateSnapshot { .. }
         )
     }
 
