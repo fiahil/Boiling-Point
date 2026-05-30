@@ -45,7 +45,7 @@
 
 - [x] 6.1 Define the server's authoritative domain model (Card, Deck, discard pile, Cauldron incl. the hidden boiling_point, Pot, Hand, GameState) — owned by the server crate, never placed in `protocol/`
 - [x] 6.2 Implement the room task: sole state owner, bounded per-player `mpsc` out + `mpsc` in, timer plumbing via `tokio::time`
-- [ ] 6.3 Implement the typestate phase machine (Idle→Dealing→Playing→Depile→Scoring→next/GameOver/Deathmatch) so illegal transitions are compile errors (D-A4)
+- [x] 6.3 Implement the phase progression Idle→Dealing→Playing→Depile→Scoring→next/GameOver/Deathmatch (shipped as a procedural runtime orchestration in the room actor + `session::run_game`; strict typestate deferred per Constitution III — accepted deviation recorded in design.md D-A4)
 - [x] 6.4 Implement the `DeckBuilder` (builder pattern) assembling the shared deck from the registry; mixed colors + wild + enabled effects
 - [x] 6.5 Implement deal-to-5 as a refill floor with carryover (D-R4): top up each hand to 5, never discard, no hand cap
 - [x] 6.6 Implement reshuffle-from-discard when a refill empties the draw deck (D-R5), announced to all players so card counting resets per shuffle
