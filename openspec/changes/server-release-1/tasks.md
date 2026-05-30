@@ -131,7 +131,7 @@
 ## 17. Connection Smoke Tests (`server/tests/`)
 
 - [x] 17.1 Smoke test: a WebSocket client connects and completes the protocol-version handshake; an incompatible version is rejected
-- [ ] 17.2 Smoke test: heartbeat keepalive holds a connection live; a missing heartbeat routes into disconnect handling
+- [x] 17.2 Smoke test: heartbeat keepalive holds a connection live; a missing heartbeat routes into disconnect handling
 - [x] 17.3 Smoke test: create/join a room by code and leave; graceful and abrupt disconnect are handled
 - [x] 17.4 Assert the smoke client receives only player-permitted messages (no secret fields on the wire)
 

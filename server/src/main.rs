@@ -43,6 +43,7 @@ async fn main() {
         sessions: Arc::new(SessionStore::new()),
         rooms,
         queue,
+        conn_timeout: std::time::Duration::from_secs(90),
     };
 
     let addr = "0.0.0.0:8080";

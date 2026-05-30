@@ -38,6 +38,9 @@ pub struct AppState {
     pub rooms: Arc<RoomRegistry>,
     /// The auto-match queue.
     pub queue: Arc<MatchQueue>,
+    /// Max silence on a connection before it's treated as disconnected (clients
+    /// keep it alive with heartbeats).
+    pub conn_timeout: Duration,
 }
 
 /// Build the Axum router for the WebSocket endpoint.
@@ -98,11 +101,18 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         return;
     };
 
-    // Action loop with per-connection rate limiting.
+    // Action loop with per-connection rate limiting and a heartbeat-driven idle
+    // timeout (a connection silent past `conn_timeout` is treated as dropped).
+    let conn_timeout = state.conn_timeout;
     let mut last = Instant::now()
         .checked_sub(RATE_LIMIT)
         .unwrap_or_else(Instant::now);
-    while let Some(msg) = next_client_message(&mut stream).await {
+    loop {
+        let msg = match tokio::time::timeout(conn_timeout, next_client_message(&mut stream)).await {
+            Ok(Some(msg)) => msg,
+            Ok(None) => break, // client closed the connection
+            Err(_) => break,   // no heartbeat within the window → disconnect
+        };
         let now = Instant::now();
         if now.duration_since(last) < RATE_LIMIT {
             continue; // silently drop excess
@@ -240,6 +250,11 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as TMsg;
 
     async fn start_server() -> String {
+        // Generous connection timeout so quiet test clients aren't dropped.
+        start_server_with(std::time::Duration::from_secs(60)).await
+    }
+
+    async fn start_server_with(conn_timeout: std::time::Duration) -> String {
         let mut config =
             crate::config::ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
         // Short wave timers so tests don't wait out the real 30s/10s budgets.
@@ -253,6 +268,7 @@ mod tests {
             sessions: Arc::new(SessionStore::new()),
             rooms,
             queue,
+            conn_timeout,
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -417,6 +433,23 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn missing_heartbeat_disconnects_the_connection() {
+        // A short connection timeout: an idle (non-heartbeating) client is dropped.
+        let url = start_server_with(std::time::Duration::from_millis(300)).await;
+        let (mut ws, _) = connect_async(url).await.unwrap();
+        send(&mut ws, &create("idle", PROTOCOL_VERSION)).await;
+        assert!(matches!(
+            recv(&mut ws).await,
+            ServerMessage::RoomJoined { .. }
+        ));
+        // Stay silent — the server should close the connection within the window.
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(3), recv_opt(&mut ws))
+            .await
+            .expect("server acted within the timeout");
+        assert!(closed.is_none(), "idle connection was disconnected");
     }
 
     #[tokio::test]
