@@ -403,6 +403,20 @@ mod tests {
     }
 
     #[test]
+    fn many_games_complete_without_panics() {
+        let (reg, cfg) = registry_and_config();
+        for seed in 0..300u64 {
+            let mut game = Game::new(&reg, &cfg, four_players(), seed);
+            let mut decider = eager();
+            let outcome = game.play_out(&mut decider);
+            assert_eq!(outcome.rounds.len(), ROUND_COUNT as usize, "seed {seed}");
+            assert!(!outcome.winners.is_empty(), "seed {seed}");
+            // No illegal state: every player has a recorded score.
+            assert_eq!(outcome.scores.len(), 4, "seed {seed}");
+        }
+    }
+
+    #[test]
     fn games_are_deterministic_under_a_seed() {
         let (reg, cfg) = registry_and_config();
         let run = || {

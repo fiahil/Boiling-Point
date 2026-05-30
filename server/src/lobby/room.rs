@@ -223,5 +223,6 @@ async fn run(
             },
         }
     }
-    let _ = code; // retained for logging/metrics once observability lands
+    crate::observability::metric::room_closed();
+    tracing::debug!(code = %code.0, "room closed");
 }

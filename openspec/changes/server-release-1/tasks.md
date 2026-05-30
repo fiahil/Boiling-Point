@@ -118,8 +118,8 @@
 
 ## 15. Observability (`server/observability/`)
 
-- [ ] 15.1 Set up `tracing` (JSON) spans for phase transitions, message handling, room lifecycle, DB writes
-- [ ] 15.2 Set up `metrics` + Prometheus exporter and emit balance metrics (active rooms, durations, explosion rate, timeout rate, cards/round, reconnection rate)
+- [x] 15.1 Set up `tracing` (JSON) spans for phase transitions, message handling, room lifecycle, DB writes
+- [x] 15.2 Set up `metrics` + Prometheus exporter and emit balance metrics (active rooms, durations, explosion rate, timeout rate, cards/round, reconnection rate)
 
 ## 16. Table Talk — Preset Emotes (`server/`)
 
@@ -139,5 +139,5 @@
 
 - [x] 18.1 Engine-level integration test: drive a complete 5-round game in-process (scripted commits) to `GameOver` and assert the persistence write
 - [x] 18.2 Engine-level integration test: a forced score tie routes into a full Deathmatch and produces a champion (include a Shield-redirect case)
-- [ ] 18.3 Property/integration test: many in-process games run without illegal-state panics and exercise a reshuffle at least once
+- [x] 18.3 Property/integration test: many in-process games run without illegal-state panics and exercise a reshuffle at least once
 - [x] 18.4 Annotate `server-architecture.md` as partially superseded, pointing to this change's specs as authoritative

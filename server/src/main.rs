@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use boiling_point_server::config::ContentConfig;
 use boiling_point_server::lobby::{RoomRegistry, SessionStore};
+use boiling_point_server::observability;
 use boiling_point_server::transport::{app, AppState};
 
 /// The default content config, embedded so the binary always has a valid baseline.
@@ -13,6 +14,12 @@ const DEFAULT_CONFIG: &str = include_str!("../content.toml");
 
 #[tokio::main]
 async fn main() {
+    observability::init(
+        "0.0.0.0:9090"
+            .parse()
+            .expect("valid metrics listen address"),
+    );
+
     let config = match ContentConfig::from_toml(DEFAULT_CONFIG) {
         Ok(c) => c,
         Err(e) => {
@@ -43,9 +50,9 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    println!("Boiling Point server listening on ws://{addr}/ws");
+    tracing::info!("Boiling Point server listening on ws://{addr}/ws");
     if let Err(e) = axum::serve(listener, app(state)).await {
-        eprintln!("server error: {e}");
+        tracing::error!(error = %e, "server error");
         std::process::exit(1);
     }
 }

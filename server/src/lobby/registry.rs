@@ -57,6 +57,8 @@ impl RoomRegistry {
                     self.emote_palette.clone(),
                 );
                 self.rooms.insert(code.clone(), handle.tx.clone());
+                crate::observability::metric::room_created();
+                tracing::info!(code = %code.0, "room created");
                 return (code, handle.tx);
             }
         }

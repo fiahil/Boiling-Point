@@ -92,6 +92,9 @@ pub async fn run_game(
     modifier_pile.shuffle(&mut rng);
     let mut gone: HashSet<PlayerId> = HashSet::new();
 
+    crate::observability::metric::game_started();
+    tracing::info!(players = players.len(), "game started");
+
     for round_number in 1..=ROUND_COUNT {
         if round_number >= 2 {
             if let Some(kind) = modifier_pile.pop() {
@@ -299,6 +302,8 @@ pub async fn run_game(
         )
         .await;
 
+        crate::observability::metric::round_resolved(exploded);
+
         // Spent pot cards return to the discard for future reshuffles.
         let spent: Vec<_> = round.pot().cards.iter().map(|pc| pc.card).collect();
         deck.discard_cards(spent);
@@ -337,6 +342,8 @@ pub async fn run_game(
         leaders
     };
 
+    crate::observability::metric::game_completed();
+    tracing::info!(?winners, "game over");
     broadcast(
         &players,
         ServerMessage::GameOver {

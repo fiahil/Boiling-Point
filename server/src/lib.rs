@@ -15,6 +15,7 @@ pub mod config;
 pub mod content;
 pub mod game;
 pub mod lobby;
+pub mod observability;
 pub mod persistence;
 pub mod session;
 pub mod transport;
