@@ -25,6 +25,9 @@ uuid = { workspace = true }
 rand = "0.8"
 tokio = { version = "1", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
+axum = { version = "0.8", features = ["ws"] }
+dashmap = "6"
+futures-util = "0.3"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",
@@ -32,3 +35,6 @@ sqlx = { version = "0.8", default-features = false, features = [
     "uuid",
     "chrono",
 ] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"

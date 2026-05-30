@@ -27,24 +27,24 @@
 
 ## 4. Transport Layer (`server/transport/`)
 
-- [ ] 4.1 Implement the Axum WebSocket upgrade and per-connection read/write tasks
-- [ ] 4.2 Implement the MessagePack codec with JSON-fallback debug mode
-- [ ] 4.3 Implement audience routing: deliver Private messages to one connection, Broadcast to all in a room; assert no secret payloads on Broadcast
-- [ ] 4.4 Implement the protocol-version handshake (accept compatible, reject incompatible before any state shared)
-- [ ] 4.5 Implement per-connection rate limiting (1 action / 100 ms, silently drop excess)
+- [x] 4.1 Implement the Axum WebSocket upgrade and per-connection read/write tasks
+- [x] 4.2 Implement the MessagePack codec with JSON-fallback debug mode
+- [x] 4.3 Implement audience routing: deliver Private messages to one connection, Broadcast to all in a room; assert no secret payloads on Broadcast
+- [x] 4.4 Implement the protocol-version handshake (accept compatible, reject incompatible before any state shared)
+- [x] 4.5 Implement per-connection rate limiting (1 action / 100 ms, silently drop excess)
 
 ## 5. Lobby, Matchmaking & Session Auth (`server/lobby/`, `server/matchmaking/`)
 
-- [ ] 5.1 Implement anonymous session auth: issue UUID + session token on join; re-resolve token to the same identity on reconnect
-- [ ] 5.2 Implement the `DashMap<RoomCode, RoomHandle>` room registry and invite-code generation (BREW-7K3F) + UUID internal key
-- [ ] 5.3 Implement create/join-by-code with unknown-code rejection
+- [x] 5.1 Implement anonymous session auth: issue UUID + session token on join; re-resolve token to the same identity on reconnect
+- [x] 5.2 Implement the `DashMap<RoomCode, RoomHandle>` room registry and invite-code generation (BREW-7K3F) + UUID internal key
+- [x] 5.3 Implement create/join-by-code with unknown-code rejection
 - [ ] 5.4 Implement the auto-match queue assembling groups of exactly 4 and spawning a room
 - [ ] 5.5 Implement hostless auto-start at 4 (no host role, no settings, no manual start) and the 5-minute idle-room cleanup
 
 ## 6. Game Core: Domain Model, Phase Machine, Deck & Dealing (`server/game/`)
 
 - [x] 6.1 Define the server's authoritative domain model (Card, Deck, discard pile, Cauldron incl. the hidden boiling_point, Pot, Hand, GameState) — owned by the server crate, never placed in `protocol/`
-- [ ] 6.2 Implement the room task: sole state owner, bounded per-player `mpsc` out + `mpsc` in, timer plumbing via `tokio::time`
+- [x] 6.2 Implement the room task: sole state owner, bounded per-player `mpsc` out + `mpsc` in, timer plumbing via `tokio::time`
 - [ ] 6.3 Implement the typestate phase machine (Idle→Dealing→Playing→Depile→Scoring→next/GameOver/Deathmatch) so illegal transitions are compile errors (D-A4)
 - [x] 6.4 Implement the `DeckBuilder` (builder pattern) assembling the shared deck from the registry; mixed colors + wild + enabled effects
 - [x] 6.5 Implement deal-to-5 as a refill floor with carryover (D-R4): top up each hand to 5, never discard, no hand cap
@@ -124,13 +124,13 @@
 ## 16. Table Talk — Preset Emotes (`server/`)
 
 - [ ] 16.1 Define the fixed preset-emote palette in config (id → emote) and validate it at startup; no free text, no quick-phrases
-- [ ] 16.2 Handle inbound `Emote`: accept only palette ids, reject others with an `Error`, and broadcast `EmoteBroadcast` (sender + id) to the room in any phase
-- [ ] 16.3 Ensure emotes change no game state and are subject to the 100 ms rate limit
+- [x] 16.2 Handle inbound `Emote`: accept only palette ids, reject others with an `Error`, and broadcast `EmoteBroadcast` (sender + id) to the room in any phase
+- [x] 16.3 Ensure emotes change no game state and are subject to the 100 ms rate limit
 - [ ] 16.4 Unit-test palette validation, non-binding behavior (no state change), and rate-limited spam
 
 ## 17. Connection Smoke Tests (`server/tests/`)
 
-- [ ] 17.1 Smoke test: a WebSocket client connects and completes the protocol-version handshake; an incompatible version is rejected
+- [x] 17.1 Smoke test: a WebSocket client connects and completes the protocol-version handshake; an incompatible version is rejected
 - [ ] 17.2 Smoke test: heartbeat keepalive holds a connection live; a missing heartbeat routes into disconnect handling
 - [ ] 17.3 Smoke test: create/join a room by code and leave; graceful and abrupt disconnect are handled
 - [ ] 17.4 Assert the smoke client receives only player-permitted messages (no secret fields on the wire)
