@@ -17,6 +17,8 @@ use crate::content::registry::ContentRegistry;
 pub const PLAYERS: u16 = 4;
 /// Hand refill floor dealt at the start of each round.
 pub const HAND_SIZE: u16 = 5;
+/// Rounds per game.
+pub const ROUND_COUNT: u8 = 5;
 /// Modifiers drawn over a game (one each at the start of rounds 2–5).
 pub const MODIFIER_DRAWS: u32 = 4;
 

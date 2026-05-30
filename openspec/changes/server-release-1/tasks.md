@@ -43,7 +43,7 @@
 
 ## 6. Game Core: Domain Model, Phase Machine, Deck & Dealing (`server/game/`)
 
-- [ ] 6.1 Define the server's authoritative domain model (Card, Deck, discard pile, Cauldron incl. the hidden boiling_point, Pot, Hand, GameState) — owned by the server crate, never placed in `protocol/`
+- [x] 6.1 Define the server's authoritative domain model (Card, Deck, discard pile, Cauldron incl. the hidden boiling_point, Pot, Hand, GameState) — owned by the server crate, never placed in `protocol/`
 - [ ] 6.2 Implement the room task: sole state owner, bounded per-player `mpsc` out + `mpsc` in, timer plumbing via `tokio::time`
 - [ ] 6.3 Implement the typestate phase machine (Idle→Dealing→Playing→Depile→Scoring→next/GameOver/Deathmatch) so illegal transitions are compile errors (D-A4)
 - [x] 6.4 Implement the `DeckBuilder` (builder pattern) assembling the shared deck from the registry; mixed colors + wild + enabled effects
@@ -72,8 +72,8 @@
 
 ## 9. Cauldron Modifiers (`server/game/` + `content/modifier.rs`)
 
-- [ ] 9.1 Implement round-1-clean + draw-one-per-round (2–5) from the weighted pool, revealed at round start
-- [ ] 9.2 Implement cumulative stacking (round N has N−1 active) and public visibility
+- [x] 9.1 Implement round-1-clean + draw-one-per-round (2–5) from the weighted pool, revealed at round start
+- [x] 9.2 Implement cumulative stacking (round N has N−1 active) and public visibility
 - [x] 9.3 Implement clean composition of all offsets/multipliers; verify Thin Ice+Deep Cauldron cancel and Reversal×2 reverts
 - [x] 9.4 Wire the six modifier effects into boiling-point / starting-volatility / pot-value / dominance computation, with Bountiful Brew inflating pot total only and colorless across all cards (D-R2), and Reversal selecting the lowest color *present in the pot*
 - [x] 9.5 Unit-test composition, cancellation, Reversal parity plus its edge cases (single color = no-op, tie-for-lowest splits, never an absent color), and Double Stakes scaling both directions
@@ -137,7 +137,7 @@
 
 ## 18. End-to-End Integration & Doc Sync
 
-- [ ] 18.1 Engine-level integration test: drive a complete 5-round game in-process (scripted commits) to `GameOver` and assert the persistence write
+- [x] 18.1 Engine-level integration test: drive a complete 5-round game in-process (scripted commits) to `GameOver` and assert the persistence write
 - [ ] 18.2 Engine-level integration test: a forced score tie routes into a full Deathmatch and produces a champion (include a Shield-redirect case)
 - [ ] 18.3 Property/integration test: many in-process games run without illegal-state panics and exercise a reshuffle at least once
 - [ ] 18.4 Annotate `server-architecture.md` as partially superseded, pointing to this change's specs as authoritative
