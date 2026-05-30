@@ -38,7 +38,7 @@
 - [x] 5.1 Implement anonymous session auth: issue UUID + session token on join; re-resolve token to the same identity on reconnect
 - [x] 5.2 Implement the `DashMap<RoomCode, RoomHandle>` room registry and invite-code generation (BREW-7K3F) + UUID internal key
 - [x] 5.3 Implement create/join-by-code with unknown-code rejection
-- [ ] 5.4 Implement the auto-match queue assembling groups of exactly 4 and spawning a room
+- [x] 5.4 Implement the auto-match queue assembling groups of exactly 4 and spawning a room
 - [x] 5.5 Implement hostless auto-start at 4 (no host role, no settings, no manual start) and the 5-minute idle-room cleanup
 
 ## 6. Game Core: Domain Model, Phase Machine, Deck & Dealing (`server/game/`)

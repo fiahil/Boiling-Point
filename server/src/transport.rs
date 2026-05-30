@@ -17,14 +17,14 @@ use axum::routing::get;
 use axum::Router;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use boiling_point_protocol::client::PROTOCOL_VERSION;
 use boiling_point_protocol::server::ErrorCode;
 use boiling_point_protocol::{codec, ClientMessage, PlayerId, ServerMessage};
 
 use crate::lobby::room::RoomCommand;
-use crate::lobby::{RoomRegistry, SessionStore};
+use crate::lobby::{MatchQueue, RoomRegistry, SessionStore};
 
 /// Minimum spacing between accepted actions on one connection.
 const RATE_LIMIT: Duration = Duration::from_millis(100);
@@ -36,6 +36,8 @@ pub struct AppState {
     pub sessions: Arc<SessionStore>,
     /// The live-room registry.
     pub rooms: Arc<RoomRegistry>,
+    /// The auto-match queue.
+    pub queue: Arc<MatchQueue>,
 }
 
 /// Build the Axum router for the WebSocket endpoint.
@@ -126,43 +128,66 @@ async fn handle_entry(
     entry: ClientMessage,
     out: &mpsc::Sender<ServerMessage>,
 ) -> Option<(PlayerId, mpsc::Sender<RoomCommand>)> {
-    let (version, name, token, target) = match entry {
+    match entry {
+        ClientMessage::CreateRoom {
+            protocol_version,
+            display_name,
+            session_token,
+        } => {
+            if !version_ok(protocol_version, out).await {
+                return None;
+            }
+            let (player, _) = state.sessions.authenticate(session_token.as_deref());
+            let (_code, room_tx) = state.rooms.create();
+            join_room(out, room_tx, player, display_name).await
+        }
         ClientMessage::JoinRoom {
             protocol_version,
             display_name,
             session_token,
             room_code,
-        } => (
+        } => {
+            if !version_ok(protocol_version, out).await {
+                return None;
+            }
+            let (player, _) = state.sessions.authenticate(session_token.as_deref());
+            let Some(room_tx) = state.rooms.get(&room_code) else {
+                send_error(out, ErrorCode::UnknownRoom, "no such room").await;
+                return None;
+            };
+            join_room(out, room_tx, player, display_name).await
+        }
+        ClientMessage::EnqueueMatch {
             protocol_version,
             display_name,
             session_token,
-            Some(room_code),
-        ),
-        ClientMessage::CreateRoom {
-            protocol_version,
-            display_name,
-            session_token,
-        } => (protocol_version, display_name, session_token, None),
-        ClientMessage::EnqueueMatch { .. } => {
-            send_error(
-                out,
-                ErrorCode::WrongPhase,
-                "matchmaking is not yet available",
-            )
-            .await;
-            return None;
+        } => {
+            if !version_ok(protocol_version, out).await {
+                return None;
+            }
+            let (player, _) = state.sessions.authenticate(session_token.as_deref());
+            // Park until the queue assembles a table and hands back the room.
+            let (notify_tx, notify_rx) = oneshot::channel();
+            state
+                .queue
+                .enqueue(player, display_name, out.clone(), notify_tx)
+                .await;
+            notify_rx.await.ok().map(|room_tx| (player, room_tx))
         }
         _ => {
             send_error(
                 out,
                 ErrorCode::WrongPhase,
-                "expected CreateRoom or JoinRoom",
+                "expected CreateRoom, JoinRoom, or EnqueueMatch",
             )
             .await;
-            return None;
+            None
         }
-    };
+    }
+}
 
+/// Reject an incompatible protocol version, returning `false` after erroring.
+async fn version_ok(version: u16, out: &mpsc::Sender<ServerMessage>) -> bool {
     if version != PROTOCOL_VERSION {
         send_error(
             out,
@@ -170,22 +195,19 @@ async fn handle_entry(
             &format!("server speaks protocol version {PROTOCOL_VERSION}"),
         )
         .await;
-        return None;
+        false
+    } else {
+        true
     }
+}
 
-    let (player, _token) = state.sessions.authenticate(token.as_deref());
-
-    let room_tx = match target {
-        None => state.rooms.create().1,
-        Some(code) => match state.rooms.get(&code) {
-            Some(tx) => tx,
-            None => {
-                send_error(out, ErrorCode::UnknownRoom, "no such room").await;
-                return None;
-            }
-        },
-    };
-
+/// Send a `Join` to a room and return this connection's `(player, room channel)`.
+async fn join_room(
+    out: &mpsc::Sender<ServerMessage>,
+    room_tx: mpsc::Sender<RoomCommand>,
+    player: PlayerId,
+    name: String,
+) -> Option<(PlayerId, mpsc::Sender<RoomCommand>)> {
     if room_tx
         .send(RoomCommand::Join {
             player,
@@ -225,9 +247,12 @@ mod tests {
         config.timing.wave_ms = 200;
         let registry = Arc::new(config.build_registry().unwrap());
         let config = Arc::new(config);
+        let rooms = Arc::new(RoomRegistry::new(registry, config));
+        let queue = Arc::new(MatchQueue::new(rooms.clone()));
         let state = AppState {
             sessions: Arc::new(SessionStore::new()),
-            rooms: Arc::new(RoomRegistry::new(registry, config)),
+            rooms,
+            queue,
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -283,6 +308,47 @@ mod tests {
             session_token: None,
             room_code: code,
         }
+    }
+
+    fn enqueue(name: &str) -> ClientMessage {
+        ClientMessage::EnqueueMatch {
+            protocol_version: PROTOCOL_VERSION,
+            display_name: name.into(),
+            session_token: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn matchmaking_assembles_a_table_of_four() {
+        let url = start_server().await;
+        let mut tasks = Vec::new();
+        for i in 0..4 {
+            let url = url.clone();
+            tasks.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &enqueue(&format!("q{i}"))).await;
+                let (mut joined, mut started) = (false, false);
+                while !(joined && started) {
+                    match recv_opt(&mut ws).await {
+                        Some(ServerMessage::RoomJoined { .. }) => joined = true,
+                        Some(ServerMessage::GameStarting { .. }) => started = true,
+                        Some(_) => continue,
+                        None => break,
+                    }
+                }
+                joined && started
+            }));
+        }
+        let all = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let mut ok = true;
+            for t in tasks {
+                ok &= t.await.unwrap();
+            }
+            ok
+        })
+        .await
+        .expect("matchmaking assembled a table before timeout");
+        assert!(all, "all four queued players reached a started game");
     }
 
     /// A trivial auto-player: each round it plays its hand by index, one card per
