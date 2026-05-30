@@ -214,15 +214,20 @@ mod tests {
     use super::*;
     use boiling_point_protocol::client::PROTOCOL_VERSION;
     use futures_util::{SinkExt, StreamExt};
-    use std::collections::HashSet;
     use tokio_tungstenite::connect_async;
     use tokio_tungstenite::tungstenite::Message as TMsg;
 
     async fn start_server() -> String {
-        let palette: HashSet<u16> = [1u16, 2, 3].into_iter().collect();
+        let mut config =
+            crate::config::ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
+        // Short wave timers so tests don't wait out the real 30s/10s budgets.
+        config.timing.wave1_ms = 250;
+        config.timing.wave_ms = 200;
+        let registry = Arc::new(config.build_registry().unwrap());
+        let config = Arc::new(config);
         let state = AppState {
             sessions: Arc::new(SessionStore::new()),
-            rooms: Arc::new(RoomRegistry::new(Arc::new(palette))),
+            rooms: Arc::new(RoomRegistry::new(registry, config)),
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -258,6 +263,101 @@ mod tests {
                 _ => continue,
             }
         }
+    }
+
+    /// Non-panicking receive: `None` once the connection closes.
+    async fn recv_opt(ws: &mut Ws) -> Option<ServerMessage> {
+        loop {
+            match ws.next().await {
+                Some(Ok(TMsg::Binary(b))) => return codec::decode(b.as_ref()).ok(),
+                Some(Ok(_)) => continue,
+                Some(Err(_)) | None => return None,
+            }
+        }
+    }
+
+    fn join(name: &str, code: boiling_point_protocol::RoomCode) -> ClientMessage {
+        ClientMessage::JoinRoom {
+            protocol_version: PROTOCOL_VERSION,
+            display_name: name.into(),
+            session_token: None,
+            room_code: code,
+        }
+    }
+
+    /// A trivial auto-player: each round it plays its hand by index, one card per
+    /// wave, then passes; it stops at `GameOver`. Returns whether it saw GameOver.
+    async fn play_loop(ws: &mut Ws) -> bool {
+        let mut hand: Vec<boiling_point_protocol::CardId> = Vec::new();
+        let mut idx = 0usize;
+        loop {
+            let Some(msg) = recv_opt(ws).await else {
+                return false;
+            };
+            match msg {
+                ServerMessage::YourHand { cards } => {
+                    hand = cards.iter().map(|c| c.id).collect();
+                    idx = 0;
+                }
+                ServerMessage::WaveOpened { .. } => {
+                    // Rely on the (short, in tests) wave timer to close; sending a
+                    // LockIn here would be dropped by the 100ms rate limit anyway.
+                    if idx < hand.len() {
+                        send(ws, &ClientMessage::CommitCard { card: hand[idx] }).await;
+                        idx += 1;
+                    } else {
+                        send(ws, &ClientMessage::CommitPass).await;
+                    }
+                }
+                ServerMessage::GameOver { .. } => return true,
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn four_clients_play_a_full_game_to_game_over() {
+        let url = start_server().await;
+
+        // Player 1 creates the room and learns the invite code.
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
+                break room_code;
+            }
+        };
+
+        // Players 2–4 join by code; the fourth join starts the game.
+        let mut joiners = Vec::new();
+        for i in 2..=4 {
+            let url = url.clone();
+            let code = code.clone();
+            joiners.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(&format!("p{i}"), code)).await;
+                loop {
+                    if matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {
+                        break;
+                    }
+                }
+                play_loop(&mut ws).await
+            }));
+        }
+        let creator = tokio::spawn(async move { play_loop(&mut ws1).await });
+
+        // The whole game should finish well within the timeout (waves close early
+        // once everyone locks in).
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let mut all = creator.await.unwrap();
+            for j in joiners {
+                all &= j.await.unwrap();
+            }
+            all
+        })
+        .await
+        .expect("game completed before timeout");
+        assert!(outcome, "every client saw GameOver");
     }
 
     #[tokio::test]

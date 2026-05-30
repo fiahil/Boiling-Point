@@ -2,7 +2,6 @@
 //!
 //! Fail-fast: an invalid content config aborts startup before any port is bound.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use boiling_point_server::config::ContentConfig;
@@ -22,22 +21,18 @@ async fn main() {
         }
     };
     // Build (and thereby validate) the registry; abort on an invalid config.
-    if let Err(e) = config.build_registry() {
-        eprintln!("invalid content config: {e}");
-        std::process::exit(1);
-    }
-
-    // The preset-emote palette (enabled ids) is the only comms channel.
-    let palette: HashSet<u16> = config
-        .emote
-        .iter()
-        .filter(|e| e.enabled)
-        .map(|e| e.id)
-        .collect();
+    let registry = match config.build_registry() {
+        Ok(r) => Arc::new(r),
+        Err(e) => {
+            eprintln!("invalid content config: {e}");
+            std::process::exit(1);
+        }
+    };
+    let config = Arc::new(config);
 
     let state = AppState {
         sessions: Arc::new(SessionStore::new()),
-        rooms: Arc::new(RoomRegistry::new(Arc::new(palette))),
+        rooms: Arc::new(RoomRegistry::new(registry, config)),
     };
 
     let addr = "0.0.0.0:8080";

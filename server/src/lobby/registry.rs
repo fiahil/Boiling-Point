@@ -9,20 +9,37 @@ use tokio::sync::mpsc;
 
 use boiling_point_protocol::RoomCode;
 
+use crate::config::ContentConfig;
+use crate::content::ContentRegistry;
+
 use super::codes::generate_code;
 use super::room::{spawn, RoomCommand};
 
-/// Concurrent registry of live rooms.
+/// Concurrent registry of live rooms. Holds the shared content the rooms need to
+/// run games.
 pub struct RoomRegistry {
     rooms: DashMap<RoomCode, mpsc::Sender<RoomCommand>>,
+    registry: Arc<ContentRegistry>,
+    config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
 }
 
 impl RoomRegistry {
-    /// Create an empty registry; rooms it spawns share the given emote palette.
-    pub fn new(emote_palette: Arc<HashSet<u16>>) -> Self {
+    /// Create an empty registry sharing `registry`/`config` with every room it
+    /// spawns; the emote palette is derived from the config's enabled emotes.
+    pub fn new(registry: Arc<ContentRegistry>, config: Arc<ContentConfig>) -> Self {
+        let emote_palette = Arc::new(
+            config
+                .emote
+                .iter()
+                .filter(|e| e.enabled)
+                .map(|e| e.id)
+                .collect::<HashSet<u16>>(),
+        );
         RoomRegistry {
             rooms: DashMap::new(),
+            registry,
+            config,
             emote_palette,
         }
     }
@@ -33,7 +50,12 @@ impl RoomRegistry {
         loop {
             let code = generate_code();
             if !self.rooms.contains_key(&code) {
-                let handle = spawn(code.clone(), self.emote_palette.clone());
+                let handle = spawn(
+                    code.clone(),
+                    self.registry.clone(),
+                    self.config.clone(),
+                    self.emote_palette.clone(),
+                );
                 self.rooms.insert(code.clone(), handle.tx.clone());
                 return (code, handle.tx);
             }

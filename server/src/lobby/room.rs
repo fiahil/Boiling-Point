@@ -15,7 +15,9 @@ use boiling_point_protocol::server::{ErrorCode, PlayerPublic};
 use boiling_point_protocol::vocab::Color;
 use boiling_point_protocol::{ClientMessage, PlayerId, RoomCode, ServerMessage};
 
-use crate::config::ROUND_COUNT;
+use crate::config::{ContentConfig, ROUND_COUNT};
+use crate::content::ContentRegistry;
+use crate::session::{self, SeatInfo};
 
 /// Exactly four players to a table.
 const TABLE_SIZE: usize = 4;
@@ -63,9 +65,14 @@ struct Seat {
 }
 
 /// Spawn a room task and return a handle to it.
-pub fn spawn(code: RoomCode, emote_palette: Arc<HashSet<u16>>) -> RoomHandle {
+pub fn spawn(
+    code: RoomCode,
+    registry: Arc<ContentRegistry>,
+    config: Arc<ContentConfig>,
+    emote_palette: Arc<HashSet<u16>>,
+) -> RoomHandle {
     let (tx, rx) = mpsc::channel(64);
-    tokio::spawn(run(code.clone(), rx, emote_palette));
+    tokio::spawn(run(code.clone(), rx, registry, config, emote_palette));
     RoomHandle { code, tx }
 }
 
@@ -96,15 +103,16 @@ async fn broadcast_except(seats: &[Seat], except: PlayerId, msg: ServerMessage) 
 async fn run(
     code: RoomCode,
     mut rx: mpsc::Receiver<RoomCommand>,
+    registry: Arc<ContentRegistry>,
+    config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
 ) {
     let mut seats: Vec<Seat> = Vec::new();
-    let mut started = false;
 
     while let Some(cmd) = rx.recv().await {
         match cmd {
             RoomCommand::Join { player, name, out } => {
-                if started || seats.len() >= TABLE_SIZE {
+                if seats.len() >= TABLE_SIZE {
                     let _ = out
                         .send(ServerMessage::Error {
                             code: ErrorCode::WrongPhase,
@@ -139,7 +147,6 @@ async fn run(
                 .await;
 
                 if seats.len() == TABLE_SIZE {
-                    started = true;
                     broadcast(
                         &seats,
                         ServerMessage::GameStarting {
@@ -148,7 +155,27 @@ async fn run(
                         },
                     )
                     .await;
-                    // TODO: drive the in-room game loop (later task).
+                    // Drive the whole game over the wire, then end the room.
+                    let seat_infos: Vec<SeatInfo> = seats
+                        .iter()
+                        .map(|s| SeatInfo {
+                            id: s.id,
+                            name: s.name.clone(),
+                            color: s.color,
+                            out: s.out.clone(),
+                        })
+                        .collect();
+                    let seed: u64 = rand::random();
+                    session::run_game(
+                        registry.as_ref(),
+                        config.as_ref(),
+                        seat_infos,
+                        &mut rx,
+                        emote_palette.as_ref(),
+                        seed,
+                    )
+                    .await;
+                    break;
                 }
             }
             RoomCommand::Leave { player } => {

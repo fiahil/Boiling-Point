@@ -52,12 +52,12 @@
 
 ## 7. Wave Loop (`server/game/wave.rs`)
 
-- [ ] 7.1 Implement hidden simultaneous commits: each active player commits 0/1 card, hidden until reveal; latest selection wins; changeable until close
-- [ ] 7.2 Implement the shared wave timer (30s wave 1 / 10s subsequent) with unanimous lock-in early close (D-R1), and emit the wave's timer budget in the `WaveOpened` broadcast so clients/bots can render a countdown (server stays authoritative on close)
-- [ ] 7.3 Implement synchronized reveal: cards enter face-down at once; broadcast who played / who passed / new count, never identities
+- [x] 7.1 Implement hidden simultaneous commits: each active player commits 0/1 card, hidden until reveal; latest selection wins; changeable until close
+- [x] 7.2 Implement the shared wave timer (30s wave 1 / 10s subsequent) with unanimous lock-in early close (D-R1), and emit the wave's timer budget in the `WaveOpened` broadcast so clients/bots can render a countdown (server stays authoritative on close)
+- [x] 7.3 Implement synchronized reveal: cards enter face-down at once; broadcast who played / who passed / new count, never identities
 - [x] 7.4 Implement pass = permanent lockout, with timer-expiry and empty-hand treated identically
 - [x] 7.5 Implement round termination: explosion / all-remaining-passed / one-player-final-wave, no wave cap
-- [ ] 7.6 Enforce blind volatility — never emit any running-volatility or proximity cue
+- [x] 7.6 Enforce blind volatility — never emit any running-volatility or proximity cue
 - [x] 7.7 Unit-test each termination path and the early-close path
 
 ## 8. Effect Resolution (`server/game/resolve.rs`)
@@ -67,7 +67,7 @@
 - [x] 8.3 Implement same-wave same-kind summing against the snapshot (two same-color Double Downs → ×3, order-independent) (D-R3)
 - [x] 8.4 Implement Peek privacy (peeker gets the value; others see an anonymous "someone peeked")
 - [x] 8.5 Implement Shield round-scope state (immunity + safe-resolution scoring forfeit) and thread it to scoring
-- [ ] 8.6 Implement silent-by-default effect visibility: emit no play notification except SomeonePeeked (anonymous), Exposed (public card reveal), and the Recall-driven contribution-count drop; Dampen/Volatile Surge/Copycat/Double Down stay fully silent until the depile
+- [x] 8.6 Implement silent-by-default effect visibility: emit no play notification except SomeonePeeked (anonymous), Exposed (public card reveal), and the Recall-driven contribution-count drop; Dampen/Volatile Surge/Copycat/Double Down stay fully silent until the depile
 - [ ] 8.7 Unit-test resolution ordering, snapshot semantics, the Double Down stacking edge case, and that silent effects emit no leak
 
 ## 9. Cauldron Modifiers (`server/game/` + `content/modifier.rs`)
@@ -91,8 +91,8 @@
 
 - [x] 11.1 Implement the reverse-order depile every round (full attributes + contributing player per card)
 - [x] 11.2 Mark the boiling-point crossing card on explosion depiles
-- [ ] 11.3 Reveal the exact boiling point on explosion depiles only; keep it hidden on a safe brew
-- [ ] 11.4 Implement and unit-test per-phase information visibility (own hand private; counts/scores/modifiers public; cauldron identities hidden until depile; boiling point hidden except via Peek and the explosion depile)
+- [x] 11.3 Reveal the exact boiling point on explosion depiles only; keep it hidden on a safe brew
+- [x] 11.4 Implement and unit-test per-phase information visibility (own hand private; counts/scores/modifiers public; cauldron identities hidden until depile; boiling point hidden except via Peek and the explosion depile)
 
 ## 12. Deathmatch (`server/game/deathmatch.rs`)
 
