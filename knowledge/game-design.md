@@ -15,7 +15,7 @@ change it.
 
 ## 1. Elevator Pitch
 
-3–4 players take turns secretly tossing ingredient cards into a shared,
+Four players take turns secretly tossing ingredient cards into a shared,
 unstable cauldron. Every card adds hidden **volatility** toward an unknown
 **boiling point** — and carries a **color** (whose interests it serves) and a
 **point value** (what the pot is worth). Push the brew too far and it explodes,
@@ -70,7 +70,7 @@ Points and volatility are **fully independent** — any combination exists:
 |---|---|---|---|
 | **Safe treasure** | low | high | the card everyone wants to land safely |
 | **Pure danger** | high | low | a weapon — shoves the pot toward the edge for little reward |
-| **Political ghost** | any | **0** | adds volatility and color *presence* but no scoring weight; doesn't increase the pot's value or its explosion damage. Pure signal. |
+| **Political ghost** | any | **0** | adds volatility and color *presence* but no scoring weight; under base rules doesn't increase the pot's value or its explosion damage. Pure signal. *(Bountiful Brew overrides this — see §8.)* |
 | **Pot inflator** (wild, high pts) | any | high | fattens the pot for whoever wins it (and the explosion for everyone), but helps no color dominate |
 
 Any player can draw and play **any** color from the shared deck — your hand is a
@@ -192,8 +192,31 @@ including wilds.
 - **Wild points** have no color, so they never help a color win — but the
   winner scoops them as part of "winner takes all," and they swell the
   explosion (see §7).
-- **0-point cards** contribute color *presence* and volatility but add nothing
-  to the pot's value (and so add nothing to explosion damage).
+- **0-point cards** contribute color *presence* and volatility but, under base
+  rules, add nothing to the pot's value (and so add nothing to explosion
+  damage). The lone exception is **Bountiful Brew** (§8), whose +1-per-card
+  bonus applies regardless of a card's points.
+
+### Scoring Sequence (with modifiers active)
+
+When scoring modifiers (§8) are in play, the order matters. Determining *who*
+wins uses color points only; computing *how much* the pot is worth layers in the
+colorless bonus and the multiplier. General rule: **additive bonuses first, then
+multipliers.**
+
+```
+SAFE BREW
+  1. Read per-color point totals from the pot
+     • Double Down already resolved in its wave (§9) — its doubling is
+       baked into the color totals by now, so there's no conflict
+  2. Determine the dominant color from those totals
+     • Bountiful Brew's +1/card is COLORLESS — excluded from this step
+     • Reversal flips "highest" → "lowest color present in the pot" (§8)
+  3. Pot value = sum of all card points
+     • + Bountiful Brew (+1 per card)        ← additive bonus
+     • × Double Stakes (×2)                   ← multiplier, applied last
+  4. Winner(s) take the pot value (Alliance/Commune split, round down)
+```
 
 ---
 
@@ -201,11 +224,17 @@ including wilds.
 
 On explosion, **every player loses points equal to the total pot points** —
 including spectators who contributed **0 cards**. There is no Detonator, no
-blame role; the boom is a shared catastrophe.
+blame role *(except in the Deathmatch tiebreaker — §11)*; the boom is a shared
+catastrophe.
 
 ```
-  Pot worth P points  →  EVERY player: −P
+  Pot value P  =  sum of card points  + Bountiful Brew (+1/card)  × Double Stakes (×2)
+
+  →  EVERY player: −P
 ```
+
+(The same value calc as a safe brew, minus the dominance step — so "you lose
+exactly what the pot was worth" stays true even under modifiers.)
 
 - **No floor.** A tiny pot that blows costs almost nothing — that's fine. The
   loss is exactly the pot, whatever it's worth. Cheap early explosions are
@@ -255,12 +284,21 @@ Each does exactly **one thing** — one sentence, one icon, instantly readable.
 |---|---|---|---|---|
 | **Residue** | Physics | Cauldron starts with **+3 volatility** | Mild | 4 |
 | **Thin Ice** | Physics | Boiling point **−4** (explosions far more likely) | Medium | 4 |
-| **Bountiful Brew** | Scoring | **+1 point to the pot per card** played | Medium | 4 |
+| **Bountiful Brew** | Scoring | **+1 point to the pot per card** played (colorless — swells pot value & explosion damage, does **not** shift color dominance) | Medium | 4 |
 | **Deep Cauldron** | Physics | Boiling point **+4** (explosions rare) | Medium | 3 |
 | **Double Stakes** | Scoring | **All pot points ×2** — the win *and* the explosion loss | Spicy | 3 |
-| **Reversal** | Scoring | The **lowest**-point color wins instead of the highest | Wild | 2 |
+| **Reversal** | Scoring | The **lowest**-point color **present in the pot** wins instead of the highest | Wild | 2 |
 
 *(All values **[needs playtesting]**.)*
+
+**Reversal details:** "lowest" is evaluated **only among colors actually present
+in the pot** — never an absent color (which would award the win to a color
+nobody played and evaporate the pot). The player who committed the *fewest*
+points still scoops the whole "winner takes all" pot — that's the intended
+chaos. Edge cases fall out of the normal rules: a single color present is both
+highest and lowest (Reversal is a no-op); a tie for lowest splits via the usual
+Alliance/Commune rules (§6). Reversal is evaluated on **final per-color totals**,
+after Double Down (§9) — Bountiful Brew's colorless bonus doesn't affect it.
 
 ### Stacking Composes Cleanly
 
@@ -337,6 +375,28 @@ in this fixed order against a settling pot:
   7. Explosion check             one check, on the true post-effect total
 ```
 
+### Visibility — Silent by Default
+
+Effects are **silent**: that an effect was played is revealed only at the
+end-of-round depile, like every other card. This protects **blind volatility**
+(§4) — announcing Dampen or Volatile Surge would leak that the pot just got
+cooler/hotter, quietly reintroducing the cues we removed.
+
+Three exceptions, all unavoidable or intentional:
+
+| Effect | Visibility | Why |
+|---|---|---|
+| **Peek** | **Announced** — *"someone peeked"* (anonymous; not what they saw) | The paranoia is the point: someone knows something you don't. |
+| **Expose** | **Announced** — reveals a card to the table | Public information warfare *is* its function. |
+| **Recall** | **Partially visible** — the public contribution count drops by one | A card leaves the pot, and per §10 contribution counts are public. You can't hide that *a* card was reclaimed (though not which, or by exactly whom beyond the count change). A readable "I'm backing out" tell. |
+
+Dampen, Volatile Surge, Copycat, and Double Down are fully silent until the depile.
+
+*Minor known leak:* since "who played a card this wave" is public (§5) while Peek's
+announcement is anonymous, the table can sometimes deduce *who* peeked if few
+players acted that wave. Accepted — it's rare, low-stakes, and consistent with
+the game's "your actions are readable" texture.
+
 ### Distribution & Balance Notes
 
 For a ~90-card deck, ~25% are effect cards (~22 cards) **[needs playtesting]**:
@@ -381,6 +441,7 @@ you shield matters.)
 | Player scores | Public — everyone sees who's desperate, who's leading |
 | Active modifiers | Public |
 | Wave commits | **Hidden** until the wave resolves |
+| That a special effect was played | **Hidden** by default — revealed at the depile (§9). Exceptions: Peek announces *"someone peeked"* (anonymous), Expose reveals a card, and Recall is inferable from the public contribution count dropping. |
 
 ### After Every Round — The Depile (Always Reveal)
 
@@ -400,8 +461,28 @@ counting intentional and rewarded.** Players can track every card revealed acros
 rounds and deduce what's left in the deck, poker-style. Memory and attention are
 a skill the design wants to pay off.
 
-On an **explosion**, the depile should visually mark the moment the running
-volatility total crossed the boiling point — the "crack" where it tipped over.
+**Revealing the boiling point — on boom only.** On an **explosion**, the exact
+boiling-point value is revealed, and the depile visually marks the moment the
+running volatility total crossed it — the "crack" where it tipped over (the
+satisfying "you needed 9, you hit 10" sting). On a **safe brew the boiling point
+stays hidden** — you only learn the total stayed under it. This keeps Peek (§9)
+valuable for navigating the common safe-brew case, while explosions stay the
+game's big information moment.
+
+### Table Talk — Preset Emotes Only
+
+Politics need a signaling channel, but the MVP keeps it minimal and safe:
+**preset emotes only** — a small curated palette of expressive icons
+(e.g. truce 🤝, scheming 😈, fear 😱, taunt 😂, "watching you" 👀, "you're
+done" 💀). No quick-phrases, no free text.
+
+- **Language-neutral** (any international table), **zero moderation surface**,
+  and a single tap fits the 10-second waves.
+- **Non-binding by design.** An emote carries exactly as much weight as a
+  spoken promise at a physical table — *none.* Flinging 🤝 and then dumping
+  three cards into the pot is the bluff. The lie is the feature.
+- Emotes are the **only** communication channel — **no free-text chat**
+  (anonymous strangers + no moderation is the wrong first step).
 
 ---
 
@@ -500,9 +581,23 @@ Fluid, not fixed — players slide between these as the table and modifiers shif
   toward a target explosion rate (~30–40%).
 - **Points curve** — suggest high-point (3) cards are rarer, making "safe
   treasure" cards genuinely prized.
-- **Hand size & carryover** — deal **5 cards** per round; **unplayed cards carry
-  over** between rounds, so hoarding (a safe card, a Peek, a Shield) is a real
-  long-game decision.
+- **Hand size & carryover (refill-to-5 floor).** At each round start, top up
+  every hand **to 5** — the refill only ever *adds*, it never forces a discard.
+  Unplayed cards carry over, so a player who held 5 draws nothing and keeps
+  them; one who held 2 draws 3. There is **no hand cap** — if an effect ever
+  leaves a hand above 5, those cards are kept, never trimmed. Carryover keeps
+  hoarding (a safe card, a Peek, a Shield) a real long-game decision, while the
+  refill floor bounds how deep the deck is drawn.
+  - *(Under current rules a hand can't actually exceed 5 at round start — cards
+    only leave the hand by being played, and Recall is net-neutral — so the
+    "no cap" clause is a graceful default, not something that fires today.)*
+- **Deck exhaustion → reshuffle.** Refill demand is light (after round 1 the
+  table only redraws what it spent), so the deck rarely empties in a 5-round
+  game. As a safety net: when the draw deck runs out, the discard pile (all
+  previously revealed/used cards) is **reshuffled into a fresh draw deck.** A
+  reshuffle of the shared deck is a visible table event, so **card counting
+  (§10) operates per-shuffle** — it resets transparently and equally for
+  everyone at the reshuffle, exactly like a real card shoe.
 
 The exact distributions are the primary balance surface and the main job of the
 **bot harness** (run thousands of games to surface degenerate strategies and a
@@ -510,12 +605,21 @@ healthy explosion rate before human playtesting).
 
 ---
 
-## 14. Room, Reconnection (Reference)
+## 14. Rooms, Matchmaking, Reconnection (Reference)
 
-Unchanged from prior decisions; see [server-architecture.md](brainstorming/server-architecture.md).
+Mostly per prior decisions; see [server-architecture.md](brainstorming/server-architecture.md).
 
-- **Rooms:** invite link to group up, auto-start at **4 players**. No host, no
-  settings, always 4 players. 5-minute idle timeout. Anonymous session auth.
+- **Rooms:** invite link to group up; **auto-start at exactly 4 players.** No
+  host, no settings, always 4 players. 5-minute idle timeout.
+- **Matchmaking — in v1.** A queue that assembles 4-player tables by simple
+  fill (next open table / FIFO), **not skill-based.** This works fine on
+  anonymous sessions — no rating needed. Invite-link rooms and the matchmaking
+  queue both ship at launch.
+- **Auth (v1):** anonymous session tokens (per the server doc) — no persistent
+  accounts.
+- **Deferred to v2:** player **rating** (FFA needs TrueSkill / Weng-Lin, not
+  Elo), **persistent accounts**, and **skill-based matchmaking** that depends on
+  them. See [v2-roadmap.md](v2-roadmap.md).
 - **Reconnection:** 60-second grace; a disconnected player **auto-passes (locked
   out)** each wave; full state snapshot on rejoin (only what they're allowed to
   know).
@@ -573,5 +677,25 @@ playtests should tune. None is final.
 | Modifiers | Residue, Thin Ice, Bountiful Brew, Deep Cauldron, Double Stakes, Reversal — single-effect, compose cleanly, contradictions cancel |
 | Effects | Peek, Dampen, Volatile Surge, Shield, Expose, Copycat, Recall, Double Down — resolve immediately, fixed order |
 | Shield | Rare + forfeits all scoring on safe resolution (a bet on the boom) |
-| Info reveal | Always reveal — dramatic reverse-order depile every round; card counting rewarded |
+| Info reveal | Always reveal cards — dramatic reverse-order depile every round; card counting rewarded. Exact boiling point revealed **on explosion only** (hidden on a safe brew) |
 | Tiebreaker | Deathmatch — pure elimination, no modifiers, forced 1 card/wave, most-volatility = Detonator = out, co-champions if no boom; effects allowed (Shield god-like) |
+| Deal / hand | Refill-to-5 floor at round start (never discards, no cap); unplayed cards carry over; deck reshuffles from discard if it empties |
+| Comms | Preset emotes only (non-binding); no quick-phrases, no free-text chat |
+| Matchmaking | v1 — invite links + table-filling queue (not skill-based); anonymous sessions. Rating, persistent accounts & skill-based matching → v2 |
+
+---
+
+## 18. Deferred Features
+
+Conscious "not yet" decisions — out of scope **on purpose**, not by oversight.
+
+| Deferred | Note |
+|---|---|
+| **Round objectives** (v1 brainstorm, Alt A) | Per-round scoring tweaks to nudge specific dilemmas. The modifier stack currently does the round-to-round variety job; revisit if rounds feel samey. The likeliest item to return. |
+| **Spectator mode & replays** | Need an append-only event log; the server chose post-game persistence only (no event sourcing yet). |
+| **Cauldron-modifier expansions** | The 6 modifiers are the launch set. Add more once the stacking system is validated by playtesting. |
+
+Platform/post-launch deferrals (player rating, persistent accounts, skill-based
+matchmaking) live in [v2-roadmap.md](v2-roadmap.md). Free-text chat (§10) and
+3-player support (§2) are noted as out of v1 scope but aren't committed to a
+later version.
