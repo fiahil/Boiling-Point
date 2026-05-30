@@ -46,9 +46,9 @@
 - [ ] 6.1 Define the server's authoritative domain model (Card, Deck, discard pile, Cauldron incl. the hidden boiling_point, Pot, Hand, GameState) — owned by the server crate, never placed in `protocol/`
 - [ ] 6.2 Implement the room task: sole state owner, bounded per-player `mpsc` out + `mpsc` in, timer plumbing via `tokio::time`
 - [ ] 6.3 Implement the typestate phase machine (Idle→Dealing→Playing→Depile→Scoring→next/GameOver/Deathmatch) so illegal transitions are compile errors (D-A4)
-- [ ] 6.4 Implement the `DeckBuilder` (builder pattern) assembling the shared deck from the registry; mixed colors + wild + enabled effects
-- [ ] 6.5 Implement deal-to-5 as a refill floor with carryover (D-R4): top up each hand to 5, never discard, no hand cap
-- [ ] 6.6 Implement reshuffle-from-discard when a refill empties the draw deck (D-R5), announced to all players so card counting resets per shuffle
+- [x] 6.4 Implement the `DeckBuilder` (builder pattern) assembling the shared deck from the registry; mixed colors + wild + enabled effects
+- [x] 6.5 Implement deal-to-5 as a refill floor with carryover (D-R4): top up each hand to 5, never discard, no hand cap
+- [x] 6.6 Implement reshuffle-from-discard when a refill empties the draw deck (D-R5), announced to all players so card counting resets per shuffle
 
 ## 7. Wave Loop (`server/game/wave.rs`)
 
@@ -62,11 +62,11 @@
 
 ## 8. Effect Resolution (`server/game/resolve.rs`)
 
-- [ ] 8.1 Implement the pre-wave pot snapshot and the fixed 7-step resolver pipeline (cards → volatility mods → color/identity → points → removal → information → one explosion check)
-- [ ] 8.2 Implement the 8 effect behaviors against the resolver: Peek (private), Dampen, Volatile Surge, Expose, Copycat, Recall, Double Down, Shield
-- [ ] 8.3 Implement same-wave same-kind summing against the snapshot (two same-color Double Downs → ×3, order-independent) (D-R3)
-- [ ] 8.4 Implement Peek privacy (peeker gets the value; others see an anonymous "someone peeked")
-- [ ] 8.5 Implement Shield round-scope state (immunity + safe-resolution scoring forfeit) and thread it to scoring
+- [x] 8.1 Implement the pre-wave pot snapshot and the fixed 7-step resolver pipeline (cards → volatility mods → color/identity → points → removal → information → one explosion check)
+- [x] 8.2 Implement the 8 effect behaviors against the resolver: Peek (private), Dampen, Volatile Surge, Expose, Copycat, Recall, Double Down, Shield
+- [x] 8.3 Implement same-wave same-kind summing against the snapshot (two same-color Double Downs → ×3, order-independent) (D-R3)
+- [x] 8.4 Implement Peek privacy (peeker gets the value; others see an anonymous "someone peeked")
+- [x] 8.5 Implement Shield round-scope state (immunity + safe-resolution scoring forfeit) and thread it to scoring
 - [ ] 8.6 Implement silent-by-default effect visibility: emit no play notification except SomeonePeeked (anonymous), Exposed (public card reveal), and the Recall-driven contribution-count drop; Dampen/Volatile Surge/Copycat/Double Down stay fully silent until the depile
 - [ ] 8.7 Unit-test resolution ordering, snapshot semantics, the Double Down stacking edge case, and that silent effects emit no leak
 
@@ -74,18 +74,18 @@
 
 - [ ] 9.1 Implement round-1-clean + draw-one-per-round (2–5) from the weighted pool, revealed at round start
 - [ ] 9.2 Implement cumulative stacking (round N has N−1 active) and public visibility
-- [ ] 9.3 Implement clean composition of all offsets/multipliers; verify Thin Ice+Deep Cauldron cancel and Reversal×2 reverts
-- [ ] 9.4 Wire the six modifier effects into boiling-point / starting-volatility / pot-value / dominance computation, with Bountiful Brew inflating pot total only and colorless across all cards (D-R2), and Reversal selecting the lowest color *present in the pot*
-- [ ] 9.5 Unit-test composition, cancellation, Reversal parity plus its edge cases (single color = no-op, tie-for-lowest splits, never an absent color), and Double Stakes scaling both directions
+- [x] 9.3 Implement clean composition of all offsets/multipliers; verify Thin Ice+Deep Cauldron cancel and Reversal×2 reverts
+- [x] 9.4 Wire the six modifier effects into boiling-point / starting-volatility / pot-value / dominance computation, with Bountiful Brew inflating pot total only and colorless across all cards (D-R2), and Reversal selecting the lowest color *present in the pot*
+- [x] 9.5 Unit-test composition, cancellation, Reversal parity plus its edge cases (single color = no-op, tie-for-lowest splits, never an absent color), and Double Stakes scaling both directions
 
 ## 10. Scoring & Explosion (`server/game/scoring.rs`)
 
-- [ ] 10.1 Implement dominance by highest total color points (wild counts to pot total, not to any color)
-- [ ] 10.2 Implement the scoring sequence: decide the winner on per-color totals first (Reversal picks the lowest present color, Bountiful excluded), then pot value = sum of card points + Bountiful (additive) × Double Stakes (multiplier) → award/deduct
-- [ ] 10.3 Implement winner-takes-all and Alliance/Commune splits (round down, integer-only, leftover evaporates)
-- [ ] 10.4 Implement shared-loss explosion (every player incl. spectators loses pot value; no floor/ceiling) honoring Shield immunity
-- [ ] 10.5 Implement absent-player +0 and Shield safe-resolution forfeit
-- [ ] 10.6 Unit-test domination, two/three-way splits with rounding, shared loss, Shield outcomes, and Reversal scoring
+- [x] 10.1 Implement dominance by highest total color points (wild counts to pot total, not to any color)
+- [x] 10.2 Implement the scoring sequence: decide the winner on per-color totals first (Reversal picks the lowest present color, Bountiful excluded), then pot value = sum of card points + Bountiful (additive) × Double Stakes (multiplier) → award/deduct
+- [x] 10.3 Implement winner-takes-all and Alliance/Commune splits (round down, integer-only, leftover evaporates)
+- [x] 10.4 Implement shared-loss explosion (every player incl. spectators loses pot value; no floor/ceiling) honoring Shield immunity
+- [x] 10.5 Implement absent-player +0 and Shield safe-resolution forfeit
+- [x] 10.6 Unit-test domination, two/three-way splits with rounding, shared loss, Shield outcomes, and Reversal scoring
 
 ## 11. Depile & Information Visibility (`server/game/`)
 

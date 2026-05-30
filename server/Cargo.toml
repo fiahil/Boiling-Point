@@ -21,3 +21,5 @@ boiling-point-protocol = { path = "../protocol" }
 serde = { workspace = true }
 toml = "0.8"
 thiserror = { workspace = true }
+uuid = { workspace = true }
+rand = "0.8"
