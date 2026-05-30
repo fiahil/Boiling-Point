@@ -123,21 +123,21 @@
 
 ## 16. Table Talk — Preset Emotes (`server/`)
 
-- [ ] 16.1 Define the fixed preset-emote palette in config (id → emote) and validate it at startup; no free text, no quick-phrases
+- [x] 16.1 Define the fixed preset-emote palette in config (id → emote) and validate it at startup; no free text, no quick-phrases
 - [x] 16.2 Handle inbound `Emote`: accept only palette ids, reject others with an `Error`, and broadcast `EmoteBroadcast` (sender + id) to the room in any phase
 - [x] 16.3 Ensure emotes change no game state and are subject to the 100 ms rate limit
-- [ ] 16.4 Unit-test palette validation, non-binding behavior (no state change), and rate-limited spam
+- [x] 16.4 Unit-test palette validation, non-binding behavior (no state change), and rate-limited spam
 
 ## 17. Connection Smoke Tests (`server/tests/`)
 
 - [x] 17.1 Smoke test: a WebSocket client connects and completes the protocol-version handshake; an incompatible version is rejected
 - [ ] 17.2 Smoke test: heartbeat keepalive holds a connection live; a missing heartbeat routes into disconnect handling
-- [ ] 17.3 Smoke test: create/join a room by code and leave; graceful and abrupt disconnect are handled
-- [ ] 17.4 Assert the smoke client receives only player-permitted messages (no secret fields on the wire)
+- [x] 17.3 Smoke test: create/join a room by code and leave; graceful and abrupt disconnect are handled
+- [x] 17.4 Assert the smoke client receives only player-permitted messages (no secret fields on the wire)
 
 ## 18. End-to-End Integration & Doc Sync
 
 - [x] 18.1 Engine-level integration test: drive a complete 5-round game in-process (scripted commits) to `GameOver` and assert the persistence write
 - [x] 18.2 Engine-level integration test: a forced score tie routes into a full Deathmatch and produces a champion (include a Shield-redirect case)
 - [ ] 18.3 Property/integration test: many in-process games run without illegal-state panics and exercise a reshuffle at least once
-- [ ] 18.4 Annotate `server-architecture.md` as partially superseded, pointing to this change's specs as authoritative
+- [x] 18.4 Annotate `server-architecture.md` as partially superseded, pointing to this change's specs as authoritative

@@ -5,6 +5,8 @@
 //! validated at startup and the server refuses to run on an invalid config
 //! (Constraint #3) — a typo fails loudly at boot, never mid-game.
 
+use std::collections::HashSet;
+
 use serde::Deserialize;
 
 use boiling_point_protocol::vocab::{Color, EffectKind, ModifierKind};
@@ -187,6 +189,12 @@ pub enum ConfigError {
         /// Configured maximum.
         max: u8,
     },
+    /// The emote palette has no enabled emotes (no comms channel).
+    #[error("the emote palette has no enabled emotes")]
+    EmptyEmotePalette,
+    /// Two emotes share an id.
+    #[error("duplicate emote id {0} in the palette")]
+    DuplicateEmoteId(u16),
     /// The TOML failed to parse.
     #[error("config parse error: {0}")]
     Parse(String),
@@ -290,6 +298,17 @@ impl ContentConfig {
             });
         }
 
+        // Emote palette: at least one enabled emote, with unique ids.
+        let mut seen_emotes = HashSet::new();
+        for emote in self.emote.iter().filter(|e| e.enabled) {
+            if !seen_emotes.insert(emote.id) {
+                return Err(ConfigError::DuplicateEmoteId(emote.id));
+            }
+        }
+        if seen_emotes.is_empty() {
+            return Err(ConfigError::EmptyEmotePalette);
+        }
+
         Ok(())
     }
 
@@ -374,6 +393,31 @@ mod tests {
         assert!(matches!(
             cfg.validate(),
             Err(ConfigError::ModifierPoolTooSmall { .. })
+        ));
+    }
+
+    /// An emote palette with nothing enabled aborts (no comms channel).
+    #[test]
+    fn empty_emote_palette_aborts() {
+        let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
+        for e in cfg.emote.iter_mut() {
+            e.enabled = false;
+        }
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::EmptyEmotePalette)
+        ));
+    }
+
+    /// Duplicate emote ids abort.
+    #[test]
+    fn duplicate_emote_id_aborts() {
+        let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
+        let id = cfg.emote[0].id;
+        cfg.emote[1].id = id;
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::DuplicateEmoteId(_))
         ));
     }
 

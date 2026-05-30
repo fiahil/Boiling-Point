@@ -316,6 +316,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn emotes_validate_broadcast_and_lobby_carries_no_secret() {
+        use boiling_point_protocol::EmoteId;
+        let url = start_server().await;
+        let (mut ws, _) = connect_async(url).await.unwrap();
+        send(&mut ws, &create("p1", PROTOCOL_VERSION)).await;
+        let joined = recv(&mut ws).await;
+        assert!(matches!(joined, ServerMessage::RoomJoined { .. }));
+        // A lobby message must not carry any secret (e.g. the boiling point).
+        assert!(!codec::encode_json(&joined)
+            .unwrap()
+            .contains("boiling_point"));
+
+        // A palette emote is echoed back as a broadcast.
+        send(&mut ws, &ClientMessage::Emote { emote: EmoteId(1) }).await;
+        match recv(&mut ws).await {
+            ServerMessage::EmoteBroadcast { emote, .. } => assert_eq!(emote.0, 1),
+            other => panic!("expected EmoteBroadcast, got {other:?}"),
+        }
+
+        // An off-palette emote is rejected (spaced past the rate limit).
+        tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+        send(
+            &mut ws,
+            &ClientMessage::Emote {
+                emote: EmoteId(999),
+            },
+        )
+        .await;
+        assert!(matches!(
+            recv(&mut ws).await,
+            ServerMessage::Error {
+                code: ErrorCode::InvalidEmote,
+                ..
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn join_and_leave_are_broadcast() {
+        let url = start_server().await;
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
+                break room_code;
+            }
+        };
+
+        let (mut ws2, _) = connect_async(url).await.unwrap();
+        send(&mut ws2, &join("p2", code)).await;
+
+        // The first player sees the second connect.
+        let connected = loop {
+            if let ServerMessage::PlayerConnectionChanged { connected, .. } = recv(&mut ws1).await {
+                break connected;
+            }
+        };
+        assert!(connected);
+
+        // When the second disconnects, the first sees the drop.
+        drop(ws2);
+        let saw_disconnect = loop {
+            match recv_opt(&mut ws1).await {
+                Some(ServerMessage::PlayerConnectionChanged {
+                    connected: false, ..
+                }) => break true,
+                Some(_) => continue,
+                None => break false,
+            }
+        };
+        assert!(saw_disconnect);
+    }
+
+    #[tokio::test]
     async fn four_clients_play_a_full_game_to_game_over() {
         let url = start_server().await;
 
