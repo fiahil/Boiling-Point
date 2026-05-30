@@ -111,10 +111,10 @@
 
 ## 14. Persistence (`server/persistence/`)
 
-- [ ] 14.1 Write the PostgreSQL schema migration (players, games, game_players, game_rounds)
-- [ ] 14.2 Implement the single post-game write at `GameOver` (game + per-player results + optional per-round detail); no mid-game writes
-- [ ] 14.3 Implement anonymous player-record creation from session UUID
-- [ ] 14.4 Integration-test the completion write and per-player result retrieval
+- [x] 14.1 Write the PostgreSQL schema migration (players, games, game_players, game_rounds)
+- [x] 14.2 Implement the single post-game write at `GameOver` (game + per-player results + optional per-round detail); no mid-game writes
+- [x] 14.3 Implement anonymous player-record creation from session UUID
+- [x] 14.4 Integration-test the completion write and per-player result retrieval
 
 ## 15. Observability (`server/observability/`)
 

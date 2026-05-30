@@ -14,3 +14,4 @@
 pub mod config;
 pub mod content;
 pub mod game;
+pub mod persistence;
