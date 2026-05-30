@@ -28,6 +28,8 @@ pub struct WaveOutcome {
     pub peeked: Vec<PlayerId>,
     /// Cards revealed to the whole table (by Expose).
     pub exposed: Vec<CardView>,
+    /// Cards pulled back out of the pot (by Recall) — returned to their owners' hands.
+    pub recalled: Vec<(PlayerId, Card)>,
 }
 
 /// Mutable resolution state for one wave. Does NOT hold the registry, so a
@@ -40,6 +42,7 @@ struct WaveResolution<'a> {
     recalls: &'a HashMap<PlayerId, CardId>,
     peeked: Vec<PlayerId>,
     exposed: Vec<CardView>,
+    recalled: Vec<(PlayerId, Card)>,
     cur_card: CardId,
     cur_player: PlayerId,
 }
@@ -47,7 +50,10 @@ struct WaveResolution<'a> {
 impl WaveResolution<'_> {
     /// Index of the currently-resolving effect's card in the pot.
     fn cur_index(&self) -> Option<usize> {
-        self.pot.cards.iter().position(|p| p.card.id == self.cur_card)
+        self.pot
+            .cards
+            .iter()
+            .position(|p| p.card.id == self.cur_card)
     }
 }
 
@@ -94,7 +100,9 @@ impl EffectCtx for WaveResolution<'_> {
             .cards
             .iter()
             .position(|p| {
-                p.player == self.cur_player && p.card.id != self.cur_card && Some(p.card.id) == target
+                p.player == self.cur_player
+                    && p.card.id != self.cur_card
+                    && Some(p.card.id) == target
             })
             .or_else(|| {
                 self.pot
@@ -105,6 +113,7 @@ impl EffectCtx for WaveResolution<'_> {
         if let Some(pos) = pos {
             let removed = self.pot.cards.remove(pos);
             self.pot.volatility = (self.pot.volatility - removed.card.volatility as i32).max(0);
+            self.recalled.push((removed.player, removed.card));
         }
     }
 
@@ -132,7 +141,8 @@ pub fn resolve_wave(
         .collect();
 
     // 2. Add committed cards; collect their effects.
-    let mut effects: Vec<(CardId, PlayerId, boiling_point_protocol::vocab::EffectKind)> = Vec::new();
+    let mut effects: Vec<(CardId, PlayerId, boiling_point_protocol::vocab::EffectKind)> =
+        Vec::new();
     for (player, card) in committed {
         pot.cards.push(PotCard {
             player,
@@ -163,6 +173,7 @@ pub fn resolve_wave(
         recalls,
         peeked: Vec::new(),
         exposed: Vec::new(),
+        recalled: Vec::new(),
         cur_card: CardId(0),
         cur_player: PlayerId(uuid::Uuid::nil()),
     };
@@ -180,6 +191,7 @@ pub fn resolve_wave(
         exploded,
         peeked: wave.peeked,
         exposed: wave.exposed,
+        recalled: wave.recalled,
     }
 }
 
@@ -219,7 +231,10 @@ mod tests {
         // A plain vol-3 card + a Volatile Surge (base vol 3, +2) → 8 volatility.
         let committed = vec![
             (pid(1), card(1, Color::Ruby, 3, 1, None)),
-            (pid(2), card(2, Color::Emerald, 3, 0, Some(EffectKind::VolatileSurge))),
+            (
+                pid(2),
+                card(2, Color::Emerald, 3, 0, Some(EffectKind::VolatileSurge)),
+            ),
         ];
         let out = resolve_wave(&reg, &mut pot, 7, &mut shielded, committed, &recalls);
         assert_eq!(pot.volatility, 8); // 3 + 3 + 2(surge)
@@ -249,8 +264,14 @@ mod tests {
             99,
             &mut shielded,
             vec![
-                (pid(1), card(2, Color::Ruby, 1, 0, Some(EffectKind::DoubleDown))),
-                (pid(2), card(3, Color::Ruby, 1, 0, Some(EffectKind::DoubleDown))),
+                (
+                    pid(1),
+                    card(2, Color::Ruby, 1, 0, Some(EffectKind::DoubleDown)),
+                ),
+                (
+                    pid(2),
+                    card(3, Color::Ruby, 1, 0, Some(EffectKind::DoubleDown)),
+                ),
             ],
             &recalls,
         );
@@ -279,7 +300,10 @@ mod tests {
             &mut pot,
             99,
             &mut shielded,
-            vec![(pid(2), card(2, Color::Amethyst, 1, 1, Some(EffectKind::Copycat)))],
+            vec![(
+                pid(2),
+                card(2, Color::Amethyst, 1, 1, Some(EffectKind::Copycat)),
+            )],
             &recalls,
         );
         let copycat = pot.cards.iter().find(|p| p.card.id == CardId(2)).unwrap();
@@ -297,7 +321,10 @@ mod tests {
             &mut pot,
             99,
             &mut shielded,
-            vec![(pid(1), card(1, Color::Amethyst, 2, 0, Some(EffectKind::Shield)))],
+            vec![(
+                pid(1),
+                card(1, Color::Amethyst, 2, 0, Some(EffectKind::Shield)),
+            )],
             &recalls,
         );
         assert!(shielded.contains(&pid(1)));

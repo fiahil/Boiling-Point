@@ -15,11 +15,15 @@ pub mod deck;
 pub mod modifiers;
 pub mod pot;
 pub mod resolve;
+pub mod round;
 pub mod scoring;
+pub mod state;
 
 pub use card::Card;
 pub use deck::Deck;
 pub use modifiers::ActiveModifiers;
 pub use pot::{Pot, PotCard};
 pub use resolve::{resolve_wave, WaveOutcome};
+pub use round::{DepileData, DepileItem, Round, RoundEnd, WaveChoice, WaveInput, WaveReport};
 pub use scoring::{explosion, pot_value, score_safe, ExplosionResult, SafeScore, ScoringContext};
+pub use state::{Hand, Player};
