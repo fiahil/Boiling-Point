@@ -124,18 +124,18 @@ pub async fn run_game(
     tracing::info!(players = players.len(), "game started");
 
     for round_number in 1..=ROUND_COUNT {
-        if round_number >= 2 {
-            if let Some(kind) = modifier_pile.pop() {
-                modifiers.push(kind);
-                broadcast(
-                    &players,
-                    ServerMessage::ModifierRevealed {
-                        modifier: kind,
-                        round_number,
-                    },
-                )
-                .await;
-            }
+        if round_number >= 2
+            && let Some(kind) = modifier_pile.pop()
+        {
+            modifiers.push(kind);
+            broadcast(
+                &players,
+                ServerMessage::ModifierRevealed {
+                    modifier: kind,
+                    round_number,
+                },
+            )
+            .await;
         }
 
         // Refill hands and send each player their private hand.
