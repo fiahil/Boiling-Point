@@ -293,11 +293,16 @@ fn playing(frame: &mut Frame, area: Rect, app: &App) {
     .areas(area);
 
     let dm = if app.vm.deathmatch { "DEATHMATCH " } else { "" };
+    let fw = if app.vm.final_wave {
+        " · FINAL WAVE"
+    } else {
+        ""
+    };
     header(
         frame,
         head,
         app,
-        &format!("{dm}wave {}", app.vm.wave_number),
+        &format!("{dm}wave {}{fw}", app.vm.wave_number),
     );
     opponents(frame, opp, app);
     cauldron(frame, cauldron_area, app);
@@ -476,6 +481,19 @@ fn game_over(frame: &mut Frame, area: Rect, app: &App) {
         let mut spans = vec![Span::raw(crown)];
         spans.extend(score_line(app, s.player, None).spans);
         lines.push(Line::from(spans));
+    }
+    if app.vm.deathmatch {
+        lines.push(Line::raw(""));
+        let names: Vec<&str> = app
+            .vm
+            .dm_participants
+            .iter()
+            .filter_map(|p| app.vm.player(*p).map(|v| palette::name(v.color)))
+            .collect();
+        lines.push(Line::from(Span::styled(
+            format!("⚔ decided by Deathmatch ({})", names.join(" vs ")),
+            Style::default().fg(Color::Magenta),
+        )));
     }
     frame.render_widget(Paragraph::new(lines).block(bordered("game over")), body);
     hint(frame, foot, "↵ back to lobby   r rematch queue");

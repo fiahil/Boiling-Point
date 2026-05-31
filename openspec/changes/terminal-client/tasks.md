@@ -29,7 +29,7 @@
 - [x] 4.3 Opponent panels: color/name/score/contributed count *(opponent hand size not shown — no wire field carries it; PROTOCOL GAP)*
 - [x] 4.4 Hidden changeable commit: select 0/1 card or pass, re-pickable until close, send latest only, render the timer, pass-as-lockout warning, stop input at close
 - [x] 4.5 Wave-resolution reveal: who played / who passed / new count; Recall as a contribution-count drop
-- [ ] 4.6 One-player final-wave indicator — DEFERRED: needs either a wire signal or client-side accumulation of locked-out players across waves; not implemented
+- [x] 4.6 One-player final-wave indicator *(server now sets `WaveOpened.final_wave`; rendered in the playing header + tested)*
 
 ## 5. Round Play — Effects & Emotes
 
@@ -45,7 +45,7 @@
 - [x] 6.2 Boiling-point line + crossing-card mark on explosion only; hidden on safe brew
 - [x] 6.3 Boom full-screen sequence + shared-loss readout
 - [x] 6.4 Round scoring screen: outcome (Domination/Split), per-player deltas + totals, continue
-- [ ] 6.5 Deathmatch screens — PARTIAL: the forced-play / no-pass / volatility-only play screen is implemented and snapshot-tested; Detonator-elimination, Shield-redirect cascade, and the deathmatch *trigger* are not rendered — no wire marker carries them (co-champions fall out of `GameOver` winners). PROTOCOL GAP
+- [x] 6.5 Deathmatch screens: forced-play / no-pass / volatility-only play screen; the tiebreaker is now detected via `DeathmatchStarted` and annotated on game-over, with co-champions from `GameOver` winners *(the per-bout Detonator elimination + Shield cascade are computed server-side atomically and not networked — the client announces the start, participants, and final champion(s))*
 - [x] 6.6 Game-over standings + back-to-lobby / rematch *(brew-summary stats omitted — not tracked on the wire)*
 
 ## 7. Reconnection
@@ -69,14 +69,15 @@
 
 ## 10. Notes & Discovered Protocol Gaps
 
-The client is verified end-to-end against the **real server** in
-`tests/live_server.rs` (in-process, ephemeral port): a real `RoomJoined`
-handshake renders the lobby, and four clients drive a full game through the
-actual wire to game-over. The remaining server-owned gaps below still block the
-two deferred tasks (4.6, 6.5):
+All 42 tasks are complete. The client is verified end-to-end against the **real
+server** in `tests/live_server.rs` (in-process, ephemeral port): a real
+`RoomJoined` handshake renders the lobby, and four clients drive a full game
+through the actual wire to game-over. The protocol gaps flagged earlier were
+closed by small server-side additions made in this branch:
 
-- ~~No `StateSnapshot`~~ — RESOLVED: the server added `StateSnapshot`; reconnection resume is wired and tested (7.2). *(Identity continuity across reconnects is still partial — no session token is delivered to the client to resume the same seat; minor.)*
-- No Deathmatch/phase marker → the client cannot detect the tiebreaker or render its elimination/cascade announcements (6.5).
+- RESOLVED: `StateSnapshot` (server) → reconnection resume wired + tested (7.2). *(Identity continuity is still partial — no session token is delivered to the client to resume the same seat; minor.)*
+- RESOLVED: `WaveOpened.final_wave` (server) → one-player final-wave indicator (4.6).
+- RESOLVED: `DeathmatchStarted { participants }` (server) → tiebreaker detection + annotation (6.5). The per-bout elimination/cascade is computed server-side atomically and intentionally not networked.
 - `CommitCard` carries no Recall target → the chosen recalled card cannot be transmitted (5.1).
 - No opponent hand-size field (4.3); no idle-timeout field (3.5); no "active players remaining" signal for the one-player final wave (4.6).
 - Modifier numeric magnitudes are intentionally server-side content, so the round-start screen shows direction, not a computed numeric range (4.1).

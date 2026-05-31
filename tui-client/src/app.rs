@@ -257,6 +257,9 @@ impl App {
                 self.locked_in = true;
                 self.toast("reconnected — locked out of this round while away");
             }
+            ServerMessage::DeathmatchStarted { .. } => {
+                self.toast("⚔ Deathmatch — tie for the lead!");
+            }
             ServerMessage::ScoreUpdate { .. }
             | ServerMessage::PlayerConnectionChanged { .. }
             | ServerMessage::Heartbeat => {}
@@ -686,6 +689,7 @@ fn server_tag(m: &ServerMessage) -> &'static str {
         ServerMessage::Error { .. } => "Error",
         ServerMessage::PlayerConnectionChanged { .. } => "PlayerConnectionChanged",
         ServerMessage::StateSnapshot { .. } => "StateSnapshot",
+        ServerMessage::DeathmatchStarted { .. } => "DeathmatchStarted",
         ServerMessage::Heartbeat => "Heartbeat",
     }
 }

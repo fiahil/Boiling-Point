@@ -154,6 +154,24 @@ pub fn wave_open(round: u8, wave: u8, timer_ms: u32) -> ServerMessage {
         round_number: round,
         wave_number: wave,
         timer_ms,
+        final_wave: false,
+    }
+}
+
+/// A one-player final wave.
+pub fn wave_final() -> ServerMessage {
+    ServerMessage::WaveOpened {
+        round_number: 3,
+        wave_number: 4,
+        timer_ms: 10_000,
+        final_wave: true,
+    }
+}
+
+/// The Deathmatch tiebreaker starting between seats 0 and 1.
+pub fn deathmatch_started() -> ServerMessage {
+    ServerMessage::DeathmatchStarted {
+        participants: vec![pid(0), pid(1)],
     }
 }
 
@@ -235,6 +253,7 @@ pub fn demo_game() -> Vec<ServerMessage> {
             round_number: 1,
             wave_number: 1,
             timer_ms: 30_000,
+            final_wave: false,
         },
         ServerMessage::EmoteBroadcast {
             from: p(2),
@@ -259,6 +278,7 @@ pub fn demo_game() -> Vec<ServerMessage> {
             round_number: 1,
             wave_number: 2,
             timer_ms: 10_000,
+            final_wave: false,
         },
         ServerMessage::WaveResolved {
             played: vec![p(0)],
@@ -315,6 +335,7 @@ pub fn demo_game() -> Vec<ServerMessage> {
             round_number: 2,
             wave_number: 1,
             timer_ms: 30_000,
+            final_wave: false,
         },
         ServerMessage::WaveResolved {
             played: vec![p(0), p(1), p(2)],

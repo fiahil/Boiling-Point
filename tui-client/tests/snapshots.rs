@@ -116,6 +116,25 @@ fn deathmatch_forces_play_no_pass() {
 }
 
 #[test]
+fn final_wave_indicator_shows() {
+    let mut app = reach_playing();
+    app.on_server(&fixtures::wave_final());
+    let s = screen(&app);
+    assert_has(&s, "FINAL WAVE");
+}
+
+#[test]
+fn deathmatch_announced_on_game_over() {
+    let mut app = App::new();
+    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::deathmatch_started());
+    app.on_server(&fixtures::game_over());
+    let s = screen(&app);
+    assert_has(&s, "FINAL STANDINGS");
+    assert_has(&s, "Deathmatch");
+}
+
+#[test]
 fn game_over_shows_standings_and_winner() {
     let mut app = App::new();
     app.on_server(&fixtures::room_joined());

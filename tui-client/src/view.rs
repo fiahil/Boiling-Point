@@ -141,12 +141,13 @@ pub(crate) struct ViewModel {
     pub(crate) last_scoring: Option<ScoringView>,
     /// The most recent explosion.
     pub(crate) last_explosion: Option<ExplosionView>,
-    /// Whether the table is in the Deathmatch tiebreaker.
-    ///
-    /// PROTOCOL GAP: the committed wire carries no Deathmatch marker, so this is
-    /// never set from a message yet (only by a mock/test). The Deathmatch screen
-    /// is implemented and ready for when the server adds a marker.
+    /// Whether the current wave is the one-player final wave.
+    pub(crate) final_wave: bool,
+    /// Whether the game went to the Deathmatch tiebreaker (set by
+    /// `DeathmatchStarted`); the outcome arrives via `GameOver`.
     pub(crate) deathmatch: bool,
+    /// The players contesting the Deathmatch, if one was reached.
+    pub(crate) dm_participants: Vec<PlayerId>,
     /// Whether the game has ended.
     pub(crate) game_over: bool,
     /// The winner(s) at game over (multiple ⇒ co-champions).
@@ -201,12 +202,14 @@ impl ViewModel {
                 round_number,
                 wave_number,
                 timer_ms: _,
+                final_wave,
             } => {
                 self.round_number = *round_number;
                 self.wave_number = *wave_number;
                 if *wave_number == 1 {
                     self.reset_pot();
                 }
+                self.final_wave = *final_wave;
                 self.new_modifier = None;
             }
             ServerMessage::WaveResolved {
@@ -327,6 +330,10 @@ impl ViewModel {
                 self.cauldron_count = contributions
                     .iter()
                     .fold(0u8, |a, c| a.saturating_add(c.count));
+            }
+            ServerMessage::DeathmatchStarted { participants } => {
+                self.deathmatch = true;
+                self.dm_participants = participants.clone();
             }
             // Surfaced by the App as transient toasts/modals, not stored here.
             ServerMessage::SomeonePeeked
