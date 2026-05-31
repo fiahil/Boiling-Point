@@ -1,0 +1,44 @@
+[package]
+name = "boiling-point-server"
+description = "Boiling Point authoritative game server: owns the full domain model (incl. secrets) and the game loop."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "boiling_point_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "boiling-point-server"
+path = "src/main.rs"
+
+[dependencies]
+boiling-point-protocol = { path = "../protocol" }
+serde = { workspace = true }
+toml = "0.8"
+thiserror = { workspace = true }
+uuid = { workspace = true }
+rand = "0.8"
+tokio = { version = "1", features = ["full"] }
+chrono = { version = "0.4", features = ["serde"] }
+axum = { version = "0.8", features = ["ws"] }
+dashmap = "6"
+futures-util = "0.3"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.24"

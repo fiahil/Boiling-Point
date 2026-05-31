@@ -1,0 +1,216 @@
+# Boiling Point — default content / balance configuration.
+#
+# Every number here is a STARTING hypothesis: `[needs playtesting]`. The bot
+# balance harness tunes these. The server validates this file at startup and
+# refuses to run if it is inconsistent (see `config::ContentConfig::validate`).
+#
+# Deck composition (90 cards): 56 plain colour cards + 13 wild + 21 effect cards.
+
+[deck]
+size = 90
+
+[deck.ratio_bounds]
+effect_min = 0.15
+effect_max = 0.35
+wild_min = 0.10
+wild_max = 0.20
+
+[timing]
+wave1_ms = 30000
+wave_ms = 10000
+
+[boiling_point]
+min = 8
+max = 14
+
+# ---- Plain colour cards (no effect): 14 per colour × 4 = 56 ----
+
+[[card]]
+color = "Ruby"
+volatility = 1
+points = 2
+copies = 5
+[[card]]
+color = "Ruby"
+volatility = 2
+points = 1
+copies = 5
+[[card]]
+color = "Ruby"
+volatility = 3
+points = 3
+copies = 2
+[[card]]
+color = "Ruby"
+volatility = 2
+points = 0
+copies = 2
+
+[[card]]
+color = "Sapphire"
+volatility = 1
+points = 2
+copies = 5
+[[card]]
+color = "Sapphire"
+volatility = 2
+points = 1
+copies = 5
+[[card]]
+color = "Sapphire"
+volatility = 3
+points = 3
+copies = 2
+[[card]]
+color = "Sapphire"
+volatility = 2
+points = 0
+copies = 2
+
+[[card]]
+color = "Emerald"
+volatility = 1
+points = 2
+copies = 5
+[[card]]
+color = "Emerald"
+volatility = 2
+points = 1
+copies = 5
+[[card]]
+color = "Emerald"
+volatility = 3
+points = 3
+copies = 2
+[[card]]
+color = "Emerald"
+volatility = 2
+points = 0
+copies = 2
+
+[[card]]
+color = "Amethyst"
+volatility = 1
+points = 2
+copies = 5
+[[card]]
+color = "Amethyst"
+volatility = 2
+points = 1
+copies = 5
+[[card]]
+color = "Amethyst"
+volatility = 3
+points = 3
+copies = 2
+[[card]]
+color = "Amethyst"
+volatility = 2
+points = 0
+copies = 2
+
+# ---- Wild cards: 13 ----
+
+[[card]]
+color = "Wild"
+volatility = 2
+points = 2
+copies = 7
+[[card]]
+color = "Wild"
+volatility = 1
+points = 3
+copies = 6
+
+# ---- Effect cards: 21 (all 8 kinds present) ----
+
+[[card]]
+color = "Ruby"
+volatility = 2
+points = 1
+effect = "Peek"
+copies = 4
+[[card]]
+color = "Sapphire"
+volatility = 1
+points = 0
+effect = "Dampen"
+copies = 3
+[[card]]
+color = "Emerald"
+volatility = 3
+points = 0
+effect = "VolatileSurge"
+copies = 3
+[[card]]
+color = "Amethyst"
+volatility = 1
+points = 1
+effect = "Copycat"
+copies = 3
+[[card]]
+color = "Ruby"
+volatility = 1
+points = 0
+effect = "Recall"
+copies = 3
+[[card]]
+color = "Sapphire"
+volatility = 1
+points = 0
+effect = "Expose"
+copies = 2
+[[card]]
+color = "Emerald"
+volatility = 2
+points = 0
+effect = "DoubleDown"
+copies = 2
+[[card]]
+color = "Amethyst"
+volatility = 2
+points = 0
+effect = "Shield"
+copies = 1
+
+# ---- Cauldron modifier pool: 20 copies, dramatic ones rarer ----
+
+[[modifier]]
+kind = "Residue"
+copies = 4
+[[modifier]]
+kind = "ThinIce"
+copies = 4
+[[modifier]]
+kind = "BountifulBrew"
+copies = 4
+[[modifier]]
+kind = "DeepCauldron"
+copies = 3
+[[modifier]]
+kind = "DoubleStakes"
+copies = 3
+[[modifier]]
+kind = "Reversal"
+copies = 2
+
+# ---- Preset emote palette (the only comms channel) ----
+
+[[emote]]
+id = 1
+name = "truce"
+[[emote]]
+id = 2
+name = "scheming"
+[[emote]]
+id = 3
+name = "fear"
+[[emote]]
+id = 4
+name = "taunt"
+[[emote]]
+id = 5
+name = "watching"
+[[emote]]
+id = 6
+name = "youre_done"

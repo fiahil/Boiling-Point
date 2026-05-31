@@ -1,5 +1,15 @@
 # Boiling Point — Server Architecture
 
+> **STATUS: Partially superseded.** This brainstorm predates the final game
+> design. Its **game-mechanics** sections are obsolete — §3 (sequential-turn
+> state machine), §4 (turn-based protocol), §6 (rumble/glow clue system), and
+> §12 (per-turn timing) were replaced by simultaneous hidden waves, blind
+> volatility, shared-loss explosions, and points-based scoring. The
+> **infrastructure** sections (§1 topology, §2 rooms, §5 concurrency, §7
+> reconnection, §8 persistence, §9 observability, §10 anti-cheat, §11 scaling)
+> remain valid and were implemented. The authoritative server contract now lives
+> in `openspec/changes/server-release-1/specs/`.
+
 The server stack is decided: **Rust (Axum + Tokio), PostgreSQL, MessagePack over WebSocket** (see [tech-stack-exploration.md](tech-stack-exploration.md)). This document explores the open architectural questions — how rooms live and die, what messages flow on the wire, how secrets are managed, what happens on disconnect, and more.
 
 Nothing here is final. Each section presents options with tradeoffs and a "start here" recommendation.
