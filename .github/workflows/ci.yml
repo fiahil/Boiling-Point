@@ -1,0 +1,107 @@
+# CI gate for the Boiling Point workspace.
+#
+# Runs formatting (fmt), lints (clippy, warnings-as-errors), and a boot smoke
+# test that proves the server starts: it validates the embedded content config
+# (fail-fast) and binds its ports. Command definitions live in the Makefile and
+# the shared `./.github/actions/setup-rust` action so CI never drifts and the
+# repeated toolchain/cache setup is defined once.
+#
+# Cold-start cost: only TWO jobs compile, and they run in parallel — `lint`
+# (clippy-driver artifacts) and `smoke` (rustc artifacts), which genuinely differ
+# and so cannot share a cache. `fmt` does no compilation at all.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to a branch/PR cancels the in-flight run for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only reads the repo.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI builds are one-shot, so incremental compilation only bloats the cache and
+  # slows the cold restore/save with no reuse benefit.
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  fmt:
+    name: Format (rustfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt
+          cache: "false" # no compilation here — skip the cache round-trip
+      - name: Check formatting
+        run: make fmt
+
+  lint:
+    name: Lint (clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+          cache-key: clippy
+      - name: Clippy (warnings as errors)
+        run: make lint
+
+  smoke:
+    name: Boot smoke (execute)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: build
+      - name: Boot smoke (execute)
+        run: |
+          set -euo pipefail
+          cargo build --locked -p boiling-point-server --bin boiling-point-server
+          ./target/debug/boiling-point-server &
+          pid=$!
+          # Guarantee the server is reaped even if a step below fails.
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+
+          # The Prometheus exporter on :9090 comes up during startup, after the
+          # content config validates. Poll it; bail early if the process dies.
+          up=
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9090/ >/dev/null 2>&1; then
+              up=1
+              echo "metrics endpoint up after ${i}s"
+              break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "::error::server exited during boot (bad config or failed bind)"
+              wait "$pid" || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [ -z "$up" ]; then
+            echo "::error::server did not serve metrics within 30s"
+            exit 1
+          fi
+
+          # Confirm the WebSocket port is bound too (handler rejects a plain GET,
+          # but a refused connection would mean nothing is listening).
+          if ! curl -sS -o /dev/null http://127.0.0.1:8080/ws; then
+            echo "::error::WebSocket port 8080 is not accepting connections"
+            exit 1
+          fi
+
+          echo "boot smoke test passed: config validated, ports bound"

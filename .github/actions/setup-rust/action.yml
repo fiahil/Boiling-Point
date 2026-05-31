@@ -1,0 +1,32 @@
+# Reusable Rust setup: install the stable toolchain and (optionally) restore the
+# cargo/target build cache. Factored out so every CI job shares one definition.
+# The repo must already be checked out before this runs (it's a local action).
+name: Setup Rust
+description: Install the stable toolchain and restore the cargo build cache.
+
+inputs:
+  components:
+    description: Extra rustup components, comma-separated (e.g. "clippy", "rustfmt").
+    required: false
+    default: ""
+  cache-key:
+    description: >-
+      Distinct rust-cache key. Jobs whose compiled artifacts differ (clippy vs
+      rustc) MUST use different keys so they don't evict each other.
+    required: false
+    default: ""
+  cache:
+    description: Set "false" to skip the build cache (e.g. the compile-less fmt job).
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        components: ${{ inputs.components }}
+    - if: inputs.cache == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.cache-key }}
