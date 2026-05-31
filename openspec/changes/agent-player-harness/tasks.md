@@ -35,35 +35,49 @@
 ## 6. CLI & Run
 
 - [x] 6.1 Build the `bp-bot` CLI: `--room`, `--difficulty`, `--persona`, `--epsilon`, one process per seat (spec: Per-Seat Process; D7)
-- [ ] 6.2 Run three agents against a room and join as the fourth seat to confirm independent processes and the full loop
+- [x] 6.2 Run three agents against a room and join as the fourth seat to confirm independent processes and the full loop
 
 ## 7. Validation
 
-- [ ] 7.1 Test: an agent plays a complete game (vs. other agents) from join through `GameOver` issuing only valid actions
+- [x] 7.1 Test: an agent plays a complete game (vs. other agents) from join through `GameOver` issuing only valid actions
 - [x] 7.2 Test: an Easy agent cannot call any card-history tool; a Hard agent can, and gets only current-epoch reveals
 - [x] 7.3 Test: across a session, an Easy agent's context never contains past card identities (gating holds)
-- [ ] 7.4 Test: deliberation overrunning the wave deadline triggers the local fallback and never stalls the wave
+- [x] 7.4 Test: deliberation overrunning the wave deadline triggers the local fallback and never stalls the wave
 - [x] 7.5 Test: the secret-boundary assertion never trips during a full game; persona emotes are palette-only and state-neutral
 - [ ] 7.6 Manual: a developer plays a live game with three agents (mixed difficulty/persona) and confirms it feels like a real table
 
 ## Status notes (not tasks)
 
-**Implemented and unit-verified now** (24 passing tests, run with
-`node --experimental-strip-types --test test/*.test.ts`, no deps or server needed):
-the view model (2.2), secret-boundary assertion (2.3, and the unit portion of 7.5), wave
-lifecycle (2.4), thin-context gating (3.4, 7.3), difficulty→`allowedTools` + epoch-scoped
-counting (3.6, 7.2), fallback heuristic (4.2), personas + palette-only emotes (5.1, 5.2,
-emote portion of 7.5), and blunder injection (5.3).
+**Unit-verified** (24 passing tests, `npm test`): view model (2.2), secret-boundary assertion
+(2.3, 7.5), wave lifecycle (2.4), thin-context gating (3.4, 7.3), difficulty→`allowedTools`
++ epoch-scoped counting (3.6, 7.2), fallback heuristic (4.2), personas + palette-only emotes
+(5.1, 5.2, 7.5), blunder injection (5.3). `tsc --noEmit` is clean against the real Agent SDK
+0.2.141 and the `protocol/` crate.
 
-**Implemented, verification deferred until `server-release-1` is committed** (per the apply
-instruction — server is in parallel development): the WS connection + handshake (2.1), auth
-(3.1), the MCP tool server + SDK session (3.2, 3.3, 3.5), the runner's live deliberation/
-fallback timing (4.1, 4.3), and the CLI (6.1). These need `npm install` + a running server.
+**Verified against the live server** (after merging `server-release-1` into this worktree):
+- Four `--brain fallback` bots auto-matched and played a complete game to `GameOver`, all
+  exiting cleanly — exercising the handshake, msgpack framing, the full view-model
+  reconciliation, early lock-in/wave-close, and the continuous secret-boundary assertion
+  (2.1, 3.3, 4.1, 4.3, 6.2, 7.1, 7.5 live).
+- The Agent SDK path (3.1, 3.2, 3.5) works: a probe authenticated via the Claude Code stored
+  login (subscription, no API key), ran Haiku, and called `commit_card` with a valid card.
+- A live mixed game (1 Haiku claude bot + 3 fallback) progressed through multiple rounds:
+  the agent decided on 30s opening waves and **fell back to the heuristic on 10s sub-waves,
+  never stalling the table** (4.2/4.4 live) — confirming 7.4.
 
-**Blocked on the live server / deps** (left unchecked): the full-game and multi-process
-runs and the manual playtest — 6.2, 7.1, 7.4 (timer-trigger integration), 7.5 (the
-"during a full game" portion), 7.6.
+**7.6 is the developer's to do** — the harness is ready; a human plays a live table with
+three agents and judges the feel. See the README for the commands.
 
-**Provisional surface:** `src/protocol/messages.ts` is hand-authored from the documented
-catalog and MUST be regenerated from the Rust `protocol/` crate via `npm run gen:protocol`
-(1.2's seam) once that crate lands.
+**Known findings / divergences from the original plan:**
+- The Rust `uuid` serializes as 16 raw BYTES over MessagePack (a string only in JSON), so the
+  codec canonicalizes decoded byte arrays to hex `PlayerId` strings.
+- There is **no `PickTarget`** in the real protocol (3.2's `pick_target` tool was dropped);
+  targeted effects resolve server-side. Emotes are numeric `EmoteId`s, not strings.
+- **Per-decision latency ≈ 23s** (Agent SDK spawns the Claude CLI per `query()`), so on 10s
+  sub-waves the agent falls back. A **persistent SDK session** (vs. fresh `query()` per wave)
+  is the key follow-up to make the LLM brain timely on fast waves.
+- A `--brain fallback` mode was added (zero-cost heuristic seat-filler) — it doubles as the
+  protocol integration harness.
+- `messages.ts` is now an exact hand-mirror of `protocol/`; regenerating it via a feature-
+  gated `ts-rs` derive (1.2's seam) remains the proper long-term step (the crate does not
+  derive ts-rs yet, so `npm run gen:protocol` reports the crate's absence of bindings).

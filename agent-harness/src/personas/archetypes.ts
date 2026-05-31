@@ -4,7 +4,7 @@
 // secondarily, via biasFallback (how the local fallback leans when Claude is late). It
 // grants NO capability. With no persona, the agent plays straight.
 
-import type { Card } from "../protocol/messages.ts";
+import type { Color, HandCard } from "../protocol/messages.ts";
 import type { Move } from "../agent/actions.ts";
 import type { ViewModel } from "../net/view-model.ts";
 
@@ -29,17 +29,17 @@ export interface Persona {
   biasFallback?: (vm: ViewModel) => Move | undefined;
 }
 
-const byHighestVolatility = (hand: Card[]): Card | undefined =>
-  hand.length === 0 ? undefined : [...hand].sort((a, b) => b.volatility - a.volatility || b.points - a.points)[0];
+const byHighestVolatility = (hand: HandCard[]): HandCard | undefined =>
+  hand.length === 0 ? undefined : [...hand].sort((a, b) => b.view.volatility - a.view.volatility || b.view.points - a.view.points)[0];
 
-const byLowestVolatility = (hand: Card[]): Card | undefined =>
-  hand.length === 0 ? undefined : [...hand].sort((a, b) => a.volatility - b.volatility || a.points - b.points)[0];
+const byLowestVolatility = (hand: HandCard[]): HandCard | undefined =>
+  hand.length === 0 ? undefined : [...hand].sort((a, b) => a.view.volatility - b.view.volatility || a.view.points - b.view.points)[0];
 
-const firstOfColor = (hand: Card[], color: string): Card | undefined =>
-  hand.find((c) => c.color === color);
+const firstOfColor = (hand: HandCard[], color: Color): HandCard | undefined =>
+  hand.find((c) => c.view.color === color);
 
-const firstDecoy = (hand: Card[], ownColor: string): Card | undefined =>
-  hand.find((c) => c.color !== ownColor && c.color !== "Wild");
+const firstDecoy = (hand: HandCard[], ownColor: Color): HandCard | undefined =>
+  hand.find((c) => c.view.color !== ownColor && c.view.color !== "Wild");
 
 export const ARCHETYPES: Record<Archetype, Persona> = {
   gambler: {

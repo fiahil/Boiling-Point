@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import { applyServerMessage, createViewModel, currentEpochReveals } from "../src/net/view-model.ts";
 import { assertNoSecretLeak } from "../src/net/secret-boundary.ts";
-import type { ServerMessage } from "../src/protocol/messages.ts";
+import type { CardView, ServerMessage } from "../src/protocol/messages.ts";
+
+const RUBY: CardView = { color: "Ruby", volatility: 1, points: 2, effect: null };
 
 function feed(msgs: ServerMessage[]) {
   const vm = createViewModel();
@@ -18,19 +20,18 @@ test("builds self + opponents and tracks scores, contribution, lockout, pot", ()
   const vm = feed([
     {
       type: "RoomJoined",
-      room_id: "r1",
+      room_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
       players: [
-        { id: "me", name: "Me", color: "Ruby", connected: true },
-        { id: "opp", name: "Opp", color: "Sapphire", connected: true },
+        { id: "me", display_name: "Me", color: "Ruby", connected: true },
+        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true },
       ],
     },
-    { type: "YourHand", cards: [{ id: 1, color: "Ruby", volatility: 1, points: 2 }] },
-    { type: "RoundStarted", round_number: 1, threshold_min: 8, threshold_max: 14, multiplier: 1 },
-    { type: "WaveOpened", wave_number: 1, timer_ms: 30000 },
-    { type: "WaveResolved", committed: ["me"], passed: ["opp"], pot_card_count: 1 },
-    { type: "RoundScored", scores: { me: 5, opp: 0 }, deltas: { me: 5, opp: 0 } },
+    { type: "YourHand", cards: [{ id: 1, view: RUBY }] },
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveResolved", played: ["me"], passed: ["opp"], cauldron_card_count: 1, contributions: [{ player: "me", count: 1 }] },
+    { type: "ScoreUpdate", scores: [{ player: "me", score: 5 }, { player: "opp", score: 0 }] },
   ]);
 
   assert.equal(vm.self.playerId, "me");
@@ -42,7 +43,7 @@ test("builds self + opponents and tracks scores, contribution, lockout, pot", ()
   const opp = vm.players.get("opp");
   assert.equal(me?.score, 5);
   assert.equal(me?.contribution, 1);
-  assert.equal(me?.committedThisWave, true);
+  assert.equal(me?.committedLastWave, true);
   assert.equal(opp?.lockedOut, true);
 });
 
@@ -50,36 +51,38 @@ test("never holds a boiling point on a safe brew", () => {
   const vm = feed([
     {
       type: "RoomJoined",
-      room_id: "r1",
+      room_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
-      players: [{ id: "me", name: "Me", color: "Ruby", connected: true }],
+      players: [{ id: "me", display_name: "Me", color: "Ruby", connected: true }],
     },
-    { type: "RoundStarted", round_number: 1, threshold_min: 8, threshold_max: 14, multiplier: 1 },
-    { type: "WaveOpened", wave_number: 1, timer_ms: 30000 },
-    { type: "WaveResolved", committed: ["me"], passed: [], pot_card_count: 1 },
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 1, contributions: [{ player: "me", count: 1 }] },
     {
-      type: "RoundRevealed",
-      reveals: [{ player_id: "me", card: { id: 1, color: "Ruby", volatility: 1, points: 2 } }],
-      outcome: { kind: "Domination", winner: "me" },
+      type: "Depile",
+      reveals: [{ player: "me", card: RUBY, running_volatility: 1 }],
+      exploded: false,
+      boiling_point: null,
+      crossing_index: null,
     },
   ]);
   assert.equal(vm.self.disclosedBoilingPoint, undefined);
   assert.equal(vm.revealHistory.length, 1);
 });
 
-test("boiling point enters only via own Peek or an explosion", () => {
+test("boiling point enters only via own Peek or an exploded depile", () => {
   const vm = createViewModel();
-  applyServerMessage(vm, { type: "PeekResult", threshold_value: 11 });
+  applyServerMessage(vm, { type: "PeekResult", boiling_point: 11 });
   assert.equal(vm.self.disclosedBoilingPoint, 11);
   assert.equal(vm.self.boilingPointSource, "peek");
   assertNoSecretLeak(vm);
 
   applyServerMessage(vm, {
-    type: "Explosion",
+    type: "Depile",
+    reveals: [{ player: "opp", card: RUBY, running_volatility: 9 }],
+    exploded: true,
     boiling_point: 9,
-    total_volatility: 10,
-    crossing_player: "opp",
+    crossing_index: 0,
   });
   assert.equal(vm.self.disclosedBoilingPoint, 9);
   assert.equal(vm.self.boilingPointSource, "explosion");
@@ -88,20 +91,14 @@ test("boiling point enters only via own Peek or an explosion", () => {
 
 test("reshuffle starts a new counting epoch", () => {
   const vm = feed([
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 1, contributions: [] },
     {
-      type: "RoomJoined",
-      room_id: "r1",
-      your_player_id: "me",
-      your_color: "Ruby",
-      players: [{ id: "me", name: "Me", color: "Ruby", connected: true }],
-    },
-    { type: "RoundStarted", round_number: 1, threshold_min: 8, threshold_max: 14, multiplier: 1 },
-    { type: "WaveOpened", wave_number: 1, timer_ms: 30000 },
-    { type: "WaveResolved", committed: ["me"], passed: [], pot_card_count: 1 },
-    {
-      type: "RoundRevealed",
-      reveals: [{ player_id: "me", card: { id: 1, color: "Ruby", volatility: 1, points: 2 } }],
-      outcome: { kind: "Domination", winner: "me" },
+      type: "Depile",
+      reveals: [{ player: "me", card: RUBY, running_volatility: 1 }],
+      exploded: false,
+      boiling_point: null,
+      crossing_index: null,
     },
     { type: "DeckReshuffled" },
   ]);

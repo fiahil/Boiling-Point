@@ -1,15 +1,17 @@
-// Orchestrates one agent seat: connect → join → play to GameOver. Ties together the net
+// Orchestrates one agent seat: connect → enter → play to GameOver. Ties together the net
 // layer, the view model + secret-boundary assertion, the wave lifecycle (deliberate at the
 // previous wave's resolution, commit/lock-in at open, fast fallback on overrun — design
-// D4), the Agent SDK session, and persona emotes. EDGE MODULE: the live-server timing and
-// SDK control flow here are PROVISIONAL and verified once server-release-1 is committed.
+// D4), the Agent SDK session, and persona emotes.
+//
+// Two "brains": `claude` drives decisions through the Agent SDK; `fallback` plays the local
+// heuristic only (no LLM) — a zero-cost seat-filler and the protocol integration harness.
 
-import { Connection } from "./net/connection.ts";
+import { Connection, type EntryConfig, type JoinResult } from "./net/connection.ts";
 import { applyServerMessage, createViewModel, currentEpochReveals, type ViewModel } from "./net/view-model.ts";
 import { assertNoSecretLeak } from "./net/secret-boundary.ts";
 import { WaveLifecycle } from "./net/wave-lifecycle.ts";
 import type { WireMode } from "./protocol/codec.ts";
-import type { CardId, ServerMessage } from "./protocol/messages.ts";
+import type { EmoteId, PlayerId, PlayerScore, ServerMessage } from "./protocol/messages.ts";
 
 import { type Move, moveToClientMessage } from "./agent/actions.ts";
 import { allowedToolsFor, modelFor, type Difficulty } from "./agent/difficulty.ts";
@@ -23,19 +25,30 @@ import { maybeBlunder } from "./personas/blunder.ts";
 import { getPersona, type Archetype, type Persona } from "./personas/archetypes.ts";
 import { emoteFor, type Situation } from "./personas/emotes.ts";
 
+export type Brain = "claude" | "fallback";
+
 export interface RunnerConfig {
   url: string;
-  room: string;
-  name: string;
+  entry: EntryConfig;
   difficulty: Difficulty;
   archetype?: Archetype;
   epsilon: number;
   mode: WireMode;
+  brain: Brain;
   /** Submit the fallback at this fraction of the wave timer if the agent is not done. */
   fallbackAt: number;
 }
 
 const FALLBACK_FRACTION_DEFAULT = 0.8;
+/** Spacing after a commit before sending LockIn, to clear the server's 100ms rate limit. */
+const LOCK_IN_DELAY_MS = 150;
+
+export interface GameResult {
+  winners: PlayerId[];
+  finalScores: PlayerScore[];
+  /** True if the connection closed before a GameOver was seen. */
+  aborted: boolean;
+}
 
 export class AgentRunner {
   private readonly vm: ViewModel = createViewModel();
@@ -47,10 +60,19 @@ export class AgentRunner {
   private pending: Move | null = null;
   private decided = false;
   private deliberating = false;
+  private submittedWave = -1;
   private fallbackTimer: ReturnType<typeof setTimeout> | undefined;
   private lastEmoteAt = 0;
+  private finished = false;
+  private doneResolve!: (r: GameResult) => void;
+  private readonly donePromise = new Promise<GameResult>((res) => {
+    this.doneResolve = res;
+  });
 
-  constructor(private readonly cfg: RunnerConfig) {
+  private readonly cfg: RunnerConfig;
+
+  constructor(cfg: RunnerConfig) {
+    this.cfg = cfg;
     this.conn = new Connection(cfg.url, cfg.mode);
     this.persona = getPersona(cfg.archetype);
 
@@ -58,19 +80,24 @@ export class AgentRunner {
       getViewModel: () => this.vm,
       decideMove: (move) => this.onAgentDecision(move),
       lockIn: () => this.conn.send({ type: "LockIn" }),
-      pickTarget: (cardId: CardId) => this.conn.send({ type: "PickTarget", card_id: cardId }),
-      sendEmote: (id) => this.conn.send({ type: "SendEmote", emote_id: id }),
+      sendEmote: (emote: EmoteId) => this.conn.send({ type: "Emote", emote }),
       revealHistory: () => currentEpochReveals(this.vm),
     };
     this.server = createBpToolServer(deps);
 
-    this.lifecycle.onResolve(() => this.startDeliberation());
+    this.lifecycle.onResolve(() => this.onWaveResolve());
     this.lifecycle.onOpen((_wave, timerMs) => this.onWaveOpen(timerMs));
+    this.conn.onClose(() => this.finish({ winners: [], finalScores: [], aborted: true }));
   }
 
-  async start(): Promise<void> {
+  async start(): Promise<JoinResult> {
     this.conn.onServerMessage((msg) => this.onMessage(msg));
-    await this.conn.connectAndJoin(this.cfg.room, this.cfg.name);
+    return this.conn.connectAndEnter(this.cfg.entry);
+  }
+
+  /** Resolves when the game ends (GameOver) or the connection closes (aborted). */
+  whenDone(): Promise<GameResult> {
+    return this.donePromise;
   }
 
   // --- message handling -----------------------------------------------------
@@ -80,15 +107,27 @@ export class AgentRunner {
     assertNoSecretLeak(this.vm); // continuous secret-boundary check (spec)
     this.lifecycle.handle(msg);
     this.reactWithEmote(msg);
-    if (msg.type === "GameOver") this.stop();
+    if (msg.type === "GameOver") {
+      this.finish({ winners: msg.winners, finalScores: msg.final_scores, aborted: false });
+    }
+  }
+
+  private finish(result: GameResult): void {
+    if (this.finished) return;
+    this.finished = true;
+    this.stop();
+    this.doneResolve(result);
   }
 
   // --- timeliness: deliberate at resolve, commit at open, fallback on overrun
 
-  /** Begin thinking about the upcoming wave (the public state is final at resolve, D4). */
+  private onWaveResolve(): void {
+    // The public state is final at resolve (D4) — start thinking about the next wave now.
+    if (this.cfg.brain === "claude") this.startDeliberation();
+  }
+
   private startDeliberation(): void {
-    if (this.deliberating || this.vm.gameOver) return;
-    if (this.isLockedOut()) return;
+    if (this.deliberating || this.vm.gameOver || this.isLockedOut()) return;
     this.deliberating = true;
     this.decided = false;
     this.pending = null;
@@ -111,40 +150,50 @@ export class AgentRunner {
   }
 
   private onWaveOpen(timerMs: number): void {
-    // If we have not started thinking yet (e.g. the first wave of the game), start now.
-    if (!this.deliberating && this.pending === null && !this.decided) this.startDeliberation();
+    if (this.isLockedOut()) return;
 
-    // If the agent already decided during the gap, commit immediately.
+    if (this.cfg.brain === "fallback") {
+      // No LLM: play the (persona-biased) heuristic promptly so the table flows.
+      clearTimeout(this.fallbackTimer);
+      this.fallbackTimer = setTimeout(() => this.submit(this.personaBiasedFallback()), 100);
+      return;
+    }
+
+    // claude brain
+    if (!this.deliberating && this.pending === null && !this.decided) this.startDeliberation();
     if (this.pending) {
       this.submit(this.pending);
       return;
     }
-
-    // Otherwise arm the fast local fallback so the wave never stalls on a slow agent.
     const at = clamp01(this.cfg.fallbackAt || FALLBACK_FRACTION_DEFAULT);
     clearTimeout(this.fallbackTimer);
     this.fallbackTimer = setTimeout(() => {
-      if (this.pending === null) this.submit(this.personaBiasedFallback());
+      if (this.submittedWave !== this.vm.wave?.number) {
+        if (process.env.BP_DEBUG) console.error(`[fallback] agent late — playing heuristic (wave ${this.vm.wave?.number})`);
+        this.submit(this.personaBiasedFallback());
+      }
     }, Math.max(0, Math.floor(timerMs * at)));
   }
 
   /** Called by the move tool when the agent commits/passes. */
   private onAgentDecision(move: Move): void {
     this.decided = true;
-    if (this.isWaveOpen()) {
-      this.submit(move);
-    } else {
-      // Decided during the inter-wave gap — hold and commit when the wave opens.
-      this.pending = move;
-    }
+    if (process.env.BP_DEBUG) console.error(`[agent] chose ${describe(move)} (wave ${this.vm.wave?.number})`);
+    if (this.isWaveOpen()) this.submit(move);
+    else this.pending = move; // decided in the inter-wave gap — commit when the wave opens
   }
 
   private submit(move: Move): void {
+    const wave = this.vm.wave?.number ?? -1;
+    if (this.submittedWave === wave || !this.isWaveOpen() || this.isLockedOut()) return;
+    this.submittedWave = wave;
     clearTimeout(this.fallbackTimer);
     this.pending = null;
+
     const { move: final } = maybeBlunder(move, this.vm, this.cfg.epsilon);
     this.conn.send(moveToClientMessage(final));
-    this.conn.send({ type: "LockIn" }); // lock in early so the table keeps moving (D4)
+    // Lock in early to close the wave (D4), but space it past the 100ms rate limit.
+    setTimeout(() => this.conn.send({ type: "LockIn" }), LOCK_IN_DELAY_MS);
   }
 
   private personaBiasedFallback(): Move {
@@ -158,13 +207,12 @@ export class AgentRunner {
     if (!this.persona) return;
     const situation = situationFor(msg, this.vm);
     if (!situation) return;
-    const id = emoteFor(this.persona.archetype, situation);
-    if (!id) return;
-    // Respect the server's 100ms rate limit with margin; don't spam.
+    const emote = emoteFor(this.persona.archetype, situation);
+    if (emote === undefined) return;
     const now = Date.now();
-    if (now - this.lastEmoteAt < 1500) return;
+    if (now - this.lastEmoteAt < 1500) return; // don't spam / collide with the rate limit
     this.lastEmoteAt = now;
-    this.conn.send({ type: "SendEmote", emote_id: id });
+    this.conn.send({ type: "Emote", emote });
   }
 
   // --- helpers --------------------------------------------------------------
@@ -188,11 +236,11 @@ function situationFor(msg: ServerMessage, vm: ViewModel): Situation | undefined 
     case "WaveOpened":
       return "wave_open";
     case "WaveResolved":
-      return msg.pot_card_count >= Math.max(3, vm.players.size) ? "big_pot" : "rival_committed";
+      return msg.cauldron_card_count >= Math.max(3, vm.players.size) ? "big_pot" : "rival_committed";
     case "Explosion":
       return "after_explosion";
     case "GameOver":
-      return msg.winner === vm.self.playerId ? "after_win" : undefined;
+      return msg.winners.includes(vm.self.playerId) ? "after_win" : undefined;
     default:
       return undefined;
   }
@@ -202,4 +250,8 @@ function clamp01(x: number): number {
   if (!Number.isFinite(x) || x < 0) return 0;
   if (x > 1) return 1;
   return x;
+}
+
+function describe(move: Move): string {
+  return move.kind === "commit" ? `commit #${move.cardId}` : "pass";
 }

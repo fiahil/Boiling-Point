@@ -10,9 +10,9 @@ test("fires open with the timer budget and resolve on the matching events", () =
   lc.onOpen((wave, timer) => opens.push({ wave, timer }));
   lc.onResolve((wave) => resolves.push(wave));
 
-  lc.handle({ type: "WaveOpened", wave_number: 1, timer_ms: 30000 });
-  lc.handle({ type: "WaveResolved", committed: ["me"], passed: [], pot_card_count: 1 });
-  lc.handle({ type: "WaveOpened", wave_number: 2, timer_ms: 10000 });
+  lc.handle({ type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 });
+  lc.handle({ type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 1, contributions: [] });
+  lc.handle({ type: "WaveOpened", round_number: 1, wave_number: 2, timer_ms: 10000 });
 
   assert.deepEqual(opens, [
     { wave: 1, timer: 30000 },
@@ -27,7 +27,7 @@ test("ignores unrelated messages", () => {
   let fired = 0;
   lc.onOpen(() => fired++);
   lc.onResolve(() => fired++);
-  lc.handle({ type: "HeartbeatAck" });
-  lc.handle({ type: "RoundScored", scores: {}, deltas: {} });
+  lc.handle({ type: "Heartbeat" });
+  lc.handle({ type: "ScoreUpdate", scores: [] });
   assert.equal(fired, 0);
 });

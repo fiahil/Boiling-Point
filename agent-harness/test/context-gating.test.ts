@@ -3,36 +3,36 @@ import assert from "node:assert/strict";
 
 import { applyServerMessage, createViewModel } from "../src/net/view-model.ts";
 import { buildTurnContext, renderTurnContext, FORBIDDEN_CONTEXT_KEYS } from "../src/agent/context.ts";
-import type { ServerMessage } from "../src/protocol/messages.ts";
+import type { CardView, ServerMessage } from "../src/protocol/messages.ts";
 
-// A card id that appears ONLY in a past depile reveal — never in the agent's hand.
-const SECRET_PAST_ID = 9999;
+const MY_CARD: CardView = { color: "Ruby", volatility: 1, points: 2, effect: null };
+// A past-reveal card distinct from anything in hand — the kind a counter would exploit.
+const PAST_REVEAL: CardView = { color: "Emerald", volatility: 3, points: 3, effect: "DoubleDown" };
 
 function withHistory() {
   const vm = createViewModel();
   const msgs: ServerMessage[] = [
     {
       type: "RoomJoined",
-      room_id: "r1",
+      room_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
       players: [
-        { id: "me", name: "Me", color: "Ruby", connected: true },
-        { id: "opp", name: "Opp", color: "Sapphire", connected: true },
+        { id: "me", display_name: "Me", color: "Ruby", connected: true },
+        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true },
       ],
     },
-    { type: "YourHand", cards: [{ id: 1, color: "Ruby", volatility: 1, points: 2 }] },
-    { type: "RoundStarted", round_number: 1, threshold_min: 8, threshold_max: 14, multiplier: 1 },
-    { type: "WaveOpened", wave_number: 1, timer_ms: 30000 },
-    { type: "WaveResolved", committed: ["me", "opp"], passed: [], pot_card_count: 2 },
+    { type: "YourHand", cards: [{ id: 1, view: MY_CARD }] },
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveResolved", played: ["me", "opp"], passed: [], cauldron_card_count: 2, contributions: [] },
     {
-      // A prior round's reveal — the kind of identity a card-counter would use.
-      type: "RoundRevealed",
-      reveals: [{ player_id: "opp", card: { id: SECRET_PAST_ID, color: "Emerald", volatility: 3, points: 3 } }],
-      outcome: { kind: "Domination", winner: "opp" },
+      type: "Depile",
+      reveals: [{ player: "opp", card: PAST_REVEAL, running_volatility: 3 }],
+      exploded: false,
+      boiling_point: null,
+      crossing_index: null,
     },
-    { type: "RoundStarted", round_number: 2, threshold_min: 8, threshold_max: 14, multiplier: 1 },
-    { type: "WaveOpened", wave_number: 1, timer_ms: 30000 },
+    { type: "WaveOpened", round_number: 2, wave_number: 1, timer_ms: 30000 },
   ];
   for (const m of msgs) applyServerMessage(vm, m);
   return vm;
@@ -43,19 +43,18 @@ test("the turn context excludes reveal history and pot identities", () => {
   assert.ok(vm.revealHistory.length > 0, "the model DOES hold the public history");
 
   const ctx = buildTurnContext(vm);
-  const keys = Object.keys(ctx);
   for (const forbidden of FORBIDDEN_CONTEXT_KEYS) {
-    assert.ok(!keys.includes(forbidden), `context must not expose '${forbidden}'`);
+    assert.ok(!Object.keys(ctx).includes(forbidden), `context must not expose '${forbidden}'`);
   }
+  // No depile entry leaked: running_volatility is a field unique to DepileEntry.
+  assert.ok(!JSON.stringify(ctx).includes("running_volatility"));
 });
 
 test("a tool-starved agent's rendered context never leaks a past card identity", () => {
   const vm = withHistory();
   const rendered = renderTurnContext(buildTurnContext(vm));
-  assert.ok(
-    !rendered.includes(String(SECRET_PAST_ID)),
-    "past reveal identity must not appear in the thin context — it is reachable only via reveal_history",
-  );
-  // The agent's own hand (id 1) is fine to show.
+  // The DoubleDown effect existed ONLY in the past reveal, never in this agent's hand.
+  assert.ok(!rendered.includes("DoubleDown"), "past reveal must not appear in the thin context");
+  // The agent's own hand (card #1) is fine to show.
   assert.ok(rendered.includes("#1"));
 });

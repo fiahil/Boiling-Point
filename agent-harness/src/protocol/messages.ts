@@ -1,19 +1,18 @@
-// PROVISIONAL protocol surface — REGENERATE FROM THE RUST `protocol/` CRATE VIA ts-rs.
+// Wire protocol — a faithful TypeScript mirror of the Rust `protocol/` crate
+// (protocol/src/{client,server,vocab,ids}.rs). Newtypes serialize transparently
+// (PlayerId→uuid string, CardId/EmoteId→number, RoomCode→string); unit enums serialize
+// as their variant name; `rmp_serde::to_vec_named` matches this object shape.
 //
-// `server-release-1` (which owns `protocol/`) is not yet committed, so these types are
-// hand-authored from the documented message catalog: server-architecture.md §4, the
-// server-release-1 `wire-protocol` / `round-engine` specs, and game-design-v2. They are
-// aligned to the v2 design (simultaneous hidden single-card waves, blind volatility,
-// shared-loss explosions, winner-takes-all by total color points) — NOT the v1 brainstorm
-// (sequential turns, rumble/glow). Variant names use the server's `#[serde(tag="type")]`
-// discriminant. When `protocol/` lands, replace this file with the ts-rs output; the rest
-// of the harness depends only on these shapes.
+// This is now an exact hand-mirror, not the earlier guess. The proper long-term step is a
+// feature-gated `ts-rs` derive on the Rust crate feeding `npm run gen:protocol`; that
+// remains a documented follow-up (the crate does not derive ts-rs today).
 
 export const PROTOCOL_VERSION = 1 as const;
 
-export type PlayerId = string;
-export type CardId = number;
-export type RoomCode = string;
+export type PlayerId = string; // PlayerId(Uuid) — transparent uuid string
+export type CardId = number; //   CardId(u32)
+export type EmoteId = number; //  EmoteId(u16)
+export type RoomCode = string; // RoomCode(String)
 
 export type Color = "Ruby" | "Sapphire" | "Emerald" | "Amethyst" | "Wild";
 
@@ -27,94 +26,112 @@ export type EffectKind =
   | "Recall"
   | "DoubleDown";
 
-/** A card as the owning player sees it (in their own hand) or as revealed in a depile. */
-export interface Card {
-  id: CardId;
+export type ModifierKind =
+  | "Residue"
+  | "ThinIce"
+  | "DeepCauldron"
+  | "BountifulBrew"
+  | "DoubleStakes"
+  | "Reversal";
+
+export type ErrorCode =
+  | "VersionMismatch"
+  | "UnknownRoom"
+  | "NotYourCard"
+  | "WrongPhase"
+  | "LockedOut"
+  | "InvalidEmote"
+  | "Internal";
+
+/** Fully-revealed card attributes (in your own hand, or at the depile). */
+export interface CardView {
   color: Color;
-  volatility: 1 | 2 | 3;
-  points: 0 | 1 | 2 | 3;
-  effect?: EffectKind;
+  volatility: number; // 1–3
+  points: number; //     0–3
+  effect: EffectKind | null;
 }
 
-export interface PlayerInfo {
+export interface HandCard {
+  id: CardId;
+  view: CardView;
+}
+
+export interface PlayerPublic {
   id: PlayerId;
-  name: string;
+  display_name: string;
   color: Color;
   connected: boolean;
 }
 
-export type RoundOutcome =
-  | { kind: "Domination"; winner: PlayerId }
-  | { kind: "Alliance"; winners: PlayerId[] }
-  | { kind: "Commune"; winners: PlayerId[] }
-  | { kind: "Explosion" };
-
-/** One card peeled during the reverse-order depile (public information). */
-export interface RevealedCard {
-  player_id: PlayerId;
-  card: Card;
+export interface PlayerScore {
+  player: PlayerId;
+  score: number; // i32, may be negative
 }
 
+export interface Contribution {
+  player: PlayerId;
+  count: number;
+}
+
+export interface DepileEntry {
+  player: PlayerId;
+  card: CardView;
+  running_volatility: number;
+}
+
+export type ScoringOutcome =
+  | { kind: "Domination"; winner: Color }
+  | { kind: "Split"; colors: Color[] };
+
 // ---------------------------------------------------------------------------
-// Client → Server
+// Client → Server  (#[serde(tag = "type")])
 // ---------------------------------------------------------------------------
 
 export type ClientMessage =
-  | { type: "JoinRoom"; room_code: RoomCode; player_name: string; protocol_version: number }
-  | { type: "LeaveRoom" }
-  /** Tentatively commit one card to the open wave; changeable until the wave closes. */
-  | { type: "CommitCard"; card_id: CardId }
-  /** Commit to passing this wave (locks you out of the round). */
-  | { type: "Pass" }
-  /** Finalize the current selection; the server closes the wave early when all active players lock in. */
+  | { type: "JoinRoom"; protocol_version: number; display_name: string; session_token: string | null; room_code: RoomCode }
+  | { type: "CreateRoom"; protocol_version: number; display_name: string; session_token: string | null }
+  | { type: "EnqueueMatch"; protocol_version: number; display_name: string; session_token: string | null }
+  | { type: "CommitCard"; card: CardId }
+  | { type: "CommitPass" }
   | { type: "LockIn" }
-  /** Resolve a targeted effect (e.g. Recall): choose one of your own cards in the pot. */
-  | { type: "PickTarget"; card_id: CardId }
-  /** Send a preset emote from the configured palette (the only comms channel). */
-  | { type: "SendEmote"; emote_id: string }
+  | { type: "Emote"; emote: EmoteId }
   | { type: "Heartbeat" };
 
 // ---------------------------------------------------------------------------
-// Server → Client  (audience noted; PRIVATE reaches only this player)
+// Server → Client  (#[serde(tag = "type")])
 // ---------------------------------------------------------------------------
 
 export type ServerMessage =
-  // PRIVATE
-  | { type: "RoomJoined"; room_id: string; players: PlayerInfo[]; your_player_id: PlayerId; your_color: Color }
-  | { type: "YourHand"; cards: Card[] }
-  | { type: "PeekResult"; threshold_value: number } // discloses the boiling point to THIS player only
-  | { type: "Error"; code: string; message: string }
-  | { type: "HeartbeatAck" }
-  // BROADCAST (public only — never face-down identities, never the boiling point)
-  | { type: "PlayerJoined"; player: PlayerInfo }
-  | { type: "PlayerLeft"; player_id: PlayerId }
-  | { type: "GameStarting"; round_count: number; player_order: PlayerId[] }
-  | { type: "RoundStarted"; round_number: number; threshold_min: number; threshold_max: number; multiplier: number }
-  | { type: "WaveOpened"; wave_number: number; timer_ms: number }
-  /** Wave resolved: who committed / who passed, and the running pot card count. No identities. */
-  | { type: "WaveResolved"; committed: PlayerId[]; passed: PlayerId[]; pot_card_count: number }
-  /** An effect fired. Most effects are silent until the depile; Peek announces anonymously, Expose reveals publicly. */
-  | { type: "EffectAnnounced"; effect: EffectKind; revealed?: RevealedCard }
-  /** Reverse-order depile every round (last-added first). Full identities — public. */
-  | { type: "RoundRevealed"; reveals: RevealedCard[]; outcome: RoundOutcome }
-  /** Only ever sent on an explosion — the boiling point is revealed here and nowhere else publicly. */
-  | { type: "Explosion"; boiling_point: number; total_volatility: number; crossing_player: PlayerId }
-  | { type: "RoundScored"; scores: Record<PlayerId, number>; deltas: Record<PlayerId, number> }
-  /** Draw deck reshuffled from discard — card counting resets here (a new shuffle epoch). */
+  | { type: "RoomJoined"; room_code: RoomCode; your_player_id: PlayerId; your_color: Color; players: PlayerPublic[] }
+  | { type: "GameStarting"; players: PlayerPublic[]; round_count: number }
+  | { type: "YourHand"; cards: HandCard[] }
+  | { type: "WaveOpened"; round_number: number; wave_number: number; timer_ms: number }
+  | { type: "WaveResolved"; played: PlayerId[]; passed: PlayerId[]; cauldron_card_count: number; contributions: Contribution[] }
+  | { type: "ModifierRevealed"; modifier: ModifierKind; round_number: number }
+  | { type: "SomeonePeeked" }
+  | { type: "Exposed"; card: CardView }
   | { type: "DeckReshuffled" }
-  | { type: "EmoteBroadcast"; player_id: PlayerId; emote_id: string }
-  | { type: "GameOver"; final_scores: Record<PlayerId, number>; winner: PlayerId }
-  | { type: "StateSnapshot"; snapshot: StateSnapshot };
-
-/** Reconnection payload — scoped to what the player may know. */
-export interface StateSnapshot {
-  round_number: number;
-  wave_number: number;
-  your_hand: Card[];
-  scores: Record<PlayerId, number>;
-  pot_card_count: number;
-  players: PlayerInfo[];
-}
+  | { type: "EmoteBroadcast"; from: PlayerId; emote: EmoteId }
+  | { type: "PeekResult"; boiling_point: number } // private, secret
+  | { type: "Depile"; reveals: DepileEntry[]; exploded: boolean; boiling_point: number | null; crossing_index: number | null }
+  | { type: "RoundScored"; color_points: Array<[Color, number]>; outcome: ScoringOutcome; awards: PlayerScore[] }
+  | { type: "Explosion"; pot_value: number; deltas: PlayerScore[]; shielded: PlayerId[] }
+  | { type: "ScoreUpdate"; scores: PlayerScore[] }
+  | { type: "GameOver"; final_scores: PlayerScore[]; winners: PlayerId[] }
+  | { type: "Error"; code: ErrorCode; message: string }
+  | { type: "PlayerConnectionChanged"; player: PlayerId; connected: boolean }
+  | {
+      type: "StateSnapshot";
+      room_code: RoomCode;
+      your_player_id: PlayerId;
+      round_number: number;
+      players: PlayerPublic[];
+      scores: PlayerScore[];
+      active_modifiers: ModifierKind[];
+      contributions: Contribution[];
+      your_hand: HandCard[];
+    }
+  | { type: "Heartbeat" };
 
 export type ServerMessageType = ServerMessage["type"];
 export type ClientMessageType = ClientMessage["type"];

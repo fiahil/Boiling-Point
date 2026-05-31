@@ -8,8 +8,8 @@ import { isMoveLegal, type Move } from "../src/agent/actions.ts";
 function vmWithHand() {
   const vm = createViewModel();
   vm.self.hand = [
-    { id: 1, color: "Ruby", volatility: 1, points: 0 },
-    { id: 2, color: "Sapphire", volatility: 3, points: 3 },
+    { id: 1, view: { color: "Ruby", volatility: 1, points: 0, effect: null } },
+    { id: 2, view: { color: "Sapphire", volatility: 3, points: 3, effect: null } },
   ];
   return vm;
 }

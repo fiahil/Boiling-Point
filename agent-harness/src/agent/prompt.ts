@@ -18,9 +18,13 @@ volatility exceeds it, the cauldron EXPLODES and EVERY player loses points equal
 If it never explodes, the color with the highest TOTAL POINTS in the pot wins ALL the pot's
 points (ties split). You only ever learn the boiling point if you Peek or it explodes.
 
-You act ONLY by calling tools: commit_card, pass, lock_in, pick_target, send_emote.
-Decide deliberately, then lock_in so the table is not kept waiting. Emotes (preset only) are
-table-talk: bluff, taunt, or mislead freely — they carry no mechanical weight.`;
+Some rounds add a cauldron MODIFIER (e.g. ThinIce lowers the boiling point, DeepCauldron
+raises it, Reversal makes the LOWEST-point colour win); active modifiers are shown to you.
+
+You act ONLY by calling tools: commit_card, pass, lock_in, send_emote.
+Decide deliberately, then lock_in so the table is not kept waiting. Emotes (preset palette:
+1 truce, 2 scheming, 3 fear, 4 taunt, 5 watching, 6 youre_done) are table-talk: bluff,
+taunt, or mislead freely — they carry no mechanical weight.`;
 
 export function buildSystemPrompt(difficulty: Difficulty, archetype?: Archetype): string {
   const parts = [RULES];

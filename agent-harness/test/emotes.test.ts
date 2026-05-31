@@ -19,5 +19,6 @@ test("every persona emote is a palette id (never free text)", () => {
 });
 
 test("unknown emote ids are rejected", () => {
-  assert.equal(isPaletteEmote("totally not an emote"), false);
+  assert.equal(isPaletteEmote(999), false);
+  assert.equal(isPaletteEmote(0), false);
 });

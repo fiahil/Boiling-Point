@@ -10,7 +10,6 @@ export const TOOL_SHORT = {
   commit_card: "commit_card",
   pass: "pass",
   lock_in: "lock_in",
-  pick_target: "pick_target",
   send_emote: "send_emote",
   reveal_history: "reveal_history",
 } as const;
@@ -19,7 +18,6 @@ export const TOOL = {
   commit_card: q(TOOL_SHORT.commit_card),
   pass: q(TOOL_SHORT.pass),
   lock_in: q(TOOL_SHORT.lock_in),
-  pick_target: q(TOOL_SHORT.pick_target),
   send_emote: q(TOOL_SHORT.send_emote),
   reveal_history: q(TOOL_SHORT.reveal_history),
 } as const;
@@ -29,7 +27,6 @@ export const ACTION_TOOLS: readonly string[] = [
   TOOL.commit_card,
   TOOL.pass,
   TOOL.lock_in,
-  TOOL.pick_target,
   TOOL.send_emote,
 ];
 

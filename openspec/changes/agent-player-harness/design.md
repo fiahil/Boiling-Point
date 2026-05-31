@@ -67,9 +67,32 @@ Each agent is a separate process: `bp-bot --room <code> --difficulty <easy|hard>
 
 Additive. A new Node package outside the cargo workspace, consuming `server-release-1`'s protocol and `table-talk` palette. No schema or protocol changes. Ships after `server-release-1` is runnable enough to host a game and `protocol/` exports `ts-rs` types. Rollback is deletion of the package; nothing else depends on it.
 
+## Post-integration findings (after merging the committed `server-release-1`)
+
+Implementation against the real `protocol/` crate and a running server surfaced these:
+
+- **D9. Uuid is bytes on the wire.** The Rust `uuid` crate serializes as a STRING in JSON but
+  as 16 RAW BYTES in MessagePack, so `PlayerId` arrives as a `Uint8Array`. The codec now
+  canonicalizes every decoded byte array to a stable hex string, making `PlayerId` usable as
+  a Map key / Set member / `includes` value. (No client message carries a `PlayerId`, so no
+  encode-side handling is needed.)
+- **D10. No `PickTarget`; numeric emotes.** The real protocol has no target-pick message
+  (targeted effects resolve server-side), so that tool was dropped. Emotes are numeric
+  `EmoteId`s against the configured palette (1 truce … 6 youre_done), not strings.
+- **D11. Per-decision latency ≈ 23s.** The Agent SDK spawns the Claude CLI per `query()`, so a
+  fresh-query-per-wave design is timely only on the 30s opening wave; on 10s sub-waves the
+  agent falls back to the local heuristic (verified live — the table never stalls). **The key
+  follow-up is a persistent SDK session** to amortize startup and make the LLM brain timely on
+  fast waves.
+- **D12. `--brain fallback`.** A zero-cost heuristic brain (no LLM) was added; it fills seats
+  for client/UI testing and doubles as the protocol integration harness (four fallback bots
+  played a full game to `GameOver`).
+
 ## Open Questions
 
-- Does `protocol/` carry feature-gated `ts-rs` derives exported by a build script, or is codegen a standalone tool run? (Leaning: feature-gated derive + a small export build step.)
-- Is the JSON-fallback wire mode worth a small additive `server-release-1` handshake ask for debuggability, or is MessagePack-in-JS enough? (Leaning: MessagePack-in-JS now; revisit only if debugging pain justifies it.)
-- The exact v0 persona→emote mapping, pending the finalized `table-talk` palette in `server-release-1`'s content config.
-- Whether the full capability-tool ladder becomes a dedicated follow-up change once v0 proves the loop and the gating discipline.
+- ~~JSON-fallback wire mode~~ — **resolved:** the server accepts only binary MessagePack
+  frames (text is ignored), so the wire is MessagePack-only; JSON stays a debug-decode helper.
+- The `ts-rs` derive on `protocol/` is still the proper source of truth for `messages.ts`
+  (currently an exact hand-mirror); adding the feature-gated derive remains a follow-up.
+- Whether to implement the **persistent SDK session** (D11) and the full capability-tool ladder
+  as the next change once the loop and gating are proven (they are).

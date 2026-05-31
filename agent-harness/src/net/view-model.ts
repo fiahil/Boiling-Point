@@ -1,19 +1,19 @@
 // The agent's narrow, player-visible view of the game, built solely from received
 // ServerMessages. There is deliberately NO field for the boiling point (except the
-// guarded disclosure below), opponents' hand contents, or the draw deck — leakage is
-// prevented by construction (spec: Player-Visible View Model; design D6).
+// guarded disclosure below), opponents' hand contents, or face-down cauldron identities —
+// leakage is prevented by construction (spec: Player-Visible View Model; design D6).
 //
-// The reveal history IS held here because it is public (the depile is shown to everyone),
-// but it is EXCLUDED from the thin turn context and surfaced only via the reveal_history
-// capability tool — that is the difficulty gate (design D3), not a secret boundary.
+// The depile history IS held here because it is public, but it is EXCLUDED from the thin
+// turn context and surfaced only via the reveal_history capability tool — the difficulty
+// gate (design D3), not a secret boundary.
 
 import type {
-  Card,
   Color,
+  DepileEntry,
+  HandCard,
+  ModifierKind,
   PlayerId,
-  PlayerInfo,
-  RevealedCard,
-  RoundOutcome,
+  PlayerPublic,
   ServerMessage,
 } from "../protocol/messages.ts";
 import { discloseBoilingPoint } from "./secret-boundary.ts";
@@ -21,36 +21,33 @@ import { discloseBoilingPoint } from "./secret-boundary.ts";
 export interface SelfState {
   playerId: PlayerId;
   color: Color;
-  hand: Card[];
-  /** Set ONLY through discloseBoilingPoint() — own Peek or an explosion depile. */
+  hand: HandCard[];
+  /** Set ONLY through discloseBoilingPoint() — own Peek or an exploded depile. */
   disclosedBoilingPoint?: number;
   boilingPointSource?: "peek" | "explosion";
 }
 
 export interface PlayerView {
-  info: PlayerInfo;
+  info: PlayerPublic;
   score: number;
-  /** Cards this player has added to the pot this round. Reset each round. */
+  /** Cards contributed to the pot this round (from WaveResolved contributions). */
   contribution: number;
-  /** Committed a card in the current wave. Reset each wave. */
-  committedThisWave: boolean;
+  /** Committed a card in the wave that just resolved. */
+  committedLastWave: boolean;
   /** Passed → locked out for the rest of the round. */
   lockedOut: boolean;
 }
 
 export interface RoundView {
   number: number;
-  thresholdMin: number;
-  thresholdMax: number;
-  multiplier: number;
+  /** Modifiers active this game so far (cumulative; ThinIce/DeepCauldron shift the boiling point). */
+  activeModifiers: ModifierKind[];
 }
 
 export interface WaveView {
   number: number;
   open: boolean;
   timerMs?: number;
-  /** Local wall-clock deadline estimate, set by the net layer on WaveOpened. Informational only. */
-  deadlineTs?: number;
 }
 
 export interface PotView {
@@ -60,9 +57,10 @@ export interface PotView {
 
 export interface RevealRecord {
   round: number;
-  reveals: RevealedCard[];
-  outcome: RoundOutcome;
-  /** The shuffle epoch this round belonged to — counting is only valid within one epoch. */
+  reveals: DepileEntry[];
+  exploded: boolean;
+  /** Disclosed only when the round exploded. */
+  boilingPoint?: number;
   epoch: number;
 }
 
@@ -72,11 +70,12 @@ export interface ViewModel {
   round?: RoundView;
   wave?: WaveView;
   pot: PotView;
+  roundCount?: number;
   /** Public depile history (gated behind reveal_history, not put in the turn context). */
   revealHistory: RevealRecord[];
   /** Increments on DeckReshuffled; the current card-counting epoch. */
   shuffleEpoch: number;
-  gameOver?: { winner: PlayerId; finalScores: Record<PlayerId, number> };
+  gameOver?: { winners: PlayerId[]; finalScores: Array<{ player: PlayerId; score: number }> };
 }
 
 export function createViewModel(): ViewModel {
@@ -89,7 +88,7 @@ export function createViewModel(): ViewModel {
   };
 }
 
-function ensurePlayer(vm: ViewModel, info: PlayerInfo): PlayerView {
+function ensurePlayer(vm: ViewModel, info: PlayerPublic): PlayerView {
   const existing = vm.players.get(info.id);
   if (existing) {
     existing.info = info;
@@ -99,11 +98,16 @@ function ensurePlayer(vm: ViewModel, info: PlayerInfo): PlayerView {
     info,
     score: 0,
     contribution: 0,
-    committedThisWave: false,
+    committedLastWave: false,
     lockedOut: false,
   };
   vm.players.set(info.id, view);
   return view;
+}
+
+function activeModifiers(vm: ViewModel): ModifierKind[] {
+  if (!vm.round) vm.round = { number: 0, activeModifiers: [] };
+  return vm.round.activeModifiers;
 }
 
 /** Reduce a received ServerMessage into the view model. Returns the model for chaining. */
@@ -115,86 +119,87 @@ export function applyServerMessage(vm: ViewModel, msg: ServerMessage): ViewModel
       for (const info of msg.players) ensurePlayer(vm, info);
       break;
     }
+    case "GameStarting": {
+      vm.roundCount = msg.round_count;
+      for (const info of msg.players) ensurePlayer(vm, info);
+      break;
+    }
     case "YourHand": {
       vm.self.hand = msg.cards;
       break;
     }
-    case "PlayerJoined": {
-      ensurePlayer(vm, msg.player);
-      break;
-    }
-    case "PlayerLeft": {
-      const p = vm.players.get(msg.player_id);
-      if (p) p.info.connected = false;
-      break;
-    }
-    case "GameStarting": {
-      break;
-    }
-    case "RoundStarted": {
-      vm.round = {
-        number: msg.round_number,
-        thresholdMin: msg.threshold_min,
-        thresholdMax: msg.threshold_max,
-        multiplier: msg.multiplier,
-      };
-      vm.pot.cardCount = 0;
-      vm.wave = undefined;
-      for (const p of vm.players.values()) {
-        p.contribution = 0;
-        p.committedThisWave = false;
-        p.lockedOut = false;
-      }
-      break;
-    }
     case "WaveOpened": {
+      const newRound = msg.wave_number === 1;
+      if (!vm.round) vm.round = { number: msg.round_number, activeModifiers: [] };
+      vm.round.number = msg.round_number;
       vm.wave = { number: msg.wave_number, open: true, timerMs: msg.timer_ms };
-      for (const p of vm.players.values()) p.committedThisWave = false;
+      if (newRound) {
+        vm.pot.cardCount = 0;
+        for (const p of vm.players.values()) {
+          p.contribution = 0;
+          p.committedLastWave = false;
+          p.lockedOut = false;
+        }
+      }
       break;
     }
     case "WaveResolved": {
       if (vm.wave) vm.wave.open = false;
-      for (const p of vm.players.values()) p.committedThisWave = false;
-      for (const id of msg.committed) {
-        const p = vm.players.get(id);
-        if (p) {
-          p.committedThisWave = true;
-          p.contribution += 1;
-        }
+      const playedSet = new Set(msg.played);
+      const passedSet = new Set(msg.passed);
+      for (const p of vm.players.values()) {
+        p.committedLastWave = playedSet.has(p.info.id);
+        if (passedSet.has(p.info.id)) p.lockedOut = true;
       }
-      for (const id of msg.passed) {
-        const p = vm.players.get(id);
-        if (p) p.lockedOut = true;
+      for (const c of msg.contributions) {
+        const p = vm.players.get(c.player);
+        if (p) p.contribution = c.count;
       }
-      vm.pot.cardCount = msg.pot_card_count;
+      vm.pot.cardCount = msg.cauldron_card_count;
+      break;
+    }
+    case "ModifierRevealed": {
+      activeModifiers(vm).push(msg.modifier);
+      break;
+    }
+    case "SomeonePeeked":
+    case "Exposed": {
+      // Public effect signals. Exposed reveals a single pot card to all, but v0 does not
+      // fold it into the model (it is not part of the depile history / card count).
       break;
     }
     case "PeekResult": {
-      discloseBoilingPoint(vm, msg.threshold_value, "peek");
+      discloseBoilingPoint(vm, msg.boiling_point, "peek");
       break;
     }
-    case "EffectAnnounced": {
-      // Most effects are silent until the depile; Peek arrives privately (PeekResult).
-      // Expose's public reveal could aid counting, but v0 does not fold it into the model.
-      break;
-    }
-    case "RoundRevealed": {
+    case "Depile": {
+      if (msg.exploded && msg.boiling_point != null) {
+        discloseBoilingPoint(vm, msg.boiling_point, "explosion");
+      }
       vm.revealHistory.push({
         round: vm.round?.number ?? 0,
         reveals: msg.reveals,
-        outcome: msg.outcome,
+        exploded: msg.exploded,
+        ...(msg.boiling_point != null ? { boilingPoint: msg.boiling_point } : {}),
         epoch: vm.shuffleEpoch,
       });
       break;
     }
-    case "Explosion": {
-      discloseBoilingPoint(vm, msg.boiling_point, "explosion");
+    case "RoundScored": {
+      for (const a of msg.awards) {
+        const p = vm.players.get(a.player);
+        if (p) p.score = a.score;
+      }
       break;
     }
-    case "RoundScored": {
-      for (const [id, score] of Object.entries(msg.scores)) {
-        const p = vm.players.get(id);
-        if (p) p.score = score;
+    case "Explosion": {
+      // The boiling point arrives via Depile, not here; this carries the score deltas.
+      break;
+    }
+    case "ScoreUpdate": {
+      for (const s of msg.scores) {
+        const p = vm.players.get(s.player);
+        if (p) p.score = s.score;
       }
       break;
     }
@@ -205,27 +210,37 @@ export function applyServerMessage(vm: ViewModel, msg: ServerMessage): ViewModel
     case "EmoteBroadcast": {
       break; // table-talk has no game-state effect
     }
+    case "PlayerConnectionChanged": {
+      const p = vm.players.get(msg.player);
+      if (p) p.info.connected = msg.connected;
+      break;
+    }
     case "GameOver": {
-      vm.gameOver = { winner: msg.winner, finalScores: msg.final_scores };
+      vm.gameOver = { winners: msg.winners, finalScores: msg.final_scores };
       break;
     }
     case "StateSnapshot": {
-      const s = msg.snapshot;
-      vm.self.hand = s.your_hand;
-      vm.pot.cardCount = s.pot_card_count;
-      for (const info of s.players) ensurePlayer(vm, info);
-      for (const [id, score] of Object.entries(s.scores)) {
-        const p = vm.players.get(id);
-        if (p) p.score = score;
+      vm.self.playerId = msg.your_player_id;
+      vm.self.hand = msg.your_hand;
+      if (!vm.round) vm.round = { number: msg.round_number, activeModifiers: [] };
+      vm.round.number = msg.round_number;
+      vm.round.activeModifiers = [...msg.active_modifiers];
+      for (const info of msg.players) ensurePlayer(vm, info);
+      for (const s of msg.scores) {
+        const p = vm.players.get(s.player);
+        if (p) p.score = s.score;
+      }
+      for (const c of msg.contributions) {
+        const p = vm.players.get(c.player);
+        if (p) p.contribution = c.count;
       }
       break;
     }
     case "Error":
-    case "HeartbeatAck": {
+    case "Heartbeat": {
       break;
     }
     default: {
-      // Exhaustiveness guard — a new variant must be handled explicitly.
       const _never: never = msg;
       void _never;
     }
@@ -233,7 +248,7 @@ export function applyServerMessage(vm: ViewModel, msg: ServerMessage): ViewModel
   return vm;
 }
 
-/** Reveal history for the CURRENT shuffle epoch only (card counting resets on reshuffle). */
+/** Reveal history for the CURRENT shuffle epoch only (counting resets on reshuffle). */
 export function currentEpochReveals(vm: ViewModel): RevealRecord[] {
   return vm.revealHistory.filter((r) => r.epoch === vm.shuffleEpoch);
 }

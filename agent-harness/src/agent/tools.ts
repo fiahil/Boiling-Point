@@ -7,7 +7,7 @@
 import { createSdkMcpServer, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 
-import type { CardId } from "../protocol/messages.ts";
+import type { EmoteId } from "../protocol/messages.ts";
 import type { Move } from "./actions.ts";
 import { isMoveLegal } from "./actions.ts";
 import type { ViewModel, RevealRecord } from "../net/view-model.ts";
@@ -19,8 +19,7 @@ export interface ToolDeps {
   /** Forward the chosen move (commit a card / pass) and record the decision for the runner. */
   decideMove(move: Move): void;
   lockIn(): void;
-  pickTarget(cardId: CardId): void;
-  sendEmote(emoteId: string): void;
+  sendEmote(emote: EmoteId): void;
   /** Reveal history for the current shuffle epoch — the gated card-counting capability. */
   revealHistory(): RevealRecord[];
 }
@@ -61,22 +60,12 @@ export function createBpToolServer(deps: ToolDeps) {
     },
   );
 
-  const pickTarget = tool(
-    TOOL_SHORT.pick_target,
-    "Resolve a targeted effect (e.g. Recall): choose one of your own cards currently in the pot.",
-    { card_id: z.number().int() },
-    async ({ card_id }) => {
-      deps.pickTarget(card_id);
-      return ok(`Picked target ${card_id}.`);
-    },
-  );
-
   const sendEmote = tool(
     TOOL_SHORT.send_emote,
-    "Send a preset emote (the only communication channel). Must be a palette id; free text is not allowed.",
-    { emote_id: z.string() },
+    "Send a preset emote (the only communication channel). Palette: 1 truce, 2 scheming, 3 fear, 4 taunt, 5 watching, 6 youre_done. Free text is not allowed.",
+    { emote_id: z.number().int() },
     async ({ emote_id }) => {
-      if (!isPaletteEmote(emote_id)) return fail(`'${emote_id}' is not a palette emote.`);
+      if (!isPaletteEmote(emote_id)) return fail(`${emote_id} is not a palette emote (use 1-6).`);
       deps.sendEmote(emote_id);
       return ok(`Sent emote ${emote_id}.`);
     },
@@ -95,7 +84,7 @@ export function createBpToolServer(deps: ToolDeps) {
       const lines = records.flatMap((r) =>
         r.reveals.map(
           (rev) =>
-            `round ${r.round}: ${rev.player_id} played #${rev.card.id} ${rev.card.color} vol${rev.card.volatility}/pts${rev.card.points}${rev.card.effect ? ` [${rev.card.effect}]` : ""}`,
+            `round ${r.round}: ${rev.player} played ${rev.card.color} vol${rev.card.volatility}/pts${rev.card.points}${rev.card.effect ? ` [${rev.card.effect}]` : ""}`,
         ),
       );
       return ok(lines.length ? lines.join("\n") : "No cards revealed yet this shuffle epoch.");
@@ -105,6 +94,6 @@ export function createBpToolServer(deps: ToolDeps) {
   return createSdkMcpServer({
     name: SERVER_NAME,
     version: "0.0.0",
-    tools: [commitCard, pass, lockIn, pickTarget, sendEmote, revealHistory],
+    tools: [commitCard, pass, lockIn, sendEmote, revealHistory],
   });
 }
