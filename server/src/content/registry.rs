@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use boiling_point_protocol::vocab::{EffectKind, ModifierKind};
 
 use super::card::CardDef;
-use super::effect::{behavior_for as effect_behavior, Effect};
-use super::modifier::{behavior_for as modifier_behavior, Modifier};
+use super::effect::{Effect, behavior_for as effect_behavior};
+use super::modifier::{Modifier, behavior_for as modifier_behavior};
 
 /// One entry in the weighted modifier draw pool.
 pub struct ModifierPoolEntry {

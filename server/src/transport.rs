@@ -10,18 +10,18 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::Router;
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 
 use boiling_point_protocol::client::PROTOCOL_VERSION;
 use boiling_point_protocol::server::ErrorCode;
-use boiling_point_protocol::{codec, ClientMessage, PlayerId, ServerMessage};
+use boiling_point_protocol::{ClientMessage, PlayerId, ServerMessage, codec};
 
 use crate::lobby::room::RoomCommand;
 use crate::lobby::{MatchQueue, RoomRegistry, SessionStore};
@@ -38,6 +38,9 @@ pub struct AppState {
     pub rooms: Arc<RoomRegistry>,
     /// The auto-match queue.
     pub queue: Arc<MatchQueue>,
+    /// Max silence on a connection before it's treated as disconnected (clients
+    /// keep it alive with heartbeats).
+    pub conn_timeout: Duration,
 }
 
 /// Build the Axum router for the WebSocket endpoint.
@@ -98,11 +101,18 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         return;
     };
 
-    // Action loop with per-connection rate limiting.
+    // Action loop with per-connection rate limiting and a heartbeat-driven idle
+    // timeout (a connection silent past `conn_timeout` is treated as dropped).
+    let conn_timeout = state.conn_timeout;
     let mut last = Instant::now()
         .checked_sub(RATE_LIMIT)
         .unwrap_or_else(Instant::now);
-    while let Some(msg) = next_client_message(&mut stream).await {
+    loop {
+        let msg = match tokio::time::timeout(conn_timeout, next_client_message(&mut stream)).await {
+            Ok(Some(msg)) => msg,
+            Ok(None) => break, // client closed the connection
+            Err(_) => break,   // no heartbeat within the window → disconnect
+        };
         let now = Instant::now();
         if now.duration_since(last) < RATE_LIMIT {
             continue; // silently drop excess
@@ -240,6 +250,11 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as TMsg;
 
     async fn start_server() -> String {
+        // Generous connection timeout so quiet test clients aren't dropped.
+        start_server_with(std::time::Duration::from_secs(60)).await
+    }
+
+    async fn start_server_with(conn_timeout: std::time::Duration) -> String {
         let mut config =
             crate::config::ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
         // Short wave timers so tests don't wait out the real 30s/10s budgets.
@@ -253,6 +268,7 @@ mod tests {
             sessions: Arc::new(SessionStore::new()),
             rooms,
             queue,
+            conn_timeout,
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -390,9 +406,11 @@ mod tests {
         let joined = recv(&mut ws).await;
         assert!(matches!(joined, ServerMessage::RoomJoined { .. }));
         // A lobby message must not carry any secret (e.g. the boiling point).
-        assert!(!codec::encode_json(&joined)
-            .unwrap()
-            .contains("boiling_point"));
+        assert!(
+            !codec::encode_json(&joined)
+                .unwrap()
+                .contains("boiling_point")
+        );
 
         // A palette emote is echoed back as a broadcast.
         send(&mut ws, &ClientMessage::Emote { emote: EmoteId(1) }).await;
@@ -417,6 +435,23 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[tokio::test]
+    async fn missing_heartbeat_disconnects_the_connection() {
+        // A short connection timeout: an idle (non-heartbeating) client is dropped.
+        let url = start_server_with(std::time::Duration::from_millis(300)).await;
+        let (mut ws, _) = connect_async(url).await.unwrap();
+        send(&mut ws, &create("idle", PROTOCOL_VERSION)).await;
+        assert!(matches!(
+            recv(&mut ws).await,
+            ServerMessage::RoomJoined { .. }
+        ));
+        // Stay silent — the server should close the connection within the window.
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(3), recv_opt(&mut ws))
+            .await
+            .expect("server acted within the timeout");
+        assert!(closed.is_none(), "idle connection was disconnected");
     }
 
     #[tokio::test]
@@ -453,6 +488,60 @@ mod tests {
             }
         };
         assert!(saw_disconnect);
+    }
+
+    #[tokio::test]
+    async fn abandoned_player_does_not_stall_the_game() {
+        let url = start_server().await;
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
+                break room_code;
+            }
+        };
+
+        // Players 2 and 3 play to the end.
+        let mut players = Vec::new();
+        for i in 2..=3 {
+            let url = url.clone();
+            let code = code.clone();
+            players.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(&format!("p{i}"), code)).await;
+                while !matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {}
+                play_loop(&mut ws).await
+            }));
+        }
+        // Player 4 joins, sees the game start, then abandons (drops the socket).
+        let abandoner = {
+            let url = url.clone();
+            let code = code.clone();
+            tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join("p4", code)).await;
+                loop {
+                    match recv_opt(&mut ws).await {
+                        Some(ServerMessage::GameStarting { .. }) => break true,
+                        Some(_) => continue,
+                        None => break false,
+                    }
+                } // ws dropped here → disconnect
+            })
+        };
+        let creator = tokio::spawn(async move { play_loop(&mut ws1).await });
+
+        let ok = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let mut all = creator.await.unwrap();
+            for p in players {
+                all &= p.await.unwrap();
+            }
+            let abandoned_saw_start = abandoner.await.unwrap();
+            all && abandoned_saw_start
+        })
+        .await
+        .expect("game completed despite an abandonment");
+        assert!(ok, "remaining players reached GameOver after one abandoned");
     }
 
     #[tokio::test]

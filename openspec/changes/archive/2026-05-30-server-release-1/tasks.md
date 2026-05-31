@@ -45,7 +45,7 @@
 
 - [x] 6.1 Define the server's authoritative domain model (Card, Deck, discard pile, Cauldron incl. the hidden boiling_point, Pot, Hand, GameState) — owned by the server crate, never placed in `protocol/`
 - [x] 6.2 Implement the room task: sole state owner, bounded per-player `mpsc` out + `mpsc` in, timer plumbing via `tokio::time`
-- [ ] 6.3 Implement the typestate phase machine (Idle→Dealing→Playing→Depile→Scoring→next/GameOver/Deathmatch) so illegal transitions are compile errors (D-A4)
+- [x] 6.3 Implement the phase progression Idle→Dealing→Playing→Depile→Scoring→next/GameOver/Deathmatch (shipped as a procedural runtime orchestration in the room actor + `session::run_game`; strict typestate deferred per Constitution III — accepted deviation recorded in design.md D-A4)
 - [x] 6.4 Implement the `DeckBuilder` (builder pattern) assembling the shared deck from the registry; mixed colors + wild + enabled effects
 - [x] 6.5 Implement deal-to-5 as a refill floor with carryover (D-R4): top up each hand to 5, never discard, no hand cap
 - [x] 6.6 Implement reshuffle-from-discard when a refill empties the draw deck (D-R5), announced to all players so card counting resets per shuffle
@@ -104,10 +104,10 @@
 
 ## 13. Reconnection (`server/`)
 
-- [ ] 13.1 Implement 60s disconnect grace with auto-pass while absent (identical to timer-expiry lockout)
-- [ ] 13.2 Implement the StateSnapshot on rejoin, scoped strictly to player-permitted info
-- [ ] 13.3 Implement abandonment after grace (auto-pass future waves, keep tracking score) and all-disconnected room cleanup
-- [ ] 13.4 Unit-test snapshot scoping (no hidden data leaks) and the abandon-then-continue path
+- [x] 13.1 Implement 60s disconnect grace with auto-pass while absent (identical to timer-expiry lockout)
+- [x] 13.2 Implement the StateSnapshot on rejoin, scoped strictly to player-permitted info
+- [x] 13.3 Implement abandonment after grace (auto-pass future waves, keep tracking score) and all-disconnected room cleanup
+- [x] 13.4 Unit-test snapshot scoping (no hidden data leaks) and the abandon-then-continue path
 
 ## 14. Persistence (`server/persistence/`)
 
@@ -131,7 +131,7 @@
 ## 17. Connection Smoke Tests (`server/tests/`)
 
 - [x] 17.1 Smoke test: a WebSocket client connects and completes the protocol-version handshake; an incompatible version is rejected
-- [ ] 17.2 Smoke test: heartbeat keepalive holds a connection live; a missing heartbeat routes into disconnect handling
+- [x] 17.2 Smoke test: heartbeat keepalive holds a connection live; a missing heartbeat routes into disconnect handling
 - [x] 17.3 Smoke test: create/join a room by code and leave; graceful and abrupt disconnect are handled
 - [x] 17.4 Assert the smoke client receives only player-permitted messages (no secret fields on the wire)
 

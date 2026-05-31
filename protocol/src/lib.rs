@@ -13,8 +13,8 @@ pub mod ids;
 pub mod server;
 pub mod vocab;
 
-pub use client::{ClientMessage, ProtocolVersion, PROTOCOL_VERSION};
-pub use codec::{decode, decode_json, encode, encode_json, CodecError};
+pub use client::{ClientMessage, PROTOCOL_VERSION, ProtocolVersion};
+pub use codec::{CodecError, decode, decode_json, encode, encode_json};
 pub use ids::{CardId, EmoteId, PlayerId, RoomCode};
 pub use server::{Audience, Outbound, ServerMessage};
 pub use vocab::{CardView, Color, EffectKind, HandCard, ModifierKind};
@@ -170,6 +170,25 @@ mod tests {
                 player: p,
                 connected: false,
             },
+            ServerMessage::StateSnapshot {
+                room_code: RoomCode("BREW-7K3F".into()),
+                your_player_id: p,
+                round_number: 3,
+                players: vec![],
+                scores: vec![PlayerScore {
+                    player: p,
+                    score: 5,
+                }],
+                active_modifiers: vec![ModifierKind::ThinIce],
+                contributions: vec![Contribution {
+                    player: p,
+                    count: 2,
+                }],
+                your_hand: vec![HandCard {
+                    id: CardId(1),
+                    view: sample_card(),
+                }],
+            },
             ServerMessage::Heartbeat,
         ];
         for m in msgs {
@@ -204,6 +223,16 @@ mod tests {
                 exploded: false,
                 boiling_point: None, // safe brew: must be None
                 crossing_index: None,
+            },
+            ServerMessage::StateSnapshot {
+                room_code: RoomCode("BREW-7K3F".into()),
+                your_player_id: p,
+                round_number: 2,
+                players: vec![],
+                scores: vec![],
+                active_modifiers: vec![],
+                contributions: vec![],
+                your_hand: vec![],
             },
         ];
         for m in non_secret {

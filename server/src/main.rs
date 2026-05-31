@@ -7,7 +7,7 @@ use std::sync::Arc;
 use boiling_point_server::config::ContentConfig;
 use boiling_point_server::lobby::{MatchQueue, RoomRegistry, SessionStore};
 use boiling_point_server::observability;
-use boiling_point_server::transport::{app, AppState};
+use boiling_point_server::transport::{AppState, app};
 
 /// The default content config, embedded so the binary always has a valid baseline.
 const DEFAULT_CONFIG: &str = include_str!("../content.toml");
@@ -43,6 +43,7 @@ async fn main() {
         sessions: Arc::new(SessionStore::new()),
         rooms,
         queue,
+        conn_timeout: std::time::Duration::from_secs(90),
     };
 
     let addr = "0.0.0.0:8080";

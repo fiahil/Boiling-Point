@@ -5,8 +5,8 @@
 
 use std::collections::HashMap;
 
-use boiling_point_protocol::vocab::Color;
 use boiling_point_protocol::PlayerId;
+use boiling_point_protocol::vocab::Color;
 
 use super::card::Card;
 

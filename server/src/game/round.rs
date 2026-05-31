@@ -15,7 +15,7 @@ use crate::content::ContentRegistry;
 
 use super::card::Card;
 use super::pot::Pot;
-use super::resolve::{resolve_wave, WaveOutcome};
+use super::resolve::{WaveOutcome, resolve_wave};
 
 /// How a round ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

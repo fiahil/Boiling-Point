@@ -4,8 +4,8 @@
 //! `Serialize`/`Deserialize` type) so the entire wire can be unit-tested with
 //! neither a server nor a bot present.
 
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 /// Errors that can arise encoding or decoding a wire message.
 #[derive(Debug, thiserror::Error)]

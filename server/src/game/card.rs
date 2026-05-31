@@ -2,8 +2,8 @@
 //! authoritative attributes. Distinct from the protocol's `CardView`, which is
 //! the *revealed* projection sent to clients.
 
-use boiling_point_protocol::vocab::{CardView, Color, EffectKind};
 use boiling_point_protocol::CardId;
+use boiling_point_protocol::vocab::{CardView, Color, EffectKind};
 
 /// A concrete card instance in the deck, a hand, or the pot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

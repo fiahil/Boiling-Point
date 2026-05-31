@@ -16,8 +16,8 @@ use rand::{Rng, SeedableRng};
 use boiling_point_protocol::vocab::{Color, EffectKind};
 use boiling_point_protocol::{CardId, PlayerId};
 
-use crate::content::effect::{EffectCategory, EffectCtx};
 use crate::content::ContentRegistry;
+use crate::content::effect::{EffectCategory, EffectCtx};
 
 use super::card::Card;
 use super::state::Hand;

@@ -23,10 +23,10 @@ impl SessionStore {
     /// Resolve an identity: a known token returns its existing [`PlayerId`];
     /// otherwise a fresh identity and token are minted and stored.
     pub fn authenticate(&self, token: Option<&str>) -> (PlayerId, String) {
-        if let Some(t) = token {
-            if let Some(existing) = self.tokens.get(t) {
-                return (*existing, t.to_string());
-            }
+        if let Some(t) = token
+            && let Some(existing) = self.tokens.get(t)
+        {
+            return (*existing, t.to_string());
         }
         let player = PlayerId::new();
         let token = Uuid::new_v4().to_string();
