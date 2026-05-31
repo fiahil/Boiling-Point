@@ -10,18 +10,18 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::Router;
 use axum::extract::State;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 
 use boiling_point_protocol::client::PROTOCOL_VERSION;
 use boiling_point_protocol::server::ErrorCode;
-use boiling_point_protocol::{codec, ClientMessage, PlayerId, ServerMessage};
+use boiling_point_protocol::{ClientMessage, PlayerId, ServerMessage, codec};
 
 use crate::lobby::room::RoomCommand;
 use crate::lobby::{MatchQueue, RoomRegistry, SessionStore};
@@ -406,9 +406,11 @@ mod tests {
         let joined = recv(&mut ws).await;
         assert!(matches!(joined, ServerMessage::RoomJoined { .. }));
         // A lobby message must not carry any secret (e.g. the boiling point).
-        assert!(!codec::encode_json(&joined)
-            .unwrap()
-            .contains("boiling_point"));
+        assert!(
+            !codec::encode_json(&joined)
+                .unwrap()
+                .contains("boiling_point")
+        );
 
         // A palette emote is echoed back as a broadcast.
         send(&mut ws, &ClientMessage::Emote { emote: EmoteId(1) }).await;

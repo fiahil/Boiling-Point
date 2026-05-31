@@ -5,8 +5,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use boiling_point_protocol::vocab::Color;
 use boiling_point_protocol::PlayerId;
+use boiling_point_protocol::vocab::Color;
 
 use crate::content::ContentRegistry;
 
@@ -142,8 +142,8 @@ mod tests {
     use super::*;
     use crate::game::card::Card;
     use crate::game::pot::PotCard;
-    use boiling_point_protocol::vocab::ModifierKind;
     use boiling_point_protocol::CardId;
+    use boiling_point_protocol::vocab::ModifierKind;
     use uuid::Uuid;
 
     fn pid(n: u128) -> PlayerId {

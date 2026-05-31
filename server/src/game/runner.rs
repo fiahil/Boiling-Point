@@ -12,18 +12,18 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
-use boiling_point_protocol::vocab::{Color, ModifierKind};
 use boiling_point_protocol::PlayerId;
+use boiling_point_protocol::vocab::{Color, ModifierKind};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::persistence::{GameResult, PlayerResult, RoundResult};
 
-use super::deathmatch::{run_deathmatch, DeathmatchResult};
+use super::deathmatch::{DeathmatchResult, run_deathmatch};
 use super::deck::Deck;
 use super::modifiers::ActiveModifiers;
 use super::round::{Round, RoundEnd, WaveChoice, WaveInput};
-use super::scoring::{explosion, score_safe, ScoringContext};
+use super::scoring::{ScoringContext, explosion, score_safe};
 use super::state::{Hand, Player};
 
 /// Per-round summary, for analytics and persistence.
@@ -355,8 +355,8 @@ impl<'a> Game<'a> {
 mod tests {
     use super::*;
     use crate::game::card::Card;
-    use boiling_point_protocol::vocab::Color;
     use boiling_point_protocol::CardId;
+    use boiling_point_protocol::vocab::Color;
     use uuid::Uuid;
 
     fn registry_and_config() -> (ContentRegistry, ContentConfig) {

@@ -22,12 +22,12 @@ pub mod scoring;
 pub mod state;
 
 pub use card::Card;
-pub use deathmatch::{run_deathmatch, DeathmatchDecider, DeathmatchResult};
+pub use deathmatch::{DeathmatchDecider, DeathmatchResult, run_deathmatch};
 pub use deck::Deck;
 pub use modifiers::ActiveModifiers;
 pub use pot::{Pot, PotCard};
-pub use resolve::{resolve_wave, WaveOutcome};
+pub use resolve::{WaveOutcome, resolve_wave};
 pub use round::{DepileData, DepileItem, Round, RoundEnd, WaveChoice, WaveInput, WaveReport};
 pub use runner::{Decider, Game, GameOutcome, RoundLog};
-pub use scoring::{explosion, pot_value, score_safe, ExplosionResult, SafeScore, ScoringContext};
+pub use scoring::{ExplosionResult, SafeScore, ScoringContext, explosion, pot_value, score_safe};
 pub use state::{Hand, Player};

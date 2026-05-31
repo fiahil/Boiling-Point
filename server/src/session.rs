@@ -33,9 +33,9 @@ use crate::game::card::Card;
 use crate::game::deck::Deck;
 use crate::game::modifiers::ActiveModifiers;
 use crate::game::round::{Round, RoundEnd, WaveChoice, WaveInput};
-use crate::game::scoring::{explosion, score_safe, ScoringContext};
+use crate::game::scoring::{ScoringContext, explosion, score_safe};
 use crate::game::state::Hand;
-use crate::game::{run_deathmatch, DeathmatchResult};
+use crate::game::{DeathmatchResult, run_deathmatch};
 use crate::lobby::room::RoomCommand;
 
 /// A seated player as the game loop needs them: identity, colour, and the

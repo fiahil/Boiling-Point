@@ -13,8 +13,8 @@ pub mod ids;
 pub mod server;
 pub mod vocab;
 
-pub use client::{ClientMessage, ProtocolVersion, PROTOCOL_VERSION};
-pub use codec::{decode, decode_json, encode, encode_json, CodecError};
+pub use client::{ClientMessage, PROTOCOL_VERSION, ProtocolVersion};
+pub use codec::{CodecError, decode, decode_json, encode, encode_json};
 pub use ids::{CardId, EmoteId, PlayerId, RoomCode};
 pub use server::{Audience, Outbound, ServerMessage};
 pub use vocab::{CardView, Color, EffectKind, HandCard, ModifierKind};

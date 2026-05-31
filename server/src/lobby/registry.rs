@@ -13,7 +13,7 @@ use crate::config::ContentConfig;
 use crate::content::ContentRegistry;
 
 use super::codes::generate_code;
-use super::room::{spawn, RoomCommand};
+use super::room::{RoomCommand, spawn};
 
 /// Concurrent registry of live rooms. Holds the shared content the rooms need to
 /// run games.

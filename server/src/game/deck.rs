@@ -2,9 +2,9 @@
 //! refill-to-5 floor with carryover, and reshuffles the discard back in when the
 //! draw pile is exhausted (D-R5). Seeded for reproducible games.
 
+use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
 
 use boiling_point_protocol::CardId;
 
