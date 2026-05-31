@@ -73,9 +73,20 @@ impl ContentRegistry {
         self.modifiers.get(&kind).map(|e| e.behavior.as_ref())
     }
 
-    /// The weighted modifier draw pool as (kind, copies) pairs.
+    /// The weighted modifier draw pool as (kind, copies) pairs, in a deterministic
+    /// order.
+    ///
+    /// The entries live in a `HashMap`, whose iteration order is randomised per
+    /// instance; callers shuffle this pile with a *seeded* RNG, so an unstable base
+    /// order would make the same seed draw different modifiers across registry
+    /// instances (and processes). Sorting by kind first keeps the seeded shuffle —
+    /// and thus any `(seed, config)` run — reproducible, without changing the
+    /// drawn multiset or its distribution.
     pub fn modifier_pool(&self) -> Vec<(ModifierKind, u16)> {
-        self.modifiers.iter().map(|(k, e)| (*k, e.copies)).collect()
+        let mut pool: Vec<(ModifierKind, u16)> =
+            self.modifiers.iter().map(|(k, e)| (*k, e.copies)).collect();
+        pool.sort_by_key(|(kind, _)| format!("{kind:?}"));
+        pool
     }
 
     /// Total physical cards in the deck (sum of enabled archetype copies).
