@@ -28,7 +28,7 @@ use std::time::Duration;
 use boiling_point_protocol::{ClientMessage, ServerMessage};
 use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use tokio::sync::mpsc;
 
 use std::io::Stdout;

@@ -10,13 +10,13 @@
 use std::collections::VecDeque;
 
 use boiling_point_protocol::{
+    ClientMessage, PROTOCOL_VERSION,
     ids::{CardId, EmoteId, RoomCode},
     server::ServerMessage,
     vocab::{EffectKind, HandCard},
-    ClientMessage, PROTOCOL_VERSION,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use ratatui::{backend::TestBackend, buffer::Buffer, Frame, Terminal};
+use ratatui::{Frame, Terminal, backend::TestBackend, buffer::Buffer};
 
 use crate::view::{Phase, ViewModel};
 
@@ -203,13 +203,12 @@ impl App {
             ServerMessage::WaveResolved { played, .. } => {
                 // Track my own play locally: the committed card leaves my hand and
                 // joins my pot (the client legitimately knows its own plays).
-                if let (Selection::Card(id), Some(me)) = (self.committed, self.vm.me) {
-                    if played.contains(&me) {
-                        if let Some(pos) = self.vm.hand.iter().position(|c| c.id == id) {
-                            let card = self.vm.hand.remove(pos);
-                            self.my_pot.push(card);
-                        }
-                    }
+                if let (Selection::Card(id), Some(me)) = (self.committed, self.vm.me)
+                    && played.contains(&me)
+                    && let Some(pos) = self.vm.hand.iter().position(|c| c.id == id)
+                {
+                    let card = self.vm.hand.remove(pos);
+                    self.my_pot.push(card);
                 }
                 self.committed = Selection::None;
                 self.locked_in = false;
@@ -245,6 +244,18 @@ impl App {
                 if matches!(self.phase, Phase::Connecting | Phase::Queue) {
                     self.phase = Phase::Entry;
                 }
+            }
+            ServerMessage::StateSnapshot { round_number, .. } => {
+                // Resume on rejoin. A disconnected player auto-passes each wave,
+                // so on a mid-round rejoin they are locked out for the round.
+                self.phase = if *round_number >= 1 {
+                    Phase::Playing
+                } else {
+                    Phase::Lobby
+                };
+                self.committed = Selection::Pass;
+                self.locked_in = true;
+                self.toast("reconnected — locked out of this round while away");
             }
             ServerMessage::ScoreUpdate { .. }
             | ServerMessage::PlayerConnectionChanged { .. }
@@ -282,15 +293,14 @@ impl App {
                 self.conn = Conn::Abandoned;
             }
         }
-        if self.phase == Phase::Depile {
-            if let Some(total) = self.depile_total() {
-                if self.depile_shown < total {
-                    self.depile_accum_ms += dt_ms;
-                    while self.depile_accum_ms >= DEPILE_STEP_MS && self.depile_shown < total {
-                        self.depile_shown += 1;
-                        self.depile_accum_ms -= DEPILE_STEP_MS;
-                    }
-                }
+        if self.phase == Phase::Depile
+            && let Some(total) = self.depile_total()
+            && self.depile_shown < total
+        {
+            self.depile_accum_ms += dt_ms;
+            while self.depile_accum_ms >= DEPILE_STEP_MS && self.depile_shown < total {
+                self.depile_shown += 1;
+                self.depile_accum_ms -= DEPILE_STEP_MS;
             }
         }
     }
@@ -418,12 +428,12 @@ impl App {
     }
 
     fn key_lobby(&mut self, code: KeyCode) -> Vec<ClientMessage> {
-        if code == KeyCode::Char('c') {
-            if let Some(rc) = self.vm.room_code.clone() {
-                match crate::clipboard::copy(&format!("boilingpoint.gg/r/{rc}")) {
-                    Ok(()) => self.toast("invite link copied"),
-                    Err(_) => self.toast("copy unavailable in this terminal"),
-                }
+        if code == KeyCode::Char('c')
+            && let Some(rc) = self.vm.room_code.clone()
+        {
+            match crate::clipboard::copy(&format!("boilingpoint.gg/r/{rc}")) {
+                Ok(()) => self.toast("invite link copied"),
+                Err(_) => self.toast("copy unavailable in this terminal"),
             }
         }
         vec![]
@@ -543,10 +553,10 @@ impl App {
     }
 
     fn key_depile(&mut self, code: KeyCode) -> Vec<ClientMessage> {
-        if matches!(code, KeyCode::Enter | KeyCode::Char(' ')) {
-            if let Some(total) = self.depile_total() {
-                self.depile_shown = total;
-            }
+        if matches!(code, KeyCode::Enter | KeyCode::Char(' '))
+            && let Some(total) = self.depile_total()
+        {
+            self.depile_shown = total;
         }
         vec![]
     }
@@ -675,6 +685,7 @@ fn server_tag(m: &ServerMessage) -> &'static str {
         ServerMessage::GameOver { .. } => "GameOver",
         ServerMessage::Error { .. } => "Error",
         ServerMessage::PlayerConnectionChanged { .. } => "PlayerConnectionChanged",
+        ServerMessage::StateSnapshot { .. } => "StateSnapshot",
         ServerMessage::Heartbeat => "Heartbeat",
     }
 }

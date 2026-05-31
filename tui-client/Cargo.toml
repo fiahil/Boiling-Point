@@ -26,3 +26,14 @@ crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
+
+[dev-dependencies]
+# End-to-end tests start the real server in-process on an ephemeral port and
+# drive it over the actual wire. Integration tests get the lib + dev-deps only,
+# so the transport crates are repeated here.
+boiling-point-server = { path = "../server" }
+boiling-point-protocol = { path = "../protocol" }
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+axum = "0.8"

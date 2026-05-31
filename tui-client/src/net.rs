@@ -3,7 +3,7 @@
 //! channels. Used only by [`crate::run`]; the client is fully testable without
 //! it via replay/mock (research R5).
 
-use boiling_point_protocol::{codec, ClientMessage, ServerMessage};
+use boiling_point_protocol::{ClientMessage, ServerMessage, codec};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tokio_tungstenite::{connect_async, tungstenite::Message as TMsg};

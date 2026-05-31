@@ -3,7 +3,7 @@
 //! round-trip (task 8.3). These are the agent-readable "screenshots" — plain
 //! text, no terminal, no server.
 
-use boiling_point_tui::{fixtures, replay, App};
+use boiling_point_tui::{App, fixtures, replay};
 
 /// Render the app to a fixed-size buffer and flatten it to a string.
 fn screen(app: &App) -> String {
@@ -146,6 +146,18 @@ fn reconnect_overlay_renders() {
     let s = screen(&app);
     assert_has(&s, "reconnecting");
     assert_has(&s, "auto-pass");
+}
+
+#[test]
+fn state_snapshot_resumes_after_reconnect() {
+    let mut app = reach_playing();
+    app.set_reconnecting(30_000);
+    // A snapshot arriving clears the overlay and restores allowed state.
+    app.on_server(&fixtures::state_snapshot());
+    let s = screen(&app);
+    assert_lacks(&s, "reconnecting"); // overlay cleared by the inbound message
+    assert_has(&s, "your hand"); // hand restored
+    assert_has(&s, "locked out"); // reflects the missed waves
 }
 
 #[test]

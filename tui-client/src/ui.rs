@@ -4,19 +4,19 @@
 //! cannot leak one.
 
 use boiling_point_protocol::{
+    PlayerId,
     server::ScoringOutcome,
     vocab::{CardView, Color as Wire, EffectKind, ModifierKind},
-    PlayerId,
 };
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    Frame,
 };
 
-use crate::app::{emote_label, App, Conn, Selection};
+use crate::app::{App, Conn, Selection, emote_label};
 use crate::palette;
 use crate::view::Phase;
 
@@ -48,10 +48,10 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
     if app.boom_ms > 0 && app.phase == Phase::Scoring {
         boom(frame, area, app);
     }
-    if app.peek_modal_ms > 0 {
-        if let Some(bp) = app.vm.my_peek {
-            peek_modal(frame, area, bp);
-        }
+    if app.peek_modal_ms > 0
+        && let Some(bp) = app.vm.my_peek
+    {
+        peek_modal(frame, area, bp);
     }
     if let Some(prompt) = &app.recall {
         recall_modal(frame, area, prompt);

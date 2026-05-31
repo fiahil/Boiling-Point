@@ -8,8 +8,8 @@
 //! to store a secret the server never sent.
 
 use boiling_point_protocol::{
-    server::{Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome, ServerMessage},
     CardId, Color, HandCard, ModifierKind, PlayerId,
+    server::{Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome, ServerMessage},
 };
 use serde::Serialize;
 
@@ -293,6 +293,40 @@ impl ViewModel {
                 if let Some(p) = self.players.iter_mut().find(|p| p.id == *player) {
                     p.connected = *connected;
                 }
+            }
+            ServerMessage::StateSnapshot {
+                room_code,
+                your_player_id,
+                round_number,
+                players,
+                scores,
+                active_modifiers,
+                contributions,
+                your_hand,
+            } => {
+                // Rebuild allowed state on rejoin. The snapshot is scoped to what
+                // the player may know — it carries no boiling point and no other
+                // players' hands, so there is nothing secret to absorb.
+                self.me = Some(*your_player_id);
+                self.room_code = Some(room_code.0.clone());
+                self.round_number = *round_number;
+                if !players.is_empty() {
+                    self.players = players.iter().map(PlayerView::from_public).collect();
+                }
+                for s in scores {
+                    if let Some(p) = self.players.iter_mut().find(|p| p.id == s.player) {
+                        p.score = s.score;
+                    }
+                }
+                self.active_modifiers = active_modifiers.clone();
+                self.apply_contributions(contributions);
+                self.hand = your_hand.clone();
+                if let Some(me) = self.players.iter().find(|p| p.id == *your_player_id) {
+                    self.my_color = Some(me.color);
+                }
+                self.cauldron_count = contributions
+                    .iter()
+                    .fold(0u8, |a, c| a.saturating_add(c.count));
             }
             // Surfaced by the App as transient toasts/modals, not stored here.
             ServerMessage::SomeonePeeked

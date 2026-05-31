@@ -51,7 +51,7 @@
 ## 7. Reconnection
 
 - [x] 7.1 Reconnection overlay: grace countdown + auto-pass-while-away note (`tui-client-shell`)
-- [ ] 7.2 Rebuild from `StateSnapshot` and resume — BLOCKED: the committed protocol has no `StateSnapshot` message (and no session token is delivered to the client). PROTOCOL GAP
+- [x] 7.2 Rebuild from `StateSnapshot` and resume at the reported phase; reflect missed waves as locked-out *(server added `StateSnapshot`; wired in `view.rs`/`app.rs` + snapshot-tested)*
 
 ## 8. Debug & Test
 
@@ -69,12 +69,13 @@
 
 ## 10. Notes & Discovered Protocol Gaps
 
-The committed `protocol/` crate is an early cut. The client was built faithfully
-against it; the following are **server-owned gaps** the client cannot fill alone.
-Recommend they be addressed in `server-release-1` (or a follow-up) so the three
-deferred tasks above (4.6, 6.5, 7.2) can complete:
+The client is verified end-to-end against the **real server** in
+`tests/live_server.rs` (in-process, ephemeral port): a real `RoomJoined`
+handshake renders the lobby, and four clients drive a full game through the
+actual wire to game-over. The remaining server-owned gaps below still block the
+two deferred tasks (4.6, 6.5):
 
-- No `StateSnapshot` message (and no session token delivered to the client) → reconnection cannot restore mid-game state (7.2).
+- ~~No `StateSnapshot`~~ — RESOLVED: the server added `StateSnapshot`; reconnection resume is wired and tested (7.2). *(Identity continuity across reconnects is still partial — no session token is delivered to the client to resume the same seat; minor.)*
 - No Deathmatch/phase marker → the client cannot detect the tiebreaker or render its elimination/cascade announcements (6.5).
 - `CommitCard` carries no Recall target → the chosen recalled card cannot be transmitted (5.1).
 - No opponent hand-size field (4.3); no idle-timeout field (3.5); no "active players remaining" signal for the one-player final wave (4.6).

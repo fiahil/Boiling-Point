@@ -3,10 +3,10 @@
 //! (research R5; tasks 8.4/8.5/9.2).
 
 use boiling_point_protocol::{
+    PlayerId,
     ids::{CardId, EmoteId, RoomCode},
     server::{Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome, ServerMessage},
     vocab::{CardView, Color, EffectKind, HandCard, ModifierKind},
-    PlayerId,
 };
 use uuid::Uuid;
 
@@ -195,6 +195,28 @@ pub fn game_over() -> ServerMessage {
             })
             .collect(),
         winners: vec![pid(1)],
+    }
+}
+
+/// A reconnection `StateSnapshot` mid-round-2 (scoped to seat 0's knowledge).
+pub fn state_snapshot() -> ServerMessage {
+    ServerMessage::StateSnapshot {
+        room_code: RoomCode("BREW-7K3F".into()),
+        your_player_id: pid(0),
+        round_number: 2,
+        players: players(),
+        scores: (0..4)
+            .map(|i| PlayerScore {
+                player: pid(i),
+                score: i as i32,
+            })
+            .collect(),
+        active_modifiers: vec![ModifierKind::ThinIce],
+        contributions: vec![Contribution {
+            player: pid(1),
+            count: 2,
+        }],
+        your_hand: hand(),
     }
 }
 
