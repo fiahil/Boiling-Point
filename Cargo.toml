@@ -1,11 +1,13 @@
 # Boiling Point — cargo workspace.
 #
 # `protocol/` is the narrow wire waist (DTOs + codec, no secrets); `server/` is
-# the authoritative engine that owns the full domain model. The full bot/balance
-# harness lives in the separate `bot-balance-harness` change.
+# the authoritative engine that owns the full domain model. `tui-client/` is the
+# terminal client — an untrusted renderer over `protocol/` (no game logic, no
+# secrets). The full bot/balance harness lives in the separate
+# `bot-balance-harness` change.
 [workspace]
 resolver = "2"
-members = ["protocol", "server"]
+members = ["protocol", "server", "tui-client"]
 
 [workspace.package]
 edition = "2021"
