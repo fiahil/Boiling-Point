@@ -18,10 +18,13 @@ Integrated against the committed server and verified end-to-end:
 - The Claude brain authenticates via your Claude subscription (Claude Code login) and drives
   real decisions through in-process MCP tools.
 
-**Known limitation:** the Agent SDK spawns the Claude CLI per decision (~20s cold start), so
-on the 10s sub-waves the agent falls back to a local heuristic (the table never stalls). A
-persistent SDK session is the planned follow-up. Use `--brain fallback` for instant,
-zero-cost seats.
+The Claude brain uses a **persistent Agent SDK session** (one warm subprocess per game,
+context preserved across waves). Per-decision latency is ~15s and is **model/rate-limit
+bound** (not subprocess startup), so on the 10s sub-waves the agent falls back to the local
+heuristic — deliberating at the previous wave's resolution plus the fallback keep the table
+flowing (it never stalls). Use `--brain fallback` for instant, zero-cost seats, or relax the
+room timers for hard presets. `scripts/probe-agent.ts` measures two decisions on one warm
+session.
 
 ## Running
 

@@ -18,7 +18,7 @@ import { allowedToolsFor, modelFor, type Difficulty } from "./agent/difficulty.t
 import { buildTurnContext, renderTurnContext } from "./agent/context.ts";
 import { buildSystemPrompt } from "./agent/prompt.ts";
 import { createBpToolServer, type ToolDeps } from "./agent/tools.ts";
-import { runAgentTurn } from "./agent/session.ts";
+import { AgentSession } from "./agent/session.ts";
 
 import { fallbackMove } from "./timeliness/fallback.ts";
 import { maybeBlunder } from "./personas/blunder.ts";
@@ -57,6 +57,7 @@ export class AgentRunner {
   private readonly persona: Persona | undefined;
   private readonly server: ReturnType<typeof createBpToolServer>;
 
+  private session?: AgentSession;
   private pending: Move | null = null;
   private decided = false;
   private deliberating = false;
@@ -123,7 +124,25 @@ export class AgentRunner {
 
   private onWaveResolve(): void {
     // The public state is final at resolve (D4) — start thinking about the next wave now.
-    if (this.cfg.brain === "claude") this.startDeliberation();
+    // Reset any stale in-flight cycle so the new wave always gets a fresh prompt.
+    if (this.cfg.brain === "claude") {
+      this.deliberating = false;
+      this.startDeliberation();
+    }
+  }
+
+  /** Ensure the persistent Agent SDK session exists (one query() for the whole game, D11). */
+  private ensureSession(): AgentSession {
+    if (!this.session) {
+      this.session = new AgentSession();
+      this.session.start({
+        server: this.server,
+        allowedTools: allowedToolsFor(this.cfg.difficulty),
+        systemPrompt: buildSystemPrompt(this.cfg.difficulty, this.cfg.archetype),
+        model: modelFor(this.cfg.difficulty),
+      });
+    }
+    return this.session;
   }
 
   private startDeliberation(): void {
@@ -131,22 +150,8 @@ export class AgentRunner {
     this.deliberating = true;
     this.decided = false;
     this.pending = null;
-
-    const prompt = renderTurnContext(buildTurnContext(this.vm));
-    const systemPrompt = buildSystemPrompt(this.cfg.difficulty, this.cfg.archetype);
-
-    void runAgentTurn({
-      server: this.server,
-      allowedTools: allowedToolsFor(this.cfg.difficulty),
-      systemPrompt,
-      model: modelFor(this.cfg.difficulty),
-      prompt,
-      isDecided: () => this.decided,
-    })
-      .catch((err) => console.error("[agent] turn failed:", err))
-      .finally(() => {
-        this.deliberating = false;
-      });
+    // Push the thin context as one user turn; the agent answers via a move tool.
+    this.ensureSession().prompt(renderTurnContext(buildTurnContext(this.vm)));
   }
 
   private onWaveOpen(timerMs: number): void {
@@ -178,6 +183,7 @@ export class AgentRunner {
   /** Called by the move tool when the agent commits/passes. */
   private onAgentDecision(move: Move): void {
     this.decided = true;
+    this.deliberating = false;
     if (process.env.BP_DEBUG) console.error(`[agent] chose ${describe(move)} (wave ${this.vm.wave?.number})`);
     if (this.isWaveOpen()) this.submit(move);
     else this.pending = move; // decided in the inter-wave gap — commit when the wave opens
@@ -227,6 +233,7 @@ export class AgentRunner {
 
   private stop(): void {
     clearTimeout(this.fallbackTimer);
+    this.session?.close();
     this.conn.close();
   }
 }

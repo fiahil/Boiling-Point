@@ -79,11 +79,18 @@ Implementation against the real `protocol/` crate and a running server surfaced 
 - **D10. No `PickTarget`; numeric emotes.** The real protocol has no target-pick message
   (targeted effects resolve server-side), so that tool was dropped. Emotes are numeric
   `EmoteId`s against the configured palette (1 truce … 6 youre_done), not strings.
-- **D11. Per-decision latency ≈ 23s.** The Agent SDK spawns the Claude CLI per `query()`, so a
-  fresh-query-per-wave design is timely only on the 30s opening wave; on 10s sub-waves the
-  agent falls back to the local heuristic (verified live — the table never stalls). **The key
-  follow-up is a persistent SDK session** to amortize startup and make the LLM brain timely on
-  fast waves.
+- **D11. Persistent session + the real latency picture.** The session layer now keeps ONE
+  `query()` alive for the whole game in streaming-input mode (`AgentSession`): each wave pushes
+  the thin context as a user turn and the agent answers via a move tool, reusing one warm
+  subprocess and preserving conversation context (verified: multi-turn on a single session,
+  in-runner decisions with zero errors). **However**, a two-turn probe showed per-decision
+  latency is **model/rate-limit bound (~14–17s, with an observed `rate_limit_event`), not
+  subprocess cold-start** — the warm turn was not faster than the cold one. So the persistent
+  session is the correct architecture (no per-wave spawns, shared context) but does NOT by
+  itself make a decision fit a 10s sub-wave. Timeliness therefore still rests on
+  **deliberate-at-resolve (the head start) + the fast local fallback**, with the relaxed
+  room-timer config available for hard presets. Further latency wins (e.g. the SDK's
+  pre-warmed `startup()` handle, smaller/no system reasoning, or batching) are open follow-ups.
 - **D12. `--brain fallback`.** A zero-cost heuristic brain (no LLM) was added; it fills seats
   for client/UI testing and doubles as the protocol integration harness (four fallback bots
   played a full game to `GameOver`).

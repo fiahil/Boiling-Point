@@ -10,7 +10,7 @@ import { buildTurnContext, renderTurnContext } from "../src/agent/context.ts";
 import { buildSystemPrompt } from "../src/agent/prompt.ts";
 import { allowedToolsFor, modelFor } from "../src/agent/difficulty.ts";
 import { createBpToolServer, type ToolDeps } from "../src/agent/tools.ts";
-import { runAgentTurn } from "../src/agent/session.ts";
+import { AgentSession } from "../src/agent/session.ts";
 import type { Move } from "../src/agent/actions.ts";
 
 configureAuth();
@@ -47,27 +47,45 @@ const deps: ToolDeps = {
 const server = createBpToolServer(deps);
 const difficulty = "easy";
 
-console.error("[probe] running one agent turn (Haiku)…");
-const t0 = Date.now();
-try {
-  await runAgentTurn({
-    server,
-    allowedTools: allowedToolsFor(difficulty),
-    systemPrompt: buildSystemPrompt(difficulty),
-    model: modelFor(difficulty),
-    prompt: renderTurnContext(buildTurnContext(vm)),
-    isDecided: () => decided !== undefined,
-  });
-} catch (err) {
-  console.error("[probe] FAILED:", err);
-  process.exit(2);
-}
-const dt = Date.now() - t0;
+const session = new AgentSession();
+session.start({
+  server,
+  allowedTools: allowedToolsFor(difficulty),
+  systemPrompt: buildSystemPrompt(difficulty),
+  model: modelFor(difficulty),
+});
 
-if (decided) {
-  console.error(`[probe] OK — agent decided in ${dt}ms:`, decided);
-  process.exit(0);
-} else {
-  console.error(`[probe] agent finished without calling a move tool (${dt}ms)`);
-  process.exit(1);
+// Two prompts on the same warm session — the second should be much faster than the first,
+// demonstrating the persistent-session win (no per-decision cold start).
+async function decideOnce(label: string): Promise<number> {
+  decided = undefined;
+  const t0 = Date.now();
+  session.prompt(renderTurnContext(buildTurnContext(vm)));
+  while (decided === undefined && Date.now() - t0 < 60000) await sleep(100);
+  const dt = Date.now() - t0;
+  if (!decided) {
+    console.error(`[probe] ${label}: no decision within 60s`);
+    session.close();
+    process.exit(1);
+  }
+  console.error(`[probe] ${label}: decided in ${dt}ms →`, decided);
+  return dt;
 }
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+console.error("[probe] persistent session — two decisions on one warm subprocess (Haiku)…");
+const first = await decideOnce("turn 1 (cold)");
+
+// Advance the board to a genuinely new wave so turn 2 is a fresh decision.
+applyServerMessage(vm, { type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 2, contributions: [{ player: "me", count: 1 }] });
+applyServerMessage(vm, { type: "WaveOpened", round_number: 1, wave_number: 2, timer_ms: 10000 });
+
+const second = await decideOnce("turn 2 (warm)");
+session.close();
+console.error(
+  `[probe] OK — both decisions ran on ONE warm session (turn1 ${first}ms, turn2 ${second}ms). ` +
+    `Per-decision latency is model/rate-limit bound, not subprocess cold-start; the warm session ` +
+    `removes per-wave spawns and preserves context but does not by itself fit a 10s wave.`,
+);
+process.exit(0);

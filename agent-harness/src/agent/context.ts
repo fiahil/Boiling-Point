@@ -97,5 +97,7 @@ export function renderTurnContext(ctx: TurnContext): string {
   }
   lines.push("Your hand:");
   for (const c of ctx.yourHand) lines.push(`  - ${describeCard(c)}`);
+  lines.push("");
+  lines.push("It is your turn for this wave. Act now: call commit_card with a card id from your hand, or pass.");
   return lines.join("\n");
 }
