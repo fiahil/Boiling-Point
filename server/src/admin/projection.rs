@@ -232,8 +232,9 @@ pub enum RevealOutcome {
     Revealed(Reveal),
 }
 
-/// An activity-feed event pushed to live (SSE) subscribers. Carries **public
-/// attributes only** — the secret reveal is a separate, authenticated endpoint.
+/// An activity-feed event pushed to live (SSE) subscribers over the authenticated
+/// admin channel. It carries the span's attributes (including sensitive game state);
+/// the feed never reaches a player connection.
 #[derive(Clone, Serialize)]
 pub struct LiveEvent {
     /// `start`, `update`, or `end`.
@@ -242,7 +243,7 @@ pub struct LiveEvent {
     pub span: String,
     /// The room this event belongs to, if any.
     pub room_code: Option<String>,
-    /// Public (allow-listed) attributes only.
+    /// The span's attributes.
     pub attributes: BTreeMap<String, String>,
 }
 
@@ -407,18 +408,13 @@ impl AdminProjection {
     }
 
     fn broadcast_live(&self, kind: &'static str, ev: &SpanEvent, room_code: Option<String>) {
-        // Public attributes only — the live feed never carries secrets.
-        let attributes = ev
-            .attributes
-            .iter()
-            .filter(|(k, _)| span_schema::is_public(k))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        // The feed is served only over the authenticated admin channel, so it may
+        // carry the span's attributes as-is (no player connection ever sees it).
         let _ = self.live.send(LiveEvent {
             kind,
             span: ev.name.to_string(),
             room_code,
-            attributes,
+            attributes: ev.attributes.clone(),
         });
     }
 

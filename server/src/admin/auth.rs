@@ -5,19 +5,23 @@
 //! configuration / environment), never the player [`crate::lobby::SessionStore`].
 //! A player session token is meaningless here, so player credentials can never
 //! reach an admin capability. Roles gate capability: [`OperatorRole::Observer`]
-//! may read non-secret surfaces; [`OperatorRole::Elevated`] additionally may
-//! perform the hidden-state reveal and issue control commands.
+//! may perform **all reads**, including the hidden-state reveal (which is served
+//! only over the admin channel, never a player connection); [`OperatorRole::Elevated`]
+//! additionally may issue **control commands**.
 
 use std::collections::HashMap;
 
-/// An operator's role. The privileged reveal and every control action require
-/// [`Elevated`](OperatorRole::Elevated); read-only observation may be `Observer`.
+/// An operator's role. Every control action requires
+/// [`Elevated`](OperatorRole::Elevated); all reads (including the hidden-state
+/// reveal) are available to any authenticated operator, down to `Observer`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperatorRole {
-    /// Read-only: fleet overview, room list, balance dashboard.
+    /// Read-only: fleet overview, room list, the hidden-state reveal, replay, and
+    /// the balance dashboard.
     Observer,
-    /// Full: everything an observer may do, plus reveal and control.
+    /// Everything an observer may do, plus the control commands (reload, toggle,
+    /// room lifecycle).
     Elevated,
 }
 
@@ -31,7 +35,7 @@ pub struct Operator {
 }
 
 impl Operator {
-    /// Whether this operator may reveal hidden state / issue control commands.
+    /// Whether this operator may issue control commands.
     pub fn is_elevated(&self) -> bool {
         self.role == OperatorRole::Elevated
     }

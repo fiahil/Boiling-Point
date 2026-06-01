@@ -1,3 +1,12 @@
+> **Amendment (post-merge).** Two decisions below were simplified after review and
+> the canonical specs reflect the simpler design:
+> - **D5 (redaction) was dropped.** The trace backend is trusted and operator-only,
+>   so sensitive attributes export as-is; the trust boundary is the player wire,
+>   which the admin channel never touches. No redacting exporter.
+> - **The reveal is a read, not an elevated capability.** All reads (including the
+>   hidden-state reveal) are open to any authenticated operator; only control
+>   commands require the elevated role.
+
 ## Context
 
 Boiling Point's server is authoritative (Constitution I) and already required to
@@ -83,7 +92,7 @@ can never show in-flight rooms — the lifecycle hook is what makes the live vie
 possible. Instrumentation stays in `tracing`, bridged to OTEL via
 `tracing-opentelemetry`. See R5.
 
-### D5. Secrets in spans in-process only; allow-list redaction at the OTLP boundary
+### D5. Secrets in spans in-process only; allow-list redaction at the OTLP boundary — SUPERSEDED (see amendment at top; redaction dropped)
 Secret attributes (boiling point, committed cards, hands, mid-round volatility)
 ride in spans so the reveal is span-sourced and the projection holds them behind
 admin auth. A redacting layer at the OTLP exporter strips them — **allow-list**

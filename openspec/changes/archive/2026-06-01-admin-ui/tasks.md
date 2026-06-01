@@ -45,8 +45,9 @@
 
 - [x] 5.1 Live room/session/queue listing from the open-span registry, updating on
       lifecycle changes
-- [x] 5.2 Privileged hidden-state reveal from open-span attributes (boiling point,
-      commits, hands, volatility, modifiers); elevated-only, admin-channel-only
+- [x] 5.2 Hidden-state reveal from open-span attributes (boiling point, commits,
+      hands, volatility, modifiers); any authenticated operator, admin-channel-only
+      (never a player connection)
 - [x] 5.3 Handle reveal when no round is open (report "no round in progress")
 - [x] 5.4 Stuck/anomalous room detection (over-age open wave/round, error spans)
 - [x] 5.5 Per-game replay from the buffer (wave by wave); handle evicted games
@@ -75,9 +76,9 @@
 
 ## 8. Security & redaction verification
 
-- [x] 8.1 Test the export-boundary redaction: assert no secret attribute key
-      (boiling point, card identities, hands, mid-round volatility) appears in
-      OTLP exporter output (allow-list, not deny-list)
+- [x] 8.1 Export-boundary redaction removed (the trace backend is trusted and
+      operator-only); the tested control is the player-wire boundary — sensitive
+      state is unreachable on any player connection (see 8.2)
 - [x] 8.2 Test that the reveal is unreachable over any player connection
 - [x] 8.3 Test that the read projection cannot mutate game or config state
 

@@ -1,5 +1,8 @@
-## ADDED Requirements
+# room-inspector Specification
 
+## Purpose
+TBD - created by archiving change admin-ui. Update Purpose after archive.
+## Requirements
 ### Requirement: Live Room, Session, And Queue Listing
 
 The room inspector SHALL present, from the projection's open-span registry, a live
@@ -25,16 +28,16 @@ listing SHALL update as rooms and waves open and close.
 
 ### Requirement: Privileged Hidden-State Reveal
 
-For a selected live room, an operator with the elevated role SHALL be able to
-reveal hidden game state — the round's boiling point, each player's committed card
-and hand, the current total volatility, and active modifiers — read from the
-attributes of that room's **open** spans. This reveal SHALL be served only over
-the authenticated admin channel and SHALL never be reachable from a player
-connection.
+For a selected live room, any authenticated operator SHALL be able to reveal hidden
+game state — the round's boiling point, each player's committed card and hand, the
+current total volatility, and active modifiers — read from the attributes of that
+room's **open** spans. The reveal is a read (no elevated role required), but SHALL
+be served only over the authenticated admin channel and SHALL never be reachable
+from a player connection.
 
 #### Scenario: Authorized reveal returns hidden state
 
-- **WHEN** an elevated operator requests the reveal for a live room
+- **WHEN** an authenticated operator requests the reveal for a live room
 - **THEN** the admin channel returns that room's boiling point, committed cards,
   hands, current volatility total, and active modifiers from its open spans
 
@@ -83,3 +86,4 @@ resolve, score) including the now-completed round's revealed state.
 - **WHEN** an operator selects a game that has been evicted from the bounded buffer
 - **THEN** the inspector reports it is no longer retained rather than showing
   partial data
+

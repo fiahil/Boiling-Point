@@ -767,7 +767,7 @@ mod tests {
                 .any(|e| e.name == "wave" && e.attributes.contains_key("wave.number")),
             "wave missing wave.number"
         );
-        // Secret state rides in-process on the round span (redacted only at export).
+        // Sensitive state rides on the round span (admin-only; never on the player wire).
         assert!(
             events
                 .iter()

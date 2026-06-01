@@ -35,7 +35,8 @@ pub fn router(state: AdminState) -> Router {
         .route("/admin/", get(index))
         .route("/admin/app.js", get(app_js))
         .route("/admin/style.css", get(style_css))
-        // Read surfaces (observer role suffices).
+        // Read surfaces (any authenticated operator — observer or elevated).
+        .route("/admin/me", get(me))
         .route("/admin/fleet", get(fleet))
         .route("/admin/rooms", get(rooms))
         .route("/admin/rooms/{code}", get(room_detail))
@@ -43,7 +44,7 @@ pub fn router(state: AdminState) -> Router {
         .route("/admin/replay", get(replay_list))
         .route("/admin/replay/{game_id}", get(replay_get))
         .route("/admin/live", get(live))
-        // Privileged reveal (elevated only).
+        // Hidden-state reveal — a read, served only over the admin channel.
         .route("/admin/rooms/{code}/reveal", get(reveal))
         // Command plane (elevated only).
         .route("/admin/commands/reload", post(cmd_reload))
@@ -81,6 +82,12 @@ async fn style_css() -> impl IntoResponse {
 }
 
 // ---- read endpoints (Operator: observer or elevated) ----
+
+/// The authenticated operator's identity and role (so the web app can show what it
+/// may do — the reveal is a read for any operator; control needs elevation).
+async fn me(op: Operator) -> Response {
+    Json(json!({ "name": op.name, "role": op.role })).into_response()
+}
 
 async fn fleet(_op: Operator, State(s): State<AdminState>) -> Response {
     Json(s.projection.fleet()).into_response()
@@ -128,8 +135,9 @@ async fn replay_get(
     }
 }
 
-/// The live activity feed as Server-Sent Events. Carries public attributes only
-/// (the projection redacts secrets before broadcasting); the reveal is separate.
+/// The live activity feed as Server-Sent Events, served only over the authenticated
+/// admin channel. It may carry sensitive span attributes; no player connection ever
+/// reaches it.
 async fn live(
     _op: Operator,
     State(s): State<AdminState>,
@@ -152,13 +160,9 @@ async fn live(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-// ---- reveal (Elevated only) ----
+// ---- reveal (any authenticated operator; never a player connection) ----
 
-async fn reveal(
-    Elevated(_op): Elevated,
-    State(s): State<AdminState>,
-    Path(code): Path<String>,
-) -> Response {
+async fn reveal(_op: Operator, State(s): State<AdminState>, Path(code): Path<String>) -> Response {
     let outcome = s.projection.reveal(&code);
     if matches!(outcome, RevealOutcome::NoSuchRoom) {
         return (StatusCode::NOT_FOUND, Json(outcome)).into_response();
@@ -330,13 +334,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn observer_is_denied_reveal_and_control() {
-        // Reveal requires elevation.
+    async fn observer_may_reveal_but_is_denied_control() {
+        // The reveal is a read: an observer is authorized (404 = no such live room,
+        // but auth/role passed — not 403).
         assert_eq!(
             status_of(get("/admin/rooms/ABCD/reveal", Some(OBSERVER))).await,
-            StatusCode::FORBIDDEN
+            StatusCode::NOT_FOUND
         );
-        // Control requires elevation.
+        // Control still requires elevation.
         assert_eq!(
             status_of(post("/admin/commands/rooms/seed", Some(OBSERVER), "")).await,
             StatusCode::FORBIDDEN
@@ -393,16 +398,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn elevated_reaches_reveal_and_control() {
-        // Reveal is authorized (404 = no such live room, but auth/role passed —
-        // not 401/403).
-        let s = status_of(get("/admin/rooms/NONE/reveal", Some(ELEVATED))).await;
-        assert_eq!(s, StatusCode::NOT_FOUND);
-        // Seeding a room is authorized and succeeds.
+    async fn elevated_reaches_control() {
+        // The only thing elevation adds over an observer is the command plane:
+        // seeding a room is authorized and succeeds.
         assert_eq!(
             status_of(post("/admin/commands/rooms/seed", Some(ELEVATED), "")).await,
             StatusCode::OK
         );
+    }
+
+    #[tokio::test]
+    async fn me_reports_the_operator_role() {
+        use axum::body::to_bytes;
+        let resp = super::router(test_state())
+            .oneshot(get("/admin/me", Some(OBSERVER)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["role"], "observer");
+        assert_eq!(json["name"], "watcher");
     }
 
     #[tokio::test]

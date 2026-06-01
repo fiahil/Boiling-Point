@@ -1,5 +1,8 @@
-## ADDED Requirements
+# admin-span-projection Specification
 
+## Purpose
+TBD - created by archiving change admin-ui. Update Purpose after archive.
+## Requirements
 ### Requirement: Admin Read Model Derived Solely From The Span Stream
 
 The admin read surface SHALL be served from an in-process **projection** built
@@ -102,19 +105,21 @@ bounding memory.
 ### Requirement: Versioned Span-Schema Contract
 
 The projection SHALL depend on a documented, **versioned** span-schema contract
-enumerating the span names, their hierarchy, the public attributes, and the set
-of **secret attributes** (e.g. boiling point, committed cards, hands, mid-round
-volatility). The schema version SHALL be recorded, and the projection SHALL
-ignore unrecognized spans/attributes gracefully rather than failing.
+enumerating the span names, their hierarchy, and their attribute keys (including the
+sensitive attributes the reveal reads — boiling point, committed cards, hands,
+mid-round volatility, deck seed). The schema version SHALL be recorded, and the
+projection SHALL ignore unrecognized spans/attributes gracefully rather than
+failing.
 
 #### Scenario: Unknown span is ignored
 
 - **WHEN** the projection receives a span name not in its schema version
 - **THEN** it ignores the span without error and continues processing others
 
-#### Scenario: Secret attributes are enumerated
+#### Scenario: Sensitive attributes are documented for the reveal
 
 - **WHEN** the schema contract is consulted
-- **THEN** it explicitly lists which attributes are secret, so the export-boundary
-  redaction (see `admin-control` / server pipeline) has a single authoritative
-  source for what to strip
+- **THEN** it identifies which attributes carry sensitive game state, so the reveal
+  has a single authoritative source for what it surfaces (these are admin-only and
+  never carried on the player wire)
+

@@ -1,5 +1,8 @@
-## ADDED Requirements
+# admin-auth Specification
 
+## Purpose
+TBD - created by archiving change admin-ui. Update Purpose after archive.
+## Requirements
 ### Requirement: Admin Authentication Separate From Players
 
 The admin interface SHALL authenticate operators through a mechanism entirely
@@ -20,17 +23,19 @@ authenticated admin channel and never from a player connection.
 
 ### Requirement: Role-Based Capability Gating
 
-Admin capabilities SHALL be gated by operator role. The privileged hidden-state
-reveal and all control actions SHALL require an elevated role; read-only
-observation (fleet overview, room list, balance dashboard) MAY be granted to a
-lower observer role.
+Admin capabilities SHALL be gated by operator role. **Control actions** (config
+reload, content toggles, room lifecycle) SHALL require an elevated role. All
+**reads** — fleet overview, room list, balance dashboard, and the hidden-state
+reveal — SHALL be available to any authenticated operator, down to a lower observer
+role. The reveal remains reachable only over the authenticated admin channel and
+never from a player connection (see channel isolation and `room-inspector`).
 
-#### Scenario: Observer role is denied the reveal
+#### Scenario: Observer role may read the hidden-state reveal
 
-- **WHEN** an operator with only an observer role requests the hidden-state reveal
-  for a room
-- **THEN** the request is denied and no boiling point, hand, or volatility data is
-  returned
+- **WHEN** an operator with an observer role requests the hidden-state reveal for a
+  live room
+- **THEN** the request is authorized and the hidden state is served over the admin
+  channel
 
 #### Scenario: Observer role is denied control actions
 
@@ -38,10 +43,9 @@ lower observer role.
   toggle, or room lifecycle)
 - **THEN** the action is rejected with an authorization error and no state changes
 
-#### Scenario: Elevated role reaches reveal and control
+#### Scenario: Elevated role reaches control
 
-- **WHEN** an operator with an elevated role requests the reveal or issues a
-  control action
+- **WHEN** an operator with an elevated role issues a control action
 - **THEN** the request is authorized and served over the admin channel
 
 ### Requirement: Admin Channel Isolation From The Player Protocol
@@ -61,3 +65,4 @@ connection SHALL never be upgraded to admin privileges.
 
 - **WHEN** a request to the admin API carries a player-protocol message
 - **THEN** it is rejected; the admin API exposes only its own command/read schema
+

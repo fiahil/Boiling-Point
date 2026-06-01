@@ -1,11 +1,10 @@
 # Span-Schema Contract (v1)
 
 The admin read surface (`admin-ui`) is a **projection of the server's OTEL span
-stream**. That makes the span schema a *contract*: the projection, the redacting
-exporter, and the privileged reveal all depend on the span names, their nesting,
-and which attributes are public vs. secret. This document is the human-readable
-companion to the authoritative source of truth in code:
-`server/src/observability/span_schema.rs` (`SPAN_SCHEMA_VERSION`).
+stream**. That makes the span schema a *contract*: the projection and the
+privileged reveal depend on the span names, their nesting, and their attributes.
+This document is the human-readable companion to the authoritative source of truth
+in code: `server/src/observability/span_schema.rs` (`SPAN_SCHEMA_VERSION`).
 
 > **Versioning.** `SPAN_SCHEMA_VERSION` (currently **1**) is stamped on the root
 > `game` span as the public `schema.version` attribute. Bump it on any breaking
@@ -13,19 +12,26 @@ companion to the authoritative source of truth in code:
 > ignores span names and attribute keys it does not recognize rather than failing
 > (`admin-span-projection`: "Unknown span is ignored").
 
+> **No export redaction.** Spans carry sensitive game state and export **as-is** to
+> the trusted, operator-only trace backend. The trust boundary that matters is the
+> **player wire**, which never carries these attributes — the admin channel is a
+> separate transport. (Earlier the design redacted at the OTLP boundary; that was
+> dropped for a simpler path.)
+
 ## Span hierarchy
 
 ```
 room.lifetime        {room.code}                       — root; one per room, live-registry key
+lobby.wait           {player.id}                        — root; one per queued player (queue depth)
 ├─ game              {game.id, players.count,
-│  │                  schema.version, deck_seed*}       — child of room.lifetime
-│  ├─ round          {round.number, boiling_point*,
-│  │  │               volatility_total*, modifiers,
+│  │                  schema.version, deck_seed°}        — child of room.lifetime
+│  ├─ round          {round.number, boiling_point°,
+│  │  │               volatility_total°, modifiers,
 │  │  │               round.exploded}                   — child of game
-│  │  ├─ hand         {player.id, hand*}                 — child of round (one per seated player)
+│  │  ├─ hand         {player.id, hand°}                  — child of round (one per seated player)
 │  │  ├─ wave         {wave.number, wave.timer_ms,
 │  │  │  │            wave.timed_out}                    — child of round
-│  │  │  ├─ commit    {player.id, committed_card*}       — child of wave (one per committed card)
+│  │  │  ├─ commit    {player.id, committed_card°}        — child of wave (one per committed card)
 │  │  │  └─ resolve   {pot.card_count}                   — child of wave
 │  │  └─ score        {round.exploded, pot.value,
 │  │                   dominant_color}                   — child of round
@@ -36,26 +42,21 @@ room.lifetime        {room.code}                       — root; one per room, l
                        outcome}                          — command-plane audit root
 ```
 
-`* = secret attribute` — carried in spans **in-process only** and stripped at the
-OTLP export boundary (`server/src/observability/redact.rs`). Open spans are *live
-state* and feed the reveal; closed spans fold into aggregates and the replay
-buffer.
+`° = sensitive attribute` — hidden from players in-flight and surfaced only by the
+admin reveal (and the operator-only trace backend); never carried on the player
+wire. Open spans are *live state* and feed the reveal; closed spans fold into
+aggregates and the replay buffer.
 
-## Public attributes (export allow-list)
+## Attributes
 
-These keys MAY leave the process. Anything not on this list is dropped at export
-(fail-closed allow-list, not a deny-list):
+Stable attribute keys live in `span_schema::attr`. Most are plain operational
+context (`room.code`, `game.id`, `round.number`, `wave.number`, `wave.timer_ms`,
+`wave.timed_out`, `players.count`, `round.exploded`, `pot.card_count`, `pot.value`,
+`dominant_color`, `modifiers`, `player.id`, `ws.message_kind`, `db.rows`,
+`schema.version`, plus the `admin.command` audit fields `operator`/`action`/
+`target`/`outcome`).
 
-`room.code`, `game.id`, `round.number`, `wave.number`, `wave.timer_ms`,
-`wave.timed_out`, `players.count`, `round.exploded`, `pot.card_count`,
-`pot.value`, `dominant_color`, `modifiers`, `player.id`, `ws.message_kind`,
-`db.rows`, `schema.version`, `operator`, `action`, `target`, `outcome`.
-
-## Secret attributes (authoritative set — never exported)
-
-These keys ride spans in-process so the projection can hold them behind admin
-auth for the reveal, and are **guaranteed never to be exported**. Adding a key
-here without also allow-listing it keeps it non-exporting by default:
+### Sensitive attributes (admin-reveal-only — never on the player wire)
 
 | Key | Meaning |
 |---|---|
@@ -64,6 +65,11 @@ here without also allow-listing it keeps it non-exporting by default:
 | `hand` | A player's hand contents. |
 | `volatility_total` | Mid-round running cauldron volatility (hidden until depile). |
 | `deck_seed` | The game seed (derives the boiling point and the whole deck order). |
+
+These ride in spans so the projection can serve them through the reveal (which any
+authenticated operator may read over the admin channel) and so the operator trace
+backend can record them. The only hard boundary is the **player wire**: a player
+connection can never reach the admin channel, so it never sees these.
 
 ## Live-state semantics (for the reveal / open-span registry)
 
@@ -79,6 +85,8 @@ here without also allow-listing it keeps it non-exporting by default:
 - **`committed_card`** rides momentary `commit` spans created at wave resolution;
   it is the in-process trace of what was played that wave (publicly revealed at
   the depile anyway).
+- **`lobby.wait`** spans are open while a player waits in the auto-match queue; the
+  count of open `lobby.wait` spans is the live queue depth.
 
 Any game state **not** represented by a span is, by design, invisible to the
 admin surface — that surfaces the instrumentation gap rather than reaching around

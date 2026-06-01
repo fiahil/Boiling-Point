@@ -6,9 +6,10 @@ The server SHALL emit its tracing as OpenTelemetry spans following a documented,
 versioned span tree (room → game → round → wave → commit/resolve → score, plus
 inbound-message handling, reconnection, and database writes), bridged from the
 server's existing `tracing` instrumentation so there is a single instrumentation
-surface. Spans carry stable, versioned attribute names; secret game state rides in
-span attributes in-process only and is redacted at the export boundary. Existing
-structured (JSON) logging remains available alongside the OTEL bridge.
+surface. Spans carry stable, versioned attribute names; sensitive game state rides
+in span attributes and may reach the trusted, operator-only trace backend, but is
+never carried on the player wire. Existing structured (JSON) logging remains
+available alongside the OTEL bridge.
 
 #### Scenario: A phase transition is emitted as an OTEL span
 

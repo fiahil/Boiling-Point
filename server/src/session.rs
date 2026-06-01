@@ -147,8 +147,9 @@ pub async fn run_game(
     tracing::info!(players = players.len(), "game started");
 
     // `game` span (span_schema::span::GAME) — child of the caller's room.lifetime
-    // span. Held open for the whole game; the deck seed rides as a secret attribute
-    // (in-process only, redacted at export). Field names match `span_schema::attr`.
+    // span. Held open for the whole game; the deck seed rides as a sensitive
+    // attribute (admin-only via the reveal, never on the player wire). Field names
+    // match `span_schema::attr`.
     let game_id = Uuid::new_v4();
     let game_span = tracing::info_span!(
         "game",

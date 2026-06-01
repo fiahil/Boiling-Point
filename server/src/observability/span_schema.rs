@@ -1,12 +1,12 @@
 //! The versioned span-schema contract: the single source of truth for the span
-//! names the server emits, their hierarchy, the **public** attribute keys that may
-//! leave the process, and the **secret** attribute keys that must never be
-//! exported.
+//! names the server emits, their hierarchy, and their attribute keys.
 //!
-//! Two consumers read from here so neither hard-codes strings:
-//! - [`crate::observability::redact`] uses [`is_public`] as the export allow-list.
-//! - the `admin-ui` span projection (a separate change) reads the names and the
-//!   secret set to drive its open-span registry and the privileged reveal.
+//! The `admin-ui` span projection reads these names and attribute keys to drive its
+//! open-span registry and the privileged reveal. Some attributes carry **sensitive
+//! game state** (boiling point, hands, mid-round volatility, deck seed); these ride
+//! in spans and may reach the trusted, operator-only trace backend, but the trust
+//! boundary that matters is the **player wire**, which never carries them (the admin
+//! channel is a separate transport). There is therefore no export-time redaction.
 //!
 //! The instrumentation call sites (`info_span!("round", round.number = …)`) must
 //! use field names that match these constants; the lifecycle-consumer tests assert
@@ -96,9 +96,9 @@ pub mod attr {
     /// The command outcome (`ok` or a rejection reason).
     pub const OUTCOME: &str = "outcome";
 
-    // --- secret (never exported) ---
+    // --- sensitive game state (admin reveal only; never on the player wire) ---
     /// The round's (post-modifier) boiling point. Revealed to players only on
-    /// explosion; secret in-flight.
+    /// explosion; hidden from players in-flight.
     pub const BOILING_POINT: &str = "boiling_point";
     /// A committed card's identity before public resolution.
     pub const COMMITTED_CARD: &str = "committed_card";
@@ -109,42 +109,6 @@ pub mod attr {
     /// The deck/game seed — derives the boiling point and the entire deck order.
     pub const DECK_SEED: &str = "deck_seed";
 }
-
-/// The export allow-list: attribute keys that may leave the process. Anything not
-/// in this set is stripped at the export boundary (fail-closed).
-pub const PUBLIC_ATTRS: &[&str] = &[
-    attr::ROOM_CODE,
-    attr::GAME_ID,
-    attr::ROUND_NUMBER,
-    attr::WAVE_NUMBER,
-    attr::WAVE_TIMER_MS,
-    attr::WAVE_TIMED_OUT,
-    attr::PLAYERS_COUNT,
-    attr::ROUND_EXPLODED,
-    attr::DOMINANT_COLOR,
-    attr::MODIFIERS,
-    attr::POT_CARD_COUNT,
-    attr::POT_VALUE,
-    attr::PLAYER_ID,
-    attr::WS_MESSAGE_KIND,
-    attr::DB_ROWS,
-    attr::SCHEMA_VERSION,
-    attr::OPERATOR,
-    attr::ACTION,
-    attr::TARGET,
-    attr::OUTCOME,
-];
-
-/// The authoritative secret-attribute set: keys carried in spans in-process only
-/// and guaranteed never to be exported. This is the one place that enumerates
-/// what redaction (and the privileged reveal) treat as secret.
-pub const SECRET_ATTRS: &[&str] = &[
-    attr::BOILING_POINT,
-    attr::COMMITTED_CARD,
-    attr::HAND,
-    attr::VOLATILITY_TOTAL,
-    attr::DECK_SEED,
-];
 
 /// The span tree as `(span, parent)` pairs. A `None` parent marks a span that may
 /// be a root (connection- or registry-scoped rather than nested under a room).
@@ -170,16 +134,6 @@ pub fn is_known_span(name: &str) -> bool {
     SPAN_TREE.iter().any(|(n, _)| *n == name)
 }
 
-/// Whether `key` is on the public export allow-list.
-pub fn is_public(key: &str) -> bool {
-    PUBLIC_ATTRS.contains(&key)
-}
-
-/// Whether `key` is an enumerated secret attribute.
-pub fn is_secret(key: &str) -> bool {
-    SECRET_ATTRS.contains(&key)
-}
-
 /// The documented parent of `span`, if it nests under another span.
 pub fn parent_of(span: &str) -> Option<&'static str> {
     SPAN_TREE
@@ -191,34 +145,6 @@ pub fn parent_of(span: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Public and secret attribute sets must be disjoint — no key can be both
-    /// exportable and secret, or redaction's meaning is ambiguous.
-    #[test]
-    fn public_and_secret_sets_are_disjoint() {
-        for s in SECRET_ATTRS {
-            assert!(
-                !is_public(s),
-                "secret attr {s} must not be on the public allow-list"
-            );
-        }
-        for p in PUBLIC_ATTRS {
-            assert!(
-                !is_secret(p),
-                "public attr {p} must not be enumerated secret"
-            );
-        }
-    }
-
-    /// Every secret key reports secret and not public, and vice versa.
-    #[test]
-    fn membership_helpers_agree_with_the_sets() {
-        assert!(is_secret(attr::BOILING_POINT));
-        assert!(!is_public(attr::BOILING_POINT));
-        assert!(is_public(attr::ROOM_CODE));
-        assert!(!is_secret(attr::ROOM_CODE));
-        assert!(!is_public("code.filepath")); // infra attr is not allow-listed
-    }
 
     /// The hierarchy is internally consistent: every named parent is itself a span
     /// in the tree.

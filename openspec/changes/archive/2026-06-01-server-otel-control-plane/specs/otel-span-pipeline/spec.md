@@ -25,10 +25,12 @@ continue to work alongside it.
 The server SHALL emit a documented span tree whose long-lived spans nest
 `room.lifetime` → `game` → `round` → `wave`, with leaf spans for `commit`,
 `resolve`, and `score` under the appropriate parent, plus `ws.message`,
-`reconnect`, and `db.write` spans. The set of span names, their hierarchy, their
-public attributes, and the secret-attribute set SHALL be captured in a single
-**versioned span-schema contract** exposed by the server, carrying an explicit
-schema version.
+`reconnect`, and `db.write` spans. The set of span names, their hierarchy, and
+their attribute keys SHALL be captured in a single **versioned span-schema
+contract** exposed by the server, carrying an explicit schema version. Some
+attributes carry sensitive game state (boiling point, hands, mid-round volatility,
+deck seed); these ride in spans for the admin reveal but are never carried on the
+player wire.
 
 #### Scenario: The span tree nests as documented
 
@@ -38,8 +40,7 @@ schema version.
 
 #### Scenario: The schema contract is the single source of names
 
-- **WHEN** a consumer (redaction or projection) needs a span name, a public
-  attribute key, or the secret-attribute set
+- **WHEN** the projection needs a span name or an attribute key
 - **THEN** it reads them from the versioned span-schema contract rather than
   hard-coding strings, and the contract reports its schema version
 

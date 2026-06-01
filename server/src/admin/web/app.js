@@ -34,13 +34,10 @@ async function connect() {
   token = $("#token").value.trim() || token;
   localStorage.setItem("bp_admin_token", token);
   try {
-    const fleet = await getJson("/admin/fleet");
-    // The fleet endpoint accepts observer or elevated; probe a command's
-    // authorization to display the effective role.
-    const role = await probeRole();
-    $("#role").textContent = role;
-    $("#role").className = "pill " + (role === "elevated" ? "warn" : "ok");
-    renderFleet(fleet);
+    const me = await getJson("/admin/me");
+    $("#role").textContent = me.role;
+    $("#role").className = "pill " + (me.role === "elevated" ? "warn" : "ok");
+    renderFleet(await getJson("/admin/fleet"));
     startRooms();
     startActivity();
     loadBalance();
@@ -49,15 +46,6 @@ async function connect() {
     $("#role").className = "pill";
     alert(e.message);
   }
-}
-
-async function probeRole() {
-  // A HEAD-like probe: reveal on a non-existent room returns 404 (elevated) or
-  // 403 (observer). We only read the status, never any data.
-  const res = await fetch("/admin/rooms/__probe__/reveal", {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return res.status === 403 ? "observer" : "elevated";
 }
 
 // ---- fleet --------------------------------------------------------------

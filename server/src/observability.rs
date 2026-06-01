@@ -3,14 +3,16 @@
 //!
 //! [`init`] composes a layered `tracing` subscriber:
 //! 1. an env-filtered JSON `fmt` layer (the existing structured logs),
-//! 2. an OpenTelemetry layer exporting to OTLP **through the redacting exporter**
-//!    (wired only when an endpoint is configured — backend deferred, R2), and
+//! 2. an OpenTelemetry layer exporting to OTLP (wired only when an endpoint is
+//!    configured — backend deferred, R2), and
 //! 3. the [`lifecycle`] layer feeding the in-process consumer seam — upstream of any
 //!    export sampling, so the `admin-ui` projection sees 100% of spans.
 //!
-//! The span tree, attribute names, and the authoritative secret-attribute set live
-//! in [`span_schema`] (version [`span_schema::SPAN_SCHEMA_VERSION`]); redaction
-//! ([`redact`]) and the projection both read from there.
+//! The span tree and attribute names live in [`span_schema`] (version
+//! [`span_schema::SPAN_SCHEMA_VERSION`]); the projection reads from there. Spans
+//! carry sensitive game state and are exported as-is to the trusted, operator-only
+//! trace backend — the trust boundary that matters is the player wire, which the
+//! admin channel never touches, so there is no export-time redaction.
 
 use std::net::SocketAddr;
 use std::sync::OnceLock;
@@ -19,7 +21,6 @@ use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing_subscriber::prelude::*;
 
 pub mod lifecycle;
-pub mod redact;
 pub mod span_schema;
 
 /// Env var naming the OTLP endpoint (e.g. `http://localhost:4317`). When unset, the
@@ -64,9 +65,9 @@ fn install_prometheus(metrics_addr: SocketAddr) {
     }
 }
 
-/// Build the OTLP-backed tracer, wrapping the exporter in the redacting boundary.
-/// Returns `None` (and logs) when no endpoint is configured or the exporter cannot
-/// be built — startup proceeds regardless (otel-span-pipeline: runs with no backend).
+/// Build the OTLP-backed tracer. Returns `None` (and logs) when no endpoint is
+/// configured or the exporter cannot be built — startup proceeds regardless
+/// (otel-span-pipeline: runs with no backend).
 fn build_otel_tracer() -> Option<opentelemetry_sdk::trace::SdkTracer> {
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_otlp::WithExportConfig as _;
@@ -91,15 +92,12 @@ fn build_otel_tracer() -> Option<opentelemetry_sdk::trace::SdkTracer> {
                 .with_service_name("boiling-point-server")
                 .build(),
         )
-        .with_batch_exporter(redact::RedactingExporter::new(exporter))
+        .with_batch_exporter(exporter)
         .build();
 
     let tracer = provider.tracer("boiling-point-server");
     let _ = PROVIDER.set(provider);
-    tracing::info!(
-        endpoint,
-        "OTLP span export enabled (redacted at the boundary)"
-    );
+    tracing::info!(endpoint, "OTLP span export enabled");
     Some(tracer)
 }
 

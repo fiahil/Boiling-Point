@@ -9,10 +9,12 @@ work the current server does not provide:
   *events*, not spans. "Spans as a source" requires both a `tracing` →
   OpenTelemetry bridge **and** real span instrumentation of the game loop (which
   has none today).
-- The privileged reveal requires **secret attributes** (boiling point, hands,
-  committed cards, mid-round volatility) to ride in spans **in-process only**, with
-  redaction at the export boundary so they never reach a trace store
-  (Constitution I, extended).
+- The privileged reveal requires **sensitive attributes** (boiling point, hands,
+  committed cards, mid-round volatility, deck seed) to ride in spans. These may
+  reach the trusted, operator-only trace backend; the trust boundary that matters
+  is the **player wire**, which never carries them (the admin channel is a separate
+  transport). There is therefore no export-time redaction — a deliberately simpler
+  path (Constitution III) than the originally-proposed redacting exporter.
 - The live view requires enumerating **open** spans, which standard OTLP export
   (emit-on-end) cannot provide — the server must expose an in-process
   **span-lifecycle hook** upstream of export sampling.
@@ -30,10 +32,11 @@ for, not bolted on — and so it stays **server-owned** and never widens the pla
   and **instrument the game loop** to emit the documented span tree (room → game →
   round → wave → commit/resolve → score, plus `ws.message`, `reconnect`,
   `db.write`) with stable, versioned attribute names.
-- **Secret attributes + redacting exporter:** carry secret game state in span
-  attributes in-process; an **allow-list** redaction layer at the OTLP exporter
-  strips them before any span leaves the process. Redaction is a tested,
-  security-critical control with a single authoritative secret-attribute set.
+- **Sensitive attributes (no redaction):** carry sensitive game state in span
+  attributes. Spans export as-is to the trusted operator-only trace backend; the
+  player wire never carries them (enforced by the separate admin channel, not by
+  attribute-level stripping). The redacting exporter the stub originally reserved
+  was dropped for this simpler path.
 - **In-process span-lifecycle hook:** expose span start/end (a `tracing` `Layer`,
   equivalently an OTEL `SpanProcessor`'s `on_start`/`on_end`) so `admin-ui`'s
   projection can maintain a live open-span registry and unsampled aggregates
@@ -48,10 +51,8 @@ for, not bolted on — and so it stays **server-owned** and never widens the pla
 ### New Capabilities
 - `otel-span-pipeline`: `tracing`→OTEL bridge plus game-loop instrumentation
   emitting the versioned span tree and attributes; OTLP export wired (trace backend
-  deferred per `admin-ui` R2).
-- `telemetry-redaction`: allow-list redaction of secret span attributes at the
-  export boundary; the authoritative secret-attribute set; tested as a security
-  control.
+  deferred per `admin-ui` R2). Spans export as-is — no redaction (the trace backend
+  is operator-only; the player wire is the trust boundary).
 - `span-lifecycle-hook`: an in-process consumer seam exposing span start/end for
   the `admin-ui` projection without backpressuring the game loop.
 - `admin-command-primitives`: authoritative game-loop operations for reload,
@@ -67,13 +68,13 @@ for, not bolted on — and so it stays **server-owned** and never widens the pla
 ## Impact
 
 - **New code (server):** OTEL setup in the `observability/` module, the span-schema
-  contract, the redacting exporter, the span-lifecycle `Layer`, span instrumentation
-  across `room`/`session`/`transport`/`persistence`, and command primitives on the
-  room registry / config holder.
+  contract, the span-lifecycle `Layer`, span instrumentation across
+  `room`/`session`/`transport`/`persistence`, and command primitives on the room
+  registry / config holder.
 - **New dependencies:** `opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`,
   `tracing-opentelemetry` (bridging existing `tracing`).
-- **Hard boundary (Constitution I):** secrets ride in spans in-process only and are
-  redacted at export; command primitives are reachable only via the admin command
-  API, never the player `wire-protocol`.
+- **Hard boundary (Constitution I):** sensitive game state never crosses the player
+  `wire-protocol` (enforced by the separate admin channel); command primitives are
+  reachable only via the admin command API, never the player wire.
 - **Blocks:** `admin-ui`. **Depends on:** `server-release-1` (observability, room
   registry, content config) — now archived.

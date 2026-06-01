@@ -10,8 +10,9 @@
 //! - [`api`] serves the read endpoints (fleet/rooms/reveal/replay/live) and the
 //!   command endpoints (reload/toggle/room lifecycle) over isolated routes.
 //!
-//! The reveal and all control actions require the elevated role and are reachable
-//! only over this authenticated admin channel.
+//! All reads — including the hidden-state reveal — are reachable by any
+//! authenticated operator over this admin channel (never a player connection); only
+//! the control actions require the elevated role.
 
 pub mod api;
 pub mod auth;
@@ -76,8 +77,8 @@ impl FromRequestParts<AdminState> for Operator {
     }
 }
 
-/// An extractor that additionally requires the elevated role — the reveal and all
-/// control actions use it, so an observer token is rejected with `403`.
+/// An extractor that additionally requires the elevated role — the control actions
+/// use it, so an observer token is rejected with `403`.
 pub struct Elevated(pub Operator);
 
 impl FromRequestParts<AdminState> for Elevated {

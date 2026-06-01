@@ -43,16 +43,19 @@ race or mutate the game loop** (Constitution I).
   (seed / force-start / kill) are issued over an explicit admin **command API** —
   never through spans. Each command's effect then re-appears in the span stream,
   so the UI confirms it through the same telemetry (the loop closes).
-- **Secrets ride in spans in-process only.** Boiling point, hands, and mid-round
-  volatility live in span attributes *inside the process* so the reveal is
-  span-sourced; the **OTLP exporter redacts them** before anything crosses the
-  trust boundary to a trace backend. Redaction is a security-critical, tested
-  control (Constitution I extended: never leak secrets to the player wire *or* a
-  third-party store).
+- **Sensitive game state rides in spans.** Boiling point, hands, mid-round
+  volatility, and the deck seed live in span attributes so the reveal is
+  span-sourced. They may reach the trusted, operator-only trace backend; the trust
+  boundary that matters is the **player wire**, which never carries them (the admin
+  channel is a separate transport). There is no export-time redaction — a simpler
+  path than a redacting exporter (Constitution III). *(Amended after the original
+  proposal, which redacted at the OTLP boundary.)*
 - **Balance numbers come from the unsampled in-process stream**, never a sampled
   exported trace — Principle IV numbers cannot be sampled.
 - All of the above behind **admin authentication** separate from anonymous player
-  session tokens, with role-based gating (the reveal requires an elevated role).
+  session tokens, with role-based gating: **all reads (including the reveal) are
+  open to any operator; only control commands require the elevated role.**
+  *(Amended; the original proposal gated the reveal behind the elevated role.)*
 
 This change adds **no game logic** and modifies **no player-facing server
 behavior**. The admin surface is a read projection plus a narrow command channel.
@@ -82,9 +85,9 @@ behavior**. The admin surface is a read projection plus a narrow command channel
 - _None in this change._ The admin surface is all-new and alters no
   `server-release-1` player requirement. The server-owned prerequisites it
   depends on — upgrading observability to **OTEL spans** (today's
-  `persistence-and-observability` specifies `tracing` JSON), the **redacting OTLP
-  exporter**, the in-process **span-lifecycle hook**, and the **command-plane
-  primitives** in the game loop — are reserved in the companion change
+  `persistence-and-observability` specifies `tracing` JSON), the in-process
+  **span-lifecycle hook**, and the **command-plane primitives** in the game
+  loop — are reserved in the companion change
   `server-otel-control-plane` (see Impact). They are server-owned and must not
   widen the player `wire-protocol`.
 
@@ -95,20 +98,20 @@ behavior**. The admin surface is a read projection plus a narrow command channel
   player WebSocket. In the single-binary monolith this is a separate module and
   separate routes/port — not a separate service yet (Constitution III).
 - **New code:** an `admin/` server module (projection, admin API, command
-  handlers, auth, redaction at the export boundary) and an admin web client.
-  Builds on `server-release-1`'s room registry, content config, and observability.
+  handlers, auth) and an admin web client. Builds on `server-release-1`'s room
+  registry, content config, and observability.
 - **New dependencies:** the OTEL stack on the server side
   (`opentelemetry`, `opentelemetry-otlp`, `tracing-opentelemetry`) bridging the
   existing `tracing` instrumentation; Grafana for the embedded balance panels;
   a web stack for the admin client (TBD in design — kept thin).
 - **Hard boundary (Constitution I):** the admin path must never widen the player
   protocol or leak privileged data onto a player connection. The hidden-state
-  reveal is admin-channel-only by construction, and secrets are redacted at the
-  OTLP export boundary so they never reach a trace store.
+  reveal is admin-channel-only by construction; sensitive game state reaches only
+  the trusted operator-only trace backend, never a player connection.
 - **Depends on:** `server-release-1` (rooms, sessions, content config,
   observability) **and** the companion `server-otel-control-plane` (OTEL span
-  pipeline + redaction + command primitives). Sequenced **after** a usable server
-  and the player client.
+  pipeline + command primitives). Sequenced **after** a usable server and the
+  player client.
 - **Constitution:** advances Principle II (one instrumentation surface dogfooded
   by the admin UI; Claude reads the same spans) and Principle IV (accurate,
   unsampled balance numbers). Principle I is *strengthened* — the read side is a
