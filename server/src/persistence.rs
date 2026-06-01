@@ -74,6 +74,13 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
 
 /// Persist a completed game and all its results in a single transaction. This is
 /// the only write the server performs, at `GameOver`.
+///
+/// `db.write` span (span_schema::span::DB_WRITE): game.id and db.rows are public.
+#[tracing::instrument(
+    name = "db.write",
+    skip_all,
+    fields(game.id = %result.game_id, db.rows = tracing::field::Empty)
+)]
 pub async fn persist_game(pool: &PgPool, result: &GameResult) -> Result<(), sqlx::Error> {
     let mut tx: Transaction<'_, Postgres> = pool.begin().await?;
 
@@ -129,6 +136,10 @@ pub async fn persist_game(pool: &PgPool, result: &GameResult) -> Result<(), sqlx
         .await?;
     }
 
+    // Public row count for the db.write span: players (anon) + games + game_players
+    // + game_rounds.
+    let rows = result.players.len() * 2 + 1 + result.rounds.len();
+    tracing::Span::current().record("db.rows", rows as u64);
     tx.commit().await
 }
 
