@@ -60,6 +60,25 @@ struct WaveCollection {
     passers: Vec<PlayerId>,
     emptied: Vec<PlayerId>,
     reconnected: Vec<PlayerId>,
+    /// Whether the commit window closed on its timer rather than every active
+    /// player locking in (feeds the `wave.timed_out` span attribute / timeout rate).
+    timed_out: bool,
+}
+
+/// A compact, in-process-only rendering of a hand for the `hand` span's secret
+/// attribute — read by the privileged reveal, never exported.
+fn fmt_hand(hand: &Hand) -> String {
+    hand.views()
+        .iter()
+        .map(|c| {
+            let eff = c.view.effect.map(|e| format!(":{e:?}")).unwrap_or_default();
+            format!(
+                "{:?}(v{},p{}){}",
+                c.view.color, c.view.volatility, c.view.points, eff
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Public table view, marking disconnected (gone) players as not connected.
@@ -124,6 +143,7 @@ pub async fn run_game(
     let mut gone: HashSet<PlayerId> = HashSet::new();
 
     crate::observability::metric::game_started();
+    let game_start = std::time::Instant::now();
     tracing::info!(players = players.len(), "game started");
 
     // `game` span (span_schema::span::GAME) — child of the caller's room.lifetime
@@ -159,6 +179,7 @@ pub async fn run_game(
             let (drawn, reshuffled) = deck.refill(len);
             hands.get_mut(id).unwrap().add(drawn);
             if reshuffled {
+                crate::observability::metric::deck_reshuffled();
                 broadcast(&players, ServerMessage::DeckReshuffled).await;
             }
         }
@@ -181,10 +202,18 @@ pub async fn run_game(
             .collect();
         let mut round = Round::start(active, effective_bp, start_vol);
         let mut wave_no: u8 = 1;
+        let round_start = std::time::Instant::now();
 
         // `round` span — child of the game span; held open for the whole round.
-        // boiling_point/volatility_total are secret (in-process only); round.number
-        // and round.exploded are public live-registry keys/outcome.
+        // boiling_point/volatility_total are secret (in-process only); round.number,
+        // round.exploded, and modifiers are public live-registry keys/outcome. The
+        // active modifiers ride as a public attribute (clients already see them).
+        let mods_str = modifiers
+            .kinds()
+            .iter()
+            .map(|m| format!("{m:?}"))
+            .collect::<Vec<_>>()
+            .join(",");
         let round_span = game_span.in_scope(|| {
             tracing::info_span!(
                 "round",
@@ -192,8 +221,20 @@ pub async fn run_game(
                 boiling_point = effective_bp as i64,
                 volatility_total = tracing::field::Empty,
                 round.exploded = tracing::field::Empty,
+                modifiers = %mods_str,
             )
         });
+
+        // `hand` spans — one per seated player, child of the round, held open for
+        // the whole round so the privileged reveal can read each hand from a live
+        // span. The hand contents ride as a secret attribute (in-process only).
+        let _hand_spans: Vec<tracing::Span> = ids
+            .iter()
+            .map(|id| {
+                let hand = fmt_hand(&hands[id]);
+                round_span.in_scope(|| tracing::info_span!("hand", player.id = %id.0, hand = %hand))
+            })
+            .collect();
 
         while round.is_open() {
             let acting: Vec<PlayerId> = round.active().to_vec();
@@ -208,7 +249,8 @@ pub async fn run_game(
                 tracing::info_span!(
                     "wave",
                     wave.number = wave_no as u64,
-                    wave.timer_ms = timer_ms
+                    wave.timer_ms = timer_ms,
+                    wave.timed_out = tracing::field::Empty,
                 )
             });
             broadcast(
@@ -233,11 +275,13 @@ pub async fn run_game(
                 timer_ms,
             )
             .await;
+            let wave_timed_out = collection.timed_out;
             // Reconnected players resume for future rounds and get a private snapshot.
             for player in &collection.reconnected {
                 // `reconnect` span — child of the game span; player.id is public.
                 let _reconnect =
                     game_span.in_scope(|| tracing::info_span!("reconnect", player.id = %player.0));
+                crate::observability::metric::player_reconnected();
                 gone.remove(player);
                 let snapshot = ServerMessage::StateSnapshot {
                     room_code: room_code.clone(),
@@ -285,6 +329,12 @@ pub async fn run_game(
             );
             resolve_span.record("pot.card_count", round.pot().card_count() as u64);
             drop(resolve_span);
+            // Surface the wave outcome and the live running volatility on the open
+            // spans (an Update lifecycle event), so the reveal shows current state.
+            wave_span.record("wave.timed_out", wave_timed_out);
+            round_span.record("volatility_total", round.pot().volatility as i64);
+            crate::observability::metric::wave_resolved(wave_timed_out);
+            crate::observability::metric::cards_committed(played.len() as u64);
             for (player, card) in report.outcome.recalled {
                 if let Some(hand) = hands.get_mut(&player) {
                     hand.add([card]);
@@ -373,11 +423,14 @@ pub async fn run_game(
                 "score",
                 round.exploded = exploded,
                 pot.value = tracing::field::Empty,
+                dominant_color = tracing::field::Empty,
             )
         });
         if exploded {
             let result = explosion(round.pot(), &ctx);
             score_span.record("pot.value", result.pot_value as i64);
+            // An explosion has no scoring colour winner.
+            score_span.record("dominant_color", "none");
             for (player, delta) in &result.deltas {
                 *scores.get_mut(player).unwrap() += delta;
             }
@@ -411,6 +464,17 @@ pub async fn run_game(
                     colors: result.winners.clone(),
                 }
             };
+            // Public dominant-strategy signal for the balance dashboard: the single
+            // dominating colour, or `split` when several colours tied.
+            score_span.record(
+                "dominant_color",
+                match result.winners.as_slice() {
+                    [only] => format!("{only:?}"),
+                    _ => "split".to_string(),
+                }
+                .as_str(),
+            );
+            crate::observability::metric::round_decided(result.winners.len() == 1);
             broadcast(
                 &players,
                 ServerMessage::RoundScored {
@@ -438,6 +502,7 @@ pub async fn run_game(
         drop(score_span);
 
         crate::observability::metric::round_resolved(exploded);
+        crate::observability::metric::round_duration(round_start.elapsed().as_secs_f64());
 
         // Spent pot cards return to the discard for future reshuffles.
         let spent: Vec<_> = round.pot().cards.iter().map(|pc| pc.card).collect();
@@ -485,6 +550,7 @@ pub async fn run_game(
     };
 
     crate::observability::metric::game_completed();
+    crate::observability::metric::game_duration(game_start.elapsed().as_secs_f64());
     tracing::info!(?winners, "game over");
     broadcast(
         &players,
@@ -536,9 +602,10 @@ async fn collect_wave(
 
     let sleep = tokio::time::sleep(Duration::from_millis(timer_ms as u64));
     tokio::pin!(sleep);
+    let mut timed_out = false;
     while !acting.iter().all(|p| locked.contains(p)) {
         tokio::select! {
-            _ = &mut sleep => break,
+            _ = &mut sleep => { timed_out = true; break; }
             maybe = rx.recv() => {
                 match maybe {
                     None => break,
@@ -624,5 +691,6 @@ async fn collect_wave(
         passers,
         emptied,
         reconnected,
+        timed_out,
     }
 }

@@ -1,0 +1,11 @@
+# Prometheus scrape config. The Boiling Point server exposes its (unsampled)
+# game-balance metrics on :9090. From inside the compose network the server runs
+# on the host, reachable at host.docker.internal on Docker Desktop / recent Linux.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: boiling-point
+    static_configs:
+      - targets: ["host.docker.internal:9090"]

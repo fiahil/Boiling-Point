@@ -11,12 +11,12 @@
 use rand::rngs::StdRng;
 
 use boiling_point_protocol::vocab::{Color, ModifierKind};
-use boiling_point_protocol::{codec, ClientMessage, EmoteId, PlayerId, ServerMessage};
+use boiling_point_protocol::{ClientMessage, EmoteId, PlayerId, ServerMessage, codec};
 
+use crate::HarnessError;
 use crate::model::PlayerView;
 use crate::strategy::{Strategy, WaveAction};
 use crate::transport::BotConnection;
-use crate::HarnessError;
 
 /// What a bot observed in one round, derived purely from broadcast messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -331,41 +331,47 @@ mod tests {
     #[test]
     fn audit_allows_peek_and_exploded_depile() {
         assert!(secret_audit(&ServerMessage::PeekResult { boiling_point: 11 }).is_ok());
-        assert!(secret_audit(&ServerMessage::Depile {
-            reveals: vec![],
-            exploded: true,
-            boiling_point: Some(9),
-            crossing_index: Some(0),
-        })
-        .is_ok());
+        assert!(
+            secret_audit(&ServerMessage::Depile {
+                reveals: vec![],
+                exploded: true,
+                boiling_point: Some(9),
+                crossing_index: Some(0),
+            })
+            .is_ok()
+        );
     }
 
     /// A non-secret message that carries no boiling point passes.
     #[test]
     fn audit_allows_clean_safe_depile() {
-        assert!(secret_audit(&ServerMessage::Depile {
-            reveals: vec![DepileEntry {
-                player: pid(),
-                card: CardView {
-                    color: Color::Ruby,
-                    volatility: 1,
-                    points: 1,
-                    effect: None,
-                },
-                running_volatility: 1,
-            }],
-            exploded: false,
-            boiling_point: None,
-            crossing_index: None,
-        })
-        .is_ok());
-        assert!(secret_audit(&ServerMessage::ScoreUpdate {
-            scores: vec![PlayerScore {
-                player: pid(),
-                score: 3
-            }]
-        })
-        .is_ok());
+        assert!(
+            secret_audit(&ServerMessage::Depile {
+                reveals: vec![DepileEntry {
+                    player: pid(),
+                    card: CardView {
+                        color: Color::Ruby,
+                        volatility: 1,
+                        points: 1,
+                        effect: None,
+                    },
+                    running_volatility: 1,
+                }],
+                exploded: false,
+                boiling_point: None,
+                crossing_index: None,
+            })
+            .is_ok()
+        );
+        assert!(
+            secret_audit(&ServerMessage::ScoreUpdate {
+                scores: vec![PlayerScore {
+                    player: pid(),
+                    score: 3
+                }]
+            })
+            .is_ok()
+        );
     }
 
     /// A crafted leak — a "safe" depile that nonetheless carries the boiling point

@@ -12,8 +12,8 @@
 //! Bots draw exclusively from a [`rand::rngs::StdRng`] seeded by this tree — the
 //! one sanctioned source on the decision path (see [`crate::bot`]).
 
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 /// Salt mixed in to derive a single game's seed from the root.
 const GAME_SALT: u64 = 0x6761_6D65_5345_4544; // "gameSEED"
