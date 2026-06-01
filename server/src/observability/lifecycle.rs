@@ -29,11 +29,16 @@ use tracing_subscriber::registry::LookupSpan;
 /// consumer causes events to be dropped rather than backpressuring emission.
 const CHANNEL_CAPACITY: usize = 4096;
 
-/// Whether a [`SpanEvent`] marks a span opening or closing.
+/// Whether a [`SpanEvent`] marks a span opening, updating, or closing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpanEventKind {
     /// The span just opened (`on_new_span`).
     Start,
+    /// An attribute was recorded onto an already-open span (`on_record`). Carries
+    /// the span's full current attribute set, so a consumer holding open spans
+    /// (the admin projection) sees live state — e.g. a round's running volatility
+    /// recorded after each wave — not just the start/end snapshots.
+    Update,
     /// The span just closed (`on_close`).
     End,
 }
@@ -205,6 +210,14 @@ where
             && let Some(stored) = span.extensions_mut().get_mut::<StoredSpan>()
         {
             values.record(&mut FieldVisitor(&mut stored.attributes));
+            // Forward the updated live state so consumers holding open spans see it.
+            self.handle.emit(SpanEvent {
+                kind: SpanEventKind::Update,
+                id: id.into_u64(),
+                name: stored.name,
+                parent_id: stored.parent_id,
+                attributes: stored.attributes.clone(),
+            });
         }
     }
 

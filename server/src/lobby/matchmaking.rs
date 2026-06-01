@@ -22,6 +22,9 @@ struct Pending {
     name: String,
     out: mpsc::Sender<ServerMessage>,
     notify: oneshot::Sender<mpsc::Sender<RoomCommand>>,
+    /// `lobby.wait` span, open while the player waits; dropped (closed) once they
+    /// are matched, so the live count of open `lobby.wait` spans is the queue depth.
+    _wait_span: tracing::Span,
 }
 
 /// The shared auto-match queue.
@@ -57,6 +60,7 @@ impl MatchQueue {
                 name,
                 out,
                 notify,
+                _wait_span: tracing::info_span!("lobby.wait", player.id = %player.0),
             });
             if waiting.len() >= GROUP_SIZE {
                 Some(waiting.drain(0..GROUP_SIZE).collect::<Vec<_>>())

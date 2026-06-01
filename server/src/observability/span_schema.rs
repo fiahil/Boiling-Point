@@ -21,12 +21,18 @@ pub mod span {
     /// A room's whole lifetime (lobby → game → teardown). Long-lived; the live
     /// open-span registry is keyed off this one.
     pub const ROOM_LIFETIME: &str = "room.lifetime";
+    /// A player waiting in the auto-match queue. Open while they wait; the count of
+    /// open `lobby.wait` spans is the live queue depth. Connection-scoped root.
+    pub const LOBBY_WAIT: &str = "lobby.wait";
     /// One full game within a room. Child of [`ROOM_LIFETIME`].
     pub const GAME: &str = "game";
     /// One round within a game. Child of [`GAME`].
     pub const ROUND: &str = "round";
     /// One wave (commit window) within a round. Child of [`ROUND`].
     pub const WAVE: &str = "wave";
+    /// A seated player's hand for a round. Held open for the round so the reveal
+    /// can read it from a live span. Child of [`ROUND`].
+    pub const HAND: &str = "hand";
     /// Resolution of a wave through the engine. Child of [`WAVE`].
     pub const RESOLVE: &str = "resolve";
     /// A single player's commit within a wave. Child of [`WAVE`].
@@ -57,10 +63,17 @@ pub mod attr {
     pub const WAVE_NUMBER: &str = "wave.number";
     /// Wave commit-window budget in milliseconds.
     pub const WAVE_TIMER_MS: &str = "wave.timer_ms";
+    /// Whether a wave closed on its timer rather than everyone locking in.
+    pub const WAVE_TIMED_OUT: &str = "wave.timed_out";
     /// Number of seated players.
     pub const PLAYERS_COUNT: &str = "players.count";
     /// Whether a round exploded (public after depile).
     pub const ROUND_EXPLODED: &str = "round.exploded";
+    /// The colour that dominated a round's scoring, or `split`/`none` (public).
+    pub const DOMINANT_COLOR: &str = "dominant_color";
+    /// Active cauldron modifiers for a round, comma-joined (public — clients see
+    /// each `ModifierRevealed`).
+    pub const MODIFIERS: &str = "modifiers";
     /// Cards in the cauldron (the public signal clients already see).
     pub const POT_CARD_COUNT: &str = "pot.card_count";
     /// Pot value at explosion (public in the Explosion message).
@@ -105,8 +118,11 @@ pub const PUBLIC_ATTRS: &[&str] = &[
     attr::ROUND_NUMBER,
     attr::WAVE_NUMBER,
     attr::WAVE_TIMER_MS,
+    attr::WAVE_TIMED_OUT,
     attr::PLAYERS_COUNT,
     attr::ROUND_EXPLODED,
+    attr::DOMINANT_COLOR,
+    attr::MODIFIERS,
     attr::POT_CARD_COUNT,
     attr::POT_VALUE,
     attr::PLAYER_ID,
@@ -134,8 +150,10 @@ pub const SECRET_ATTRS: &[&str] = &[
 /// be a root (connection- or registry-scoped rather than nested under a room).
 pub const SPAN_TREE: &[(&str, Option<&str>)] = &[
     (span::ROOM_LIFETIME, None),
+    (span::LOBBY_WAIT, None),
     (span::GAME, Some(span::ROOM_LIFETIME)),
     (span::ROUND, Some(span::GAME)),
+    (span::HAND, Some(span::ROUND)),
     (span::WAVE, Some(span::ROUND)),
     (span::RESOLVE, Some(span::WAVE)),
     (span::COMMIT, Some(span::WAVE)),
@@ -145,6 +163,12 @@ pub const SPAN_TREE: &[(&str, Option<&str>)] = &[
     (span::WS_MESSAGE, None),
     (span::ADMIN_COMMAND, None),
 ];
+
+/// Whether `name` is a span the schema knows about. The projection uses this to
+/// ignore unrecognized spans gracefully (forward/backward tolerance).
+pub fn is_known_span(name: &str) -> bool {
+    SPAN_TREE.iter().any(|(n, _)| *n == name)
+}
 
 /// Whether `key` is on the public export allow-list.
 pub fn is_public(key: &str) -> bool {

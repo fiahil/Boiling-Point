@@ -134,6 +134,50 @@ pub mod metric {
             metrics::counter!("round_explosions_total").increment(1);
         }
     }
+
+    /// The deck was reshuffled mid-game (drives the reshuffle-frequency panel).
+    pub fn deck_reshuffled() {
+        metrics::counter!("deck_reshuffles_total").increment(1);
+    }
+
+    /// A wave resolved; `timed_out` is whether the commit window closed on the
+    /// timer rather than everyone locking in (drives the timeout-rate panel).
+    pub fn wave_resolved(timed_out: bool) {
+        metrics::counter!("waves_total").increment(1);
+        if timed_out {
+            metrics::counter!("wave_timeouts_total").increment(1);
+        }
+    }
+
+    /// `n` cards were committed this wave (drives the cards-per-round panel).
+    pub fn cards_committed(n: u64) {
+        metrics::counter!("cards_committed_total").increment(n);
+    }
+
+    /// A player reconnected mid-game (drives the reconnection-rate panel).
+    pub fn player_reconnected() {
+        metrics::counter!("player_reconnects_total").increment(1);
+    }
+
+    /// A (non-explosion) round was decided; `dominated` distinguishes a single
+    /// dominant colour from a split (drives the dominant-strategy panel).
+    pub fn round_decided(dominated: bool) {
+        if dominated {
+            metrics::counter!("round_dominations_total").increment(1);
+        } else {
+            metrics::counter!("round_splits_total").increment(1);
+        }
+    }
+
+    /// Record a completed round's duration in seconds (duration histogram panel).
+    pub fn round_duration(secs: f64) {
+        metrics::histogram!("round_duration_seconds").record(secs);
+    }
+
+    /// Record a completed game's duration in seconds (duration histogram panel).
+    pub fn game_duration(secs: f64) {
+        metrics::histogram!("game_duration_seconds").record(secs);
+    }
 }
 
 #[cfg(test)]
