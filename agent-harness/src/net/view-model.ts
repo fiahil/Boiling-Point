@@ -215,6 +215,11 @@ export function applyServerMessage(vm: ViewModel, msg: ServerMessage): ViewModel
       if (p) p.info.connected = msg.connected;
       break;
     }
+    case "DeathmatchStarted": {
+      // Tiebreaker among the tied leaders. The deathmatch then proceeds as normal forced
+      // waves (WaveOpened/WaveResolved), which the runner already plays; nothing to store.
+      break;
+    }
     case "GameOver": {
       vm.gameOver = { winners: msg.winners, finalScores: msg.final_scores };
       break;

@@ -29,7 +29,7 @@ test("builds self + opponents and tracks scores, contribution, lockout, pot", ()
       ],
     },
     { type: "YourHand", cards: [{ id: 1, view: RUBY }] },
-    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000, final_wave: false },
     { type: "WaveResolved", played: ["me"], passed: ["opp"], cauldron_card_count: 1, contributions: [{ player: "me", count: 1 }] },
     { type: "ScoreUpdate", scores: [{ player: "me", score: 5 }, { player: "opp", score: 0 }] },
   ]);
@@ -56,7 +56,7 @@ test("never holds a boiling point on a safe brew", () => {
       your_color: "Ruby",
       players: [{ id: "me", display_name: "Me", color: "Ruby", connected: true }],
     },
-    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000, final_wave: false },
     { type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 1, contributions: [{ player: "me", count: 1 }] },
     {
       type: "Depile",
@@ -91,7 +91,7 @@ test("boiling point enters only via own Peek or an exploded depile", () => {
 
 test("reshuffle starts a new counting epoch", () => {
   const vm = feed([
-    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000, final_wave: false },
     { type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 1, contributions: [] },
     {
       type: "Depile",

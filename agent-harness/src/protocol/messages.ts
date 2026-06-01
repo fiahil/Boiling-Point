@@ -105,7 +105,7 @@ export type ServerMessage =
   | { type: "RoomJoined"; room_code: RoomCode; your_player_id: PlayerId; your_color: Color; players: PlayerPublic[] }
   | { type: "GameStarting"; players: PlayerPublic[]; round_count: number }
   | { type: "YourHand"; cards: HandCard[] }
-  | { type: "WaveOpened"; round_number: number; wave_number: number; timer_ms: number }
+  | { type: "WaveOpened"; round_number: number; wave_number: number; timer_ms: number; final_wave: boolean }
   | { type: "WaveResolved"; played: PlayerId[]; passed: PlayerId[]; cauldron_card_count: number; contributions: Contribution[] }
   | { type: "ModifierRevealed"; modifier: ModifierKind; round_number: number }
   | { type: "SomeonePeeked" }
@@ -118,6 +118,7 @@ export type ServerMessage =
   | { type: "Explosion"; pot_value: number; deltas: PlayerScore[]; shielded: PlayerId[] }
   | { type: "ScoreUpdate"; scores: PlayerScore[] }
   | { type: "GameOver"; final_scores: PlayerScore[]; winners: PlayerId[] }
+  | { type: "DeathmatchStarted"; participants: PlayerId[] }
   | { type: "Error"; code: ErrorCode; message: string }
   | { type: "PlayerConnectionChanged"; player: PlayerId; connected: boolean }
   | {

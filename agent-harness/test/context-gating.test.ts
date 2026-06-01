@@ -23,7 +23,7 @@ function withHistory() {
       ],
     },
     { type: "YourHand", cards: [{ id: 1, view: MY_CARD }] },
-    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000, final_wave: false },
     { type: "WaveResolved", played: ["me", "opp"], passed: [], cauldron_card_count: 2, contributions: [] },
     {
       type: "Depile",
@@ -32,7 +32,7 @@ function withHistory() {
       boiling_point: null,
       crossing_index: null,
     },
-    { type: "WaveOpened", round_number: 2, wave_number: 1, timer_ms: 30000 },
+    { type: "WaveOpened", round_number: 2, wave_number: 1, timer_ms: 30000, final_wave: false },
   ];
   for (const m of msgs) applyServerMessage(vm, m);
   return vm;

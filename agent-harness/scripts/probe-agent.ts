@@ -31,7 +31,7 @@ applyServerMessage(vm, {
     { id: 12, view: { color: "Wild", volatility: 2, points: 0, effect: "Peek" } },
   ],
 });
-applyServerMessage(vm, { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000 });
+applyServerMessage(vm, { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000, final_wave: false });
 
 let decided: Move | undefined;
 const deps: ToolDeps = {
@@ -79,7 +79,7 @@ const first = await decideOnce("turn 1 (cold)");
 
 // Advance the board to a genuinely new wave so turn 2 is a fresh decision.
 applyServerMessage(vm, { type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 2, contributions: [{ player: "me", count: 1 }] });
-applyServerMessage(vm, { type: "WaveOpened", round_number: 1, wave_number: 2, timer_ms: 10000 });
+applyServerMessage(vm, { type: "WaveOpened", round_number: 1, wave_number: 2, timer_ms: 10000, final_wave: false });
 
 const second = await decideOnce("turn 2 (warm)");
 session.close();
