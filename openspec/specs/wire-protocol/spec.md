@@ -91,3 +91,31 @@ The broadcast that opens a wave SHALL carry that wave's timer budget (its durati
 - **WHEN** a client's local countdown reaches zero but the server has not yet closed the wave
 - **THEN** the client may still submit or change its selection, and the server applies it if the wave is still open on the server's authoritative clock
 
+### Requirement: Wave-Open Final-Wave Flag
+
+The wave-open broadcast SHALL indicate whether the wave is the one-player final wave — the single wave granted to the last remaining active player before the pot settles — so clients can render that it is the final wave.
+
+#### Scenario: Final wave is flagged
+
+- **WHEN** only one active player remains and the server opens their single final wave
+- **THEN** the wave-open broadcast marks the wave as the final wave
+
+#### Scenario: Ordinary waves are not flagged
+
+- **WHEN** the server opens a wave with two or more active players
+- **THEN** the wave-open broadcast does not mark the wave as final
+
+### Requirement: Deathmatch Start Broadcast
+
+When the game reaches the Deathmatch tiebreaker (two or more players tied for the lead after the final round), the server SHALL broadcast that the Deathmatch has begun, naming its participants. The tiebreaker outcome (champion or co-champions) is conveyed by the subsequent `GameOver` message.
+
+#### Scenario: Deathmatch start is announced with participants
+
+- **WHEN** the final round ends with two or more players tied for the lead
+- **THEN** the server broadcasts a Deathmatch-start message listing the tied participants, before the `GameOver` that reports the winner(s)
+
+#### Scenario: No Deathmatch on a clear winner
+
+- **WHEN** the final round ends with a single player leading
+- **THEN** no Deathmatch-start message is sent and the game ends directly with `GameOver`
+

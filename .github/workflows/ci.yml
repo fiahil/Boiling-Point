@@ -1,0 +1,70 @@
+# CI gate for the Boiling Point workspace.
+#
+# Runs formatting (fmt), lints (clippy, warnings-as-errors), and the unit tests
+# (`make test-unit`, which skips the transport tests that boot an in-process
+# server). Command definitions live in the Makefile and the shared
+# `./.github/actions/setup-rust` action so CI never drifts and the repeated
+# toolchain/cache setup is defined once.
+#
+# Cold-start cost: only TWO jobs compile, and they run in parallel — `lint`
+# (clippy-driver artifacts) and `test` (rustc artifacts), which genuinely differ
+# and so cannot share a cache. `fmt` does no compilation at all.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to a branch/PR cancels the in-flight run for the same ref.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: CI only reads the repo.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # CI builds are one-shot, so incremental compilation only bloats the cache and
+  # slows the cold restore/save with no reuse benefit.
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  fmt:
+    name: Format (rustfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: rustfmt
+          cache: "false" # no compilation here — skip the cache round-trip
+      - name: Check formatting
+        run: make fmt
+
+  lint:
+    name: Lint (clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: clippy
+          cache-key: clippy
+      - name: Clippy (warnings as errors)
+        run: make lint
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: build
+      - name: Run unit tests
+        run: make test-unit

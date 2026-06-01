@@ -1,0 +1,40 @@
+[package]
+name = "boiling-point-bot-harness"
+description = "Boiling Point Layer-1 balance harness: headless protocol bots, a seeded batch runner, and balance-statistics reporting. A pure consumer of the public wire protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "boiling_point_bot_harness"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bot-harness"
+path = "src/main.rs"
+
+[dependencies]
+# The wire protocol — the only contract a bot is allowed to see (D2 secret boundary).
+boiling-point-protocol = { path = "../protocol" }
+# The authoritative engine, consumed only through its in-process game-driver handle
+# (`session::run_game`) and the WebSocket transport — never through its internals.
+boiling-point-server = { path = "../server" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+# A single seeded RNG family feeds the deterministic RNG tree (D4); no other source
+# is allowed on the decision path.
+rand = "0.8"
+# Async runtime + channels for the in-process driver. `current_thread` flavour keeps
+# scheduling deterministic for reproducible runs.
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net"] }
+# The real wire path for the smaller WebSocket-mode batch.
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+# Serve the embedded server (reusing the server crate's router) for WebSocket mode.
+axum = "0.8"
