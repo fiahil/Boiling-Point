@@ -434,8 +434,8 @@ impl App {
         if code == KeyCode::Char('c')
             && let Some(rc) = self.vm.room_code.clone()
         {
-            match crate::clipboard::copy(&format!("boilingpoint.gg/r/{rc}")) {
-                Ok(()) => self.toast("invite link copied"),
+            match crate::clipboard::copy(&rc) {
+                Ok(()) => self.toast("invite code copied"),
                 Err(_) => self.toast("copy unavailable in this terminal"),
             }
         }

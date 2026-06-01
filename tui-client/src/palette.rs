@@ -1,22 +1,25 @@
 //! Player-colour palette.
 //!
-//! Every colour is rendered as a single **letter** as well as a colour, so the
-//! table stays legible on 16-colour terminals and for colour-blind players —
-//! colour is never the sole signal (research R4). Truecolor values are used
-//! where the terminal supports them; ratatui downsamples to the nearest ANSI
+//! Every colour is shown with a distinct **emoji glyph** as well as its colour,
+//! so a player is identifiable by *shape* (diamond / heart / circle / square /
+//! lion) and not by colour alone — keeping the table legible for colour-blind
+//! players and on terminals that downsample colours (research R4). The glyphs
+//! double as the player's icon throughout the UI. Truecolor values are used
+//! where the terminal supports them; ratatui maps them to the nearest ANSI
 //! colour otherwise, so no explicit capability branch is needed in render code.
 
 use boiling_point_protocol::Color as Wire;
 use ratatui::style::Color;
 
-/// The single-letter tag for a colour (R/B/G/A/W), shown alongside its colour.
-pub(crate) fn letter(c: Wire) -> char {
+/// The emoji glyph for a colour, used as the player's icon. Each is a distinct
+/// shape so colour is never the sole signal.
+pub(crate) fn glyph(c: Wire) -> &'static str {
     match c {
-        Wire::Ruby => 'R',
-        Wire::Sapphire => 'B',
-        Wire::Emerald => 'G',
-        Wire::Amethyst => 'A',
-        Wire::Wild => 'W',
+        Wire::Ruby => "♦️",
+        Wire::Sapphire => "💙",
+        Wire::Emerald => "🟢",
+        Wire::Amethyst => "🟪",
+        Wire::Wild => "🦁",
     }
 }
 

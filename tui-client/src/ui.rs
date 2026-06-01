@@ -170,7 +170,7 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
         )),
         Line::from(Span::styled(status, Style::default().fg(Color::Cyan))),
         Line::from(Span::styled(
-            format!("share: boilingpoint.gg/r/{code}    [c] copy"),
+            format!("invite code: {code}    [c] copy"),
             Style::default().fg(Color::DarkGray),
         )),
     ];
@@ -187,7 +187,7 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
         let dot = if occupied { "●" } else { "◌" };
         lines.push(Line::from(vec![
             Span::styled(
-                format!(" {} {:<9}", palette::letter(*color), palette::name(*color)),
+                format!(" {} {:<9}", palette::glyph(*color), palette::name(*color)),
                 Style::default().fg(palette::style(*color)),
             ),
             Span::raw(format!("{name:<22}")),
@@ -559,7 +559,7 @@ fn opponents(frame: &mut Frame, area: Rect, app: &App) {
     .split(area);
     for (p, col) in others.iter().zip(cols.iter()) {
         let title = Span::styled(
-            format!(" {} {} ", palette::letter(p.color), p.name),
+            format!(" {} {} ", palette::glyph(p.color), p.name),
             Style::default()
                 .fg(palette::style(p.color))
                 .add_modifier(Modifier::BOLD),
@@ -623,12 +623,12 @@ fn self_line(frame: &mut Frame, area: Rect, app: &App) {
     let me = app.vm.me.and_then(|id| app.vm.player(id));
     let (letter, name, color, score) = match me {
         Some(p) => (
-            palette::letter(p.color),
+            palette::glyph(p.color),
             p.name.clone(),
             palette::style(p.color),
             p.score,
         ),
-        None => ('R', "you".into(), Color::White, 0),
+        None => ("·", "you".into(), Color::White, 0),
     };
     let committed = match app.committed {
         Selection::None => "deciding".to_string(),
@@ -870,12 +870,12 @@ fn debug_overlay(frame: &mut Frame, area: Rect, app: &App) {
 fn score_line(app: &App, id: PlayerId, delta: Option<i32>) -> Line<'static> {
     let (letter, name, color, score) = match app.vm.player(id) {
         Some(p) => (
-            palette::letter(p.color),
+            palette::glyph(p.color),
             p.name.clone(),
             palette::style(p.color),
             p.score,
         ),
-        None => ('?', "?".into(), Color::White, 0),
+        None => ("·", "?".into(), Color::White, 0),
     };
     let mut spans = vec![Span::styled(
         format!("{letter} {name:<14}"),
@@ -905,7 +905,7 @@ fn card_text(c: &CardView) -> String {
     let eff = if c.effect.is_some() { " ◆" } else { "" };
     format!(
         "{} v{} p{}{}",
-        palette::letter(c.color),
+        palette::glyph(c.color),
         c.volatility,
         c.points,
         eff
