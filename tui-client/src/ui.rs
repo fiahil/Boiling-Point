@@ -13,7 +13,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::{App, Conn, Selection, emote_label};
@@ -215,8 +215,8 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
 fn round_start(frame: &mut Frame, area: Rect, app: &App) {
     let [head, body, hand_area, foot] = Layout::vertical([
         Constraint::Length(3),
-        Constraint::Min(6),
-        Constraint::Length(5),
+        Constraint::Min(5),
+        Constraint::Length(6),
         Constraint::Length(2),
     ])
     .areas(area);
@@ -285,9 +285,9 @@ fn playing(frame: &mut Frame, area: Rect, app: &App) {
     let [head, opp, cauldron_area, me_area, hand_area, foot] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(5),
-        Constraint::Min(5),
+        Constraint::Min(3),
         Constraint::Length(2),
-        Constraint::Length(5),
+        Constraint::Length(6),
         Constraint::Length(2),
     ])
     .areas(area);
@@ -655,46 +655,141 @@ fn self_line(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 /// Render the hand as a row of bracketed card tokens plus a Pass slot.
+/// Card box geometry.
+const CARD_W: u16 = 9;
+const CARD_H: u16 = 4;
+
+/// Render the hand as a row of rounded mini-cards with soft drop shadows, under
+/// a faint label. The cursor card is highlighted; a committed card glows green;
+/// a Pass card closes the row (except in Deathmatch).
 fn hand_row(frame: &mut Frame, area: Rect, app: &App, cursor: usize, round_start: bool) {
-    let mut spans: Vec<Span> = vec![Span::raw(" ")];
-    for (i, c) in app.vm.hand.iter().enumerate() {
-        let is_cursor = i == cursor;
-        let committed = matches!(app.committed, Selection::Card(id) if id == c.id);
-        let mut style = Style::default().fg(card_color(&c.view));
-        if is_cursor {
-            style = style.add_modifier(Modifier::REVERSED | Modifier::BOLD);
-        } else if committed {
-            style = style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
-        }
-        let newmark = if round_start && app.vm.is_new(c.id) {
-            "✦"
-        } else {
-            ""
-        };
-        spans.push(Span::styled(format!("[{}{}]", i + 1, newmark), style));
-        spans.push(Span::styled(card_text(&c.view), style));
-        spans.push(Span::raw("  "));
-    }
-    if !round_start {
-        let pass_cursor = cursor >= app.vm.hand.len();
-        let mut pstyle = Style::default().fg(Color::Gray);
-        if pass_cursor {
-            pstyle = pstyle.add_modifier(Modifier::REVERSED | Modifier::BOLD);
-        }
-        if !app.vm.deathmatch {
-            spans.push(Span::styled("[PASS]", pstyle));
-        }
-    }
-    let title = if round_start {
+    let label = if round_start {
         "your hand — refilled to 5 (✦ newly drawn)"
     } else {
         "your hand"
     };
     frame.render_widget(
-        Paragraph::new(Line::from(spans))
-            .block(bordered(title))
-            .wrap(Wrap { trim: false }),
-        area,
+        Paragraph::new(Span::styled(label, Style::default().fg(Color::DarkGray))),
+        Rect { height: 1, ..area },
+    );
+
+    let mut x = area.x + 1;
+    let y = area.y + 1;
+    for (i, c) in app.vm.hand.iter().enumerate() {
+        if x + CARD_W + 1 > area.right() {
+            break;
+        }
+        let rect = Rect {
+            x,
+            y,
+            width: CARD_W,
+            height: CARD_H,
+        };
+        let committed = matches!(app.committed, Selection::Card(id) if id == c.id);
+        let newmark = if round_start && app.vm.is_new(c.id) {
+            "✦"
+        } else {
+            ""
+        };
+        let eff = if c.view.effect.is_some() { "◆" } else { "" };
+        draw_card(
+            frame,
+            rect,
+            CardFace {
+                label: format!("{}{}", i + 1, newmark),
+                glyph: palette::glyph(c.view.color),
+                color: card_color(&c.view),
+                line2: format!("v{} p{} {}", c.view.volatility, c.view.points, eff),
+                selected: !round_start && i == cursor,
+                committed,
+            },
+        );
+        x += CARD_W + 2;
+    }
+    if !round_start && !app.vm.deathmatch && x + 7 < area.right() {
+        let rect = Rect {
+            x,
+            y,
+            width: 7,
+            height: CARD_H,
+        };
+        draw_card(
+            frame,
+            rect,
+            CardFace {
+                label: "P".into(),
+                glyph: "",
+                color: Color::Gray,
+                line2: "pass".into(),
+                selected: cursor >= app.vm.hand.len(),
+                committed: false,
+            },
+        );
+    }
+}
+
+/// The face of a card to draw: its corner label, colour glyph, attribute line,
+/// and selection/commit state.
+struct CardFace {
+    label: String,
+    glyph: &'static str,
+    color: Color,
+    line2: String,
+    selected: bool,
+    committed: bool,
+}
+
+/// Draw one rounded card with a soft drop shadow into `rect`.
+fn draw_card(frame: &mut Frame, rect: Rect, face: CardFace) {
+    let CardFace {
+        label,
+        glyph,
+        color,
+        line2,
+        selected,
+        committed,
+    } = face;
+    // Soft drop shadow: an L of dim cells one column right and one row down.
+    {
+        let shadow = Style::default().fg(Color::Rgb(60, 60, 72));
+        let buf = frame.buffer_mut();
+        let bounds = buf.area;
+        let right = rect.right();
+        let bottom = rect.bottom();
+        for sy in (rect.y + 1)..=bottom {
+            if right < bounds.right() && sy < bounds.bottom() {
+                buf[(right, sy)].set_symbol("░").set_style(shadow);
+            }
+        }
+        for sx in (rect.x + 1)..=right {
+            if bottom < bounds.bottom() && sx < bounds.right() {
+                buf[(sx, bottom)].set_symbol("░").set_style(shadow);
+            }
+        }
+    }
+
+    let border_style = if selected {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else if committed {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(color)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
+        .title(Span::styled(label, border_style));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(glyph, Style::default().fg(color))),
+            Line::from(Span::styled(line2, Style::default().fg(color))),
+        ]),
+        inner,
     );
 }
 
