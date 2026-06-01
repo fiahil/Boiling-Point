@@ -1,0 +1,30 @@
+{
+  "name": "@boiling-point/agent-harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Layer-2 Claude-as-player harness for Boiling Point — a tunable, persona-driven opponent for solo playtesting.",
+  "type": "module",
+  "bin": {
+    "bp-bot": "./src/cli.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/cli.ts",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "gen:protocol": "node --experimental-strip-types scripts/gen-protocol-types.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.0",
+    "@msgpack/msgpack": "^3.0.0",
+    "ws": "^8.18.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.0"
+  }
+}
