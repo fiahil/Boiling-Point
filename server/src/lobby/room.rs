@@ -51,6 +51,12 @@ pub enum RoomCommand {
         /// The client message.
         msg: ClientMessage,
     },
+    /// Admin command-plane: start the game now with the currently seated players,
+    /// without waiting for the table to fill.
+    ForceStart,
+    /// Admin command-plane: tear this room down (kill an idle or stuck room). The
+    /// room's task ends, deregisters, and its `room.lifetime` span closes.
+    Shutdown,
 }
 
 /// A handle to a running room: its code and the channel to command it.
@@ -114,6 +120,51 @@ async fn broadcast_except(seats: &[Seat], except: PlayerId, msg: ServerMessage) 
     }
 }
 
+/// Announce the game and drive it to completion for the currently seated players.
+/// Shared by the auto-start (table full) and operator force-start paths.
+async fn start_game(
+    code: &RoomCode,
+    seats: &[Seat],
+    rx: &mut mpsc::Receiver<RoomCommand>,
+    registry: &Arc<ContentRegistry>,
+    config: &Arc<ContentConfig>,
+    emote_palette: &Arc<HashSet<u16>>,
+) {
+    broadcast(
+        seats,
+        ServerMessage::GameStarting {
+            players: public(seats),
+            round_count: ROUND_COUNT,
+        },
+    )
+    .await;
+    let seat_infos: Vec<SeatInfo> = seats
+        .iter()
+        .map(|s| SeatInfo {
+            id: s.id,
+            name: s.name.clone(),
+            color: s.color,
+            out: s.out.clone(),
+        })
+        .collect();
+    let seed: u64 = rand::random();
+    session::run_game(
+        registry.as_ref(),
+        config.as_ref(),
+        code.clone(),
+        seat_infos,
+        rx,
+        emote_palette.as_ref(),
+        seed,
+    )
+    .await;
+}
+
+// `room.lifetime` (span_schema::span::ROOM_LIFETIME) — the outermost span; the
+// live open-span registry keys off it. Instrumenting the whole task makes every
+// child span (game → round → wave …) nest under this room. The field name matches
+// `span_schema::attr::ROOM_CODE`.
+#[tracing::instrument(name = "room.lifetime", skip_all, fields(room.code = %code.0))]
 async fn run(
     code: RoomCode,
     mut rx: mpsc::Receiver<RoomCommand>,
@@ -176,35 +227,8 @@ async fn run(
                 .await;
 
                 if seats.len() == TABLE_SIZE {
-                    broadcast(
-                        &seats,
-                        ServerMessage::GameStarting {
-                            players: public(&seats),
-                            round_count: ROUND_COUNT,
-                        },
-                    )
-                    .await;
                     // Drive the whole game over the wire, then end the room.
-                    let seat_infos: Vec<SeatInfo> = seats
-                        .iter()
-                        .map(|s| SeatInfo {
-                            id: s.id,
-                            name: s.name.clone(),
-                            color: s.color,
-                            out: s.out.clone(),
-                        })
-                        .collect();
-                    let seed: u64 = rand::random();
-                    session::run_game(
-                        registry.as_ref(),
-                        config.as_ref(),
-                        code.clone(),
-                        seat_infos,
-                        &mut rx,
-                        emote_palette.as_ref(),
-                        seed,
-                    )
-                    .await;
+                    start_game(&code, &seats, &mut rx, &registry, &config, &emote_palette).await;
                     break;
                 }
             }
@@ -251,6 +275,16 @@ async fn run(
                 // Gameplay actions are handled once the in-room game loop is wired.
                 _ => {}
             },
+            RoomCommand::ForceStart => {
+                if !seats.is_empty() {
+                    start_game(&code, &seats, &mut rx, &registry, &config, &emote_palette).await;
+                    break;
+                }
+            }
+            RoomCommand::Shutdown => {
+                tracing::info!(code = %code.0, "room killed by operator");
+                break;
+            }
         }
     }
     rooms.remove(&code);

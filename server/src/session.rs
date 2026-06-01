@@ -20,6 +20,9 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 use tokio::sync::mpsc;
+use uuid::Uuid;
+
+use crate::observability::span_schema::SPAN_SCHEMA_VERSION;
 
 use boiling_point_protocol::server::{
     Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome,
@@ -123,6 +126,18 @@ pub async fn run_game(
     crate::observability::metric::game_started();
     tracing::info!(players = players.len(), "game started");
 
+    // `game` span (span_schema::span::GAME) — child of the caller's room.lifetime
+    // span. Held open for the whole game; the deck seed rides as a secret attribute
+    // (in-process only, redacted at export). Field names match `span_schema::attr`.
+    let game_id = Uuid::new_v4();
+    let game_span = tracing::info_span!(
+        "game",
+        game.id = %game_id,
+        players.count = players.len(),
+        schema.version = SPAN_SCHEMA_VERSION,
+        deck_seed = seed,
+    );
+
     for round_number in 1..=ROUND_COUNT {
         if round_number >= 2
             && let Some(kind) = modifier_pile.pop()
@@ -167,6 +182,19 @@ pub async fn run_game(
         let mut round = Round::start(active, effective_bp, start_vol);
         let mut wave_no: u8 = 1;
 
+        // `round` span — child of the game span; held open for the whole round.
+        // boiling_point/volatility_total are secret (in-process only); round.number
+        // and round.exploded are public live-registry keys/outcome.
+        let round_span = game_span.in_scope(|| {
+            tracing::info_span!(
+                "round",
+                round.number = round_number as u64,
+                boiling_point = effective_bp as i64,
+                volatility_total = tracing::field::Empty,
+                round.exploded = tracing::field::Empty,
+            )
+        });
+
         while round.is_open() {
             let acting: Vec<PlayerId> = round.active().to_vec();
             let timer_ms = if wave_no == 1 {
@@ -174,6 +202,15 @@ pub async fn run_game(
             } else {
                 config.timing.wave_ms
             };
+            // `wave` span — child of the round; held open for the whole commit
+            // window so the live registry shows the in-flight wave.
+            let wave_span = round_span.in_scope(|| {
+                tracing::info_span!(
+                    "wave",
+                    wave.number = wave_no as u64,
+                    wave.timer_ms = timer_ms
+                )
+            });
             broadcast(
                 &players,
                 ServerMessage::WaveOpened {
@@ -196,6 +233,9 @@ pub async fn run_game(
             .await;
             // Reconnected players resume for future rounds and get a private snapshot.
             for player in &collection.reconnected {
+                // `reconnect` span — child of the game span; player.id is public.
+                let _reconnect =
+                    game_span.in_scope(|| tracing::info_span!("reconnect", player.id = %player.0));
                 gone.remove(player);
                 let snapshot = ServerMessage::StateSnapshot {
                     room_code: room_code.clone(),
@@ -218,6 +258,20 @@ pub async fn run_game(
             } = collection;
             let played: Vec<PlayerId> = committed.iter().map(|(p, _)| *p).collect();
 
+            // `commit` leaf spans (one per committed card) — children of the wave.
+            // The committed card identity rides as a secret attribute (in-process
+            // only); it is never broadcast until public resolution.
+            wave_span.in_scope(|| {
+                for (player, card) in &committed {
+                    let _commit =
+                        tracing::info_span!("commit", player.id = %player.0, committed_card = ?card);
+                }
+            });
+
+            // `resolve` span — child of the wave; pot.card_count is public.
+            let resolve_span = wave_span.in_scope(|| {
+                tracing::info_span!("resolve", pot.card_count = tracing::field::Empty)
+            });
             let report = round.apply_wave(
                 registry,
                 WaveInput {
@@ -227,6 +281,8 @@ pub async fn run_game(
                     recalls: HashMap::new(),
                 },
             );
+            resolve_span.record("pot.card_count", round.pot().card_count() as u64);
+            drop(resolve_span);
             for (player, card) in report.outcome.recalled {
                 if let Some(hand) = hands.get_mut(&player) {
                     hand.add([card]);
@@ -266,6 +322,17 @@ pub async fn run_game(
         // Depile (boiling point revealed only on explosion).
         let exploded = round.ended() == Some(RoundEnd::Exploded);
         let depile = round.depile();
+        // Round outcome onto the round span: volatility_total is secret (the final
+        // running volatility); round.exploded is public.
+        round_span.record(
+            "volatility_total",
+            depile
+                .reveals
+                .last()
+                .map(|i| i.running_volatility)
+                .unwrap_or(0) as i64,
+        );
+        round_span.record("round.exploded", exploded);
         broadcast(
             &players,
             ServerMessage::Depile {
@@ -298,8 +365,17 @@ pub async fn run_game(
             shielded: &shielded,
             all_players: &ids,
         };
+        // `score` span — child of the round; round.exploded and pot.value are public.
+        let score_span = round_span.in_scope(|| {
+            tracing::info_span!(
+                "score",
+                round.exploded = exploded,
+                pot.value = tracing::field::Empty,
+            )
+        });
         if exploded {
             let result = explosion(round.pot(), &ctx);
+            score_span.record("pot.value", result.pot_value as i64);
             for (player, delta) in &result.deltas {
                 *scores.get_mut(player).unwrap() += delta;
             }
@@ -357,6 +433,7 @@ pub async fn run_game(
             },
         )
         .await;
+        drop(score_span);
 
         crate::observability::metric::round_resolved(exploded);
 
@@ -506,6 +583,10 @@ async fn collect_wave(
                                 .await;
                         }
                     }
+                    // Force-start is meaningless mid-game; an operator kill closes
+                    // the current commit window (the lobby loop owns full teardown).
+                    Some(RoomCommand::ForceStart) => {}
+                    Some(RoomCommand::Shutdown) => break,
                 }
             }
         }

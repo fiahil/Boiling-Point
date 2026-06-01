@@ -118,6 +118,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             continue; // silently drop excess
         }
         last = now;
+        // `ws.message` span (span_schema::span::WS_MESSAGE): only the message *kind*
+        // (the variant name) rides as a public attribute — never the payload.
+        let _msg_span = tracing::info_span!("ws.message", ws.message_kind = message_kind(&msg));
         if room_tx
             .send(RoomCommand::Action { player, msg })
             .await
@@ -230,6 +233,21 @@ async fn join_room(
         return None;
     }
     Some((player, room_tx))
+}
+
+/// The variant name of an inbound message, for the `ws.message` span. This is a
+/// public label only — it deliberately carries none of the message's payload.
+fn message_kind(msg: &ClientMessage) -> &'static str {
+    match msg {
+        ClientMessage::CreateRoom { .. } => "CreateRoom",
+        ClientMessage::JoinRoom { .. } => "JoinRoom",
+        ClientMessage::EnqueueMatch { .. } => "EnqueueMatch",
+        ClientMessage::CommitCard { .. } => "CommitCard",
+        ClientMessage::CommitPass => "CommitPass",
+        ClientMessage::LockIn => "LockIn",
+        ClientMessage::Emote { .. } => "Emote",
+        ClientMessage::Heartbeat => "Heartbeat",
+    }
 }
 
 async fn send_error(out: &mpsc::Sender<ServerMessage>, code: ErrorCode, message: &str) {
@@ -625,5 +643,150 @@ mod tests {
         ));
         send(&mut ws, &ClientMessage::Heartbeat).await;
         assert!(matches!(recv(&mut ws).await, ServerMessage::Heartbeat));
+    }
+
+    use crate::observability::lifecycle::{SpanConsumer, SpanEvent, SpanEventKind};
+
+    /// Records every lifecycle event for the span-tree assertion.
+    #[derive(Default)]
+    struct SpanCapture(std::sync::Mutex<Vec<SpanEvent>>);
+    impl SpanCapture {
+        fn events(&self) -> Vec<SpanEvent> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+    impl SpanConsumer for SpanCapture {
+        fn on_event(&self, event: SpanEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    /// Install a process-global subscriber feeding a [`SpanCapture`] (once). A
+    /// global subscriber is required so spans emitted on spawned room/session tasks
+    /// are observed; the per-thread `with_default` used by unit tests would miss
+    /// them.
+    fn install_span_capture() -> std::sync::Arc<SpanCapture> {
+        use crate::observability::lifecycle::LifecycleHandle;
+        use std::sync::OnceLock;
+        use tracing_subscriber::layer::SubscriberExt;
+        static CAP: OnceLock<std::sync::Arc<SpanCapture>> = OnceLock::new();
+        CAP.get_or_init(|| {
+            let cap = std::sync::Arc::new(SpanCapture::default());
+            let handle = LifecycleHandle::new();
+            handle.register(cap.clone());
+            // The subscriber (stored globally) keeps a clone of the handle alive, so
+            // the lifecycle channel/drain thread outlive this function.
+            let subscriber = tracing_subscriber::registry().with(handle.layer());
+            let _ = tracing::subscriber::set_global_default(subscriber);
+            cap
+        })
+        .clone()
+    }
+
+    /// Spin until `f` is true or a deadline passes (the drain thread is async).
+    fn wait_until(mut f: impl FnMut() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        f()
+    }
+
+    #[tokio::test]
+    async fn span_tree_is_emitted_during_a_full_game() {
+        let cap = install_span_capture();
+
+        // Run a full four-player game to GameOver.
+        let url = start_server().await;
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
+                break room_code;
+            }
+        };
+        let mut joiners = Vec::new();
+        for i in 2..=4 {
+            let url = url.clone();
+            let code = code.clone();
+            joiners.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(&format!("p{i}"), code)).await;
+                while !matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {}
+                play_loop(&mut ws).await
+            }));
+        }
+        let creator = tokio::spawn(async move { play_loop(&mut ws1).await });
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            let mut all = creator.await.unwrap();
+            for j in joiners {
+                all &= j.await.unwrap();
+            }
+            all
+        })
+        .await
+        .expect("game completed before timeout");
+        assert!(outcome, "every client saw GameOver");
+
+        // The documented span tree should now be visible to the lifecycle consumer.
+        let expected = [
+            "room.lifetime",
+            "game",
+            "round",
+            "wave",
+            "resolve",
+            "score",
+            "commit",
+        ];
+        let has = |name: &str| cap.events().iter().any(|e| e.name == name);
+        assert!(
+            wait_until(|| expected.iter().all(|n| has(n))),
+            "not all documented spans were emitted"
+        );
+
+        let events = cap.events();
+        // Live-registry key attributes are present on the right spans.
+        assert!(
+            events
+                .iter()
+                .any(|e| e.name == "room.lifetime" && e.attributes.contains_key("room.code")),
+            "room.lifetime missing room.code"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.name == "round" && e.attributes.contains_key("round.number")),
+            "round missing round.number"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.name == "wave" && e.attributes.contains_key("wave.number")),
+            "wave missing wave.number"
+        );
+        // Secret state rides in-process on the round span (redacted only at export).
+        assert!(
+            events
+                .iter()
+                .any(|e| e.name == "round" && e.attributes.contains_key("boiling_point")),
+            "boiling_point (secret) not carried in-process on a round span"
+        );
+        // room.lifetime both opens and (after teardown) closes.
+        assert!(
+            events
+                .iter()
+                .any(|e| e.name == "room.lifetime" && e.kind == SpanEventKind::Start),
+            "no room.lifetime Start observed"
+        );
+        assert!(
+            wait_until(|| cap
+                .events()
+                .iter()
+                .any(|e| e.name == "room.lifetime" && e.kind == SpanEventKind::End)),
+            "room.lifetime never ended after the game completed"
+        );
     }
 }
