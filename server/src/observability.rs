@@ -35,6 +35,9 @@ static PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = OnceLoc
 /// Initialise logging, the OTEL span bridge, the lifecycle hook, and Prometheus.
 /// Call once at startup. Never fails on a missing trace backend.
 pub fn init(metrics_addr: SocketAddr) {
+    use tracing_subscriber::Layer as _;
+    use tracing_subscriber::filter::LevelFilter;
+
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
@@ -43,11 +46,25 @@ pub fn init(metrics_addr: SocketAddr) {
     let otel_layer =
         build_otel_tracer().map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer));
 
+    // The `RUST_LOG` level filter gates the JSON **logs only** (attached per-layer to
+    // the fmt layer). The in-process lifecycle hook must observe 100% of the server's
+    // spans regardless of log verbosity — the admin projection's unsampled accuracy
+    // (Principle IV) and the live inspector depend on it, so `RUST_LOG=warn` must not
+    // blind the admin surface. The lifecycle layer therefore carries its own always-on
+    // `INFO` filter (every game span is `info_span!`), independent of `RUST_LOG`.
     tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer().json().with_target(true))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_target(true)
+                .with_filter(env_filter),
+        )
         .with(otel_layer)
-        .with(lifecycle::global_handle().layer())
+        .with(
+            lifecycle::global_handle()
+                .layer()
+                .with_filter(LevelFilter::INFO),
+        )
         .init();
 
     install_prometheus(metrics_addr);

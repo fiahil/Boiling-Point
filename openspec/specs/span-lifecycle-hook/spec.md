@@ -19,20 +19,26 @@ when a span opens, and an end event when it closes.
 
 #### Scenario: Attributes are available to the consumer
 
-- **WHEN** a span carrying attributes (public and secret) opens
-- **THEN** the consumer receives those attributes in-process, before any export
-  redaction
+- **WHEN** a span carrying attributes (including sensitive game state) opens
+- **THEN** the consumer receives those attributes in-process
 
-### Requirement: Hook Is Upstream Of Export Sampling
+### Requirement: Hook Is Upstream Of Export Sampling And Log Filtering
 
 The lifecycle seam SHALL observe **every** span — 100% of the in-process stream —
-independent of any sampling applied to the OTLP export path, so that consumers can
-compute unsampled aggregates and a complete live registry.
+independent of any sampling applied to the OTLP export path **and independent of the
+log-level filter** (`RUST_LOG`), so that consumers can compute unsampled aggregates
+and a complete live registry. A reduced log verbosity SHALL NOT blind the seam.
 
 #### Scenario: Sampled export does not thin the in-process stream
 
 - **WHEN** export sampling is enabled and drops spans from the OTLP path
 - **THEN** the lifecycle consumer still observes 100% of spans
+
+#### Scenario: Log level does not thin the in-process stream
+
+- **WHEN** the log-level filter is set to `warn` (gagging the structured logs)
+- **THEN** the lifecycle consumer still observes the server's spans, so the admin
+  projection and live inspector remain fully populated
 
 ### Requirement: Hook Never Backpressures The Game Loop
 
