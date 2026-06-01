@@ -97,6 +97,7 @@ mod tests {
                 round_number: 1,
                 wave_number: 1,
                 timer_ms: 30_000,
+                final_wave: false,
             },
             ServerMessage::WaveResolved {
                 played: vec![p],
@@ -188,6 +189,9 @@ mod tests {
                     id: CardId(1),
                     view: sample_card(),
                 }],
+            },
+            ServerMessage::DeathmatchStarted {
+                participants: vec![p],
             },
             ServerMessage::Heartbeat,
         ];

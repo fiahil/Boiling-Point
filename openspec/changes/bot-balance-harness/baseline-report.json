@@ -1,0 +1,54 @@
+{
+  "config_fingerprint": "f53d54e4fdd838c0",
+  "seed": 0,
+  "transport": "in-process",
+  "strategy_assignment": [
+    "cautious",
+    "aggressor",
+    "diplomat",
+    "random"
+  ],
+  "thresholds": {
+    "explosion_min": 0.3,
+    "explosion_max": 0.4,
+    "dominant_win_share": 0.4,
+    "runaway_pot_value": 25.0
+  },
+  "stats": {
+    "games": 5000,
+    "completed_games": 5000,
+    "rounds": 25000,
+    "explosions": 18895,
+    "explosion_rate": 0.7558,
+    "avg_pot_value": 15.28084,
+    "avg_cards_per_round": 6.64452,
+    "avg_waves_per_round": 2.7966,
+    "total_wins": 8049,
+    "wins_by_strategy": {
+      "aggressor": 2675,
+      "cautious": 1167,
+      "diplomat": 1475,
+      "random": 2732
+    },
+    "wins_by_color": {
+      "Amethyst": 2732,
+      "Emerald": 1475,
+      "Ruby": 1167,
+      "Sapphire": 2675
+    },
+    "modifier_draws": {
+      "BountifulBrew": 4031,
+      "DeepCauldron": 2986,
+      "DoubleStakes": 2999,
+      "Residue": 4003,
+      "Reversal": 2004,
+      "ThinIce": 3977
+    }
+  },
+  "smells": [
+    {
+      "kind": "explosion_rate",
+      "detail": "explosion rate 75.6% is above the target band [30%, 40%]"
+    }
+  ]
+}

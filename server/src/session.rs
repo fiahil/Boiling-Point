@@ -180,6 +180,8 @@ pub async fn run_game(
                     round_number,
                     wave_number: wave_no,
                     timer_ms,
+                    // Only one active player left ⇒ this is their single final wave.
+                    final_wave: acting.len() == 1,
                 },
             )
             .await;
@@ -373,6 +375,13 @@ pub async fn run_game(
         .filter(|id| scores[id] == best)
         .collect();
     let winners = if leaders.len() > 1 {
+        broadcast(
+            &players,
+            ServerMessage::DeathmatchStarted {
+                participants: leaders.clone(),
+            },
+        )
+        .await;
         let tied: Vec<(PlayerId, Hand)> =
             leaders.iter().map(|id| (*id, hands[id].clone())).collect();
         let mut shed_lowest = |_p: PlayerId, hand: &Hand| {
