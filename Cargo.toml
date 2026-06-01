@@ -3,11 +3,12 @@
 # `protocol/` is the narrow wire waist (DTOs + codec, no secrets); `server/` is
 # the authoritative engine that owns the full domain model. `tui-client/` is the
 # terminal client — an untrusted renderer over `protocol/` (no game logic, no
-# secrets). The full bot/balance harness lives in the separate
-# `bot-balance-harness` change.
+# secrets). `bot-harness/` is the Layer-1 headless balance harness that drives the
+# server over the same public protocol a real client uses (the
+# `bot-balance-harness` change).
 [workspace]
 resolver = "2"
-members = ["protocol", "server", "tui-client"]
+members = ["protocol", "server", "tui-client", "bot-harness"]
 
 [workspace.package]
 edition = "2024"
