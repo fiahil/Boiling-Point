@@ -21,14 +21,14 @@ use boiling_point_protocol::vocab::Color;
 use boiling_point_protocol::{ClientMessage, EmoteId, PlayerId, RoomCode, ServerMessage};
 use boiling_point_server::config::ContentConfig;
 use boiling_point_server::lobby::{MatchQueue, RoomRegistry, SessionStore};
-use boiling_point_server::session::{run_game, SeatInfo};
-use boiling_point_server::transport::{app, AppState};
+use boiling_point_server::session::{SeatInfo, run_game};
+use boiling_point_server::transport::{AppState, app};
 
-use crate::bot::{run_bot, GameObservation, RoundObservation};
+use crate::HarnessError;
+use crate::bot::{GameObservation, RoundObservation, run_bot};
 use crate::rng::GameSeeds;
 use crate::strategy::Strategy;
 use crate::transport::{BotConnection, InProcess, WebSocket};
-use crate::HarnessError;
 
 /// Players per table — fixed at four.
 const SEATS: usize = 4;
@@ -366,13 +366,13 @@ async fn ws_join(
                 ..
             }) => return Ok((conn, your_player_id, your_color, Some(room_code))),
             Some(ServerMessage::Error { message, .. }) => {
-                return Err(HarnessError::WebSocket(message))
+                return Err(HarnessError::WebSocket(message));
             }
             Some(_) => continue,
             None => {
                 return Err(HarnessError::WebSocket(
                     "connection closed before RoomJoined".into(),
-                ))
+                ));
             }
         }
     }

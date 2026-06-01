@@ -12,8 +12,8 @@
 
 use std::process::ExitCode;
 
-use boiling_point_bot_harness::report::{fingerprint, Report, Thresholds};
-use boiling_point_bot_harness::runner::{run_batch, BatchParams, TransportKind};
+use boiling_point_bot_harness::report::{Report, Thresholds, fingerprint};
+use boiling_point_bot_harness::runner::{BatchParams, TransportKind, run_batch};
 use boiling_point_bot_harness::stats::BatchStats;
 use boiling_point_bot_harness::strategy::BASELINE_NAMES;
 use boiling_point_server::config::ContentConfig;

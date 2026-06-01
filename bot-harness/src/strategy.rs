@@ -13,8 +13,8 @@
 //! balance understanding grows. Strategies are assigned per seat via
 //! [`assignment_from_names`].
 
-use rand::rngs::StdRng;
 use rand::Rng;
+use rand::rngs::StdRng;
 
 use boiling_point_protocol::vocab::{EffectKind, HandCard};
 use boiling_point_protocol::{CardId, EmoteId};
