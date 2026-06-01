@@ -123,6 +123,9 @@ pub enum ServerMessage {
         wave_number: u8,
         /// Wave duration in milliseconds (informational; the server alone closes the wave).
         timer_ms: u32,
+        /// Whether this is the one-player final wave: only one active player
+        /// remains, who gets exactly this wave before the pot settles.
+        final_wave: bool,
     },
     /// A wave resolved: who acted and the new count, never card identities. (broadcast)
     WaveResolved {
@@ -242,6 +245,12 @@ pub enum ServerMessage {
         contributions: Vec<Contribution>,
         /// The recipient's own hand.
         your_hand: Vec<HandCard>,
+    },
+    /// The post-game Deathmatch tiebreaker has begun among the tied leaders.
+    /// The outcome (champion or co-champions) follows in [`ServerMessage::GameOver`]. (broadcast)
+    DeathmatchStarted {
+        /// The players tied for the lead who are contesting the tiebreaker.
+        participants: Vec<PlayerId>,
     },
     /// Liveness acknowledgement. (private)
     Heartbeat,
