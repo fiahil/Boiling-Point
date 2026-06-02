@@ -52,11 +52,15 @@ panel/dashboard URL once:
 localStorage.setItem("bp_grafana_url", "http://localhost:3000/d/bp-balance?kiosk");
 ```
 
-`GF_SECURITY_ALLOW_EMBEDDING=true` permits the `<iframe>`. **In production**,
-deploy Grafana same-origin behind the same reverse proxy that fronts the admin
-API, so the embed is reachable only by an authenticated operator
-(`balance-dashboard`: "Embed is gated by admin auth"). For local development you
-may enable a Grafana anonymous **Viewer** role instead.
+`GF_SECURITY_ALLOW_EMBEDDING=true` permits the `<iframe>`. The cross-origin
+(`:8081` → `:3000`) iframe can't carry Grafana's `SameSite=Lax` session cookie, so
+to make the embed render in local dev the compose enables **`GF_AUTH_ANONYMOUS_ENABLED=true`
+(Viewer)**. That makes the dashboard publicly viewable on `:3000`.
+
+> **Production:** set `GF_AUTH_ANONYMOUS_ENABLED=false` and deploy Grafana
+> **same-origin** behind the same reverse proxy that fronts the admin API, so the
+> embed is reachable only by an authenticated operator (`balance-dashboard`:
+> "Embed is gated by admin auth").
 
 ## What comes from where (unsampled sources only)
 

@@ -19,12 +19,16 @@ services:
     depends_on:
       - prometheus
     environment:
-      # Allow the admin web app to embed Grafana panels in an <iframe>. In
-      # production, deploy Grafana same-origin behind the admin auth proxy so the
-      # embed is reachable only by an authenticated operator (balance-dashboard:
-      # "Embed is gated by admin auth").
+      # Allow the admin web app to embed Grafana panels in an <iframe>.
       - GF_SECURITY_ALLOW_EMBEDDING=true
-      - GF_AUTH_ANONYMOUS_ENABLED=false
+      # DEV ONLY: anonymous Viewer so the in-app embed renders without a Grafana
+      # login (the cross-origin :8081→:3000 iframe can't carry a SameSite=Lax
+      # session cookie). This makes the dashboard publicly viewable on :3000.
+      # In PRODUCTION, set this back to false and deploy Grafana SAME-ORIGIN behind
+      # the admin auth proxy, so the embed is reachable only by an authenticated
+      # operator (balance-dashboard: "Embed is gated by admin auth").
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_USERS_DEFAULT_THEME=dark
     volumes:
       - ./provisioning:/etc/grafana/provisioning:ro
