@@ -8,13 +8,13 @@
 use boiling_point_bot_harness::bot::RoundObservation;
 use boiling_point_bot_harness::report::{Smell, Thresholds};
 use boiling_point_bot_harness::runner::{
-    run_batch, BatchParams, GameRecord, SeatRecord, TransportKind,
+    BatchParams, GameRecord, SeatRecord, TransportKind, run_batch,
 };
 use boiling_point_bot_harness::stats::BatchStats;
 use boiling_point_server::config::ContentConfig;
 
-use boiling_point_protocol::vocab::{Color, ModifierKind};
 use boiling_point_protocol::PlayerId;
+use boiling_point_protocol::vocab::{Color, ModifierKind};
 use uuid::Uuid;
 
 /// The checked-in default content config (same one the server embeds).
@@ -188,7 +188,9 @@ async fn websocket_backend_completes_games() {
         .await
         .expect("ws batch");
     assert_eq!(records.len(), 2);
-    assert!(records
-        .iter()
-        .all(|g| g.completed && g.rounds.len() == 5 && !g.winners.is_empty()));
+    assert!(
+        records
+            .iter()
+            .all(|g| g.completed && g.rounds.len() == 5 && !g.winners.is_empty())
+    );
 }

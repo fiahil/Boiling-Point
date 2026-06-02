@@ -11,6 +11,7 @@
 //! - (forthcoming) `transport`, `lobby`, `matchmaking`, `game`, `persistence`,
 //!   `observability`.
 
+pub mod admin;
 pub mod config;
 pub mod content;
 pub mod game;

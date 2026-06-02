@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
-use boiling_point_protocol::{codec, ClientMessage, PlayerId, ServerMessage};
+use boiling_point_protocol::{ClientMessage, PlayerId, ServerMessage, codec};
 use boiling_point_server::lobby::RoomCommand;
 
 /// A bidirectional channel to the server, in the bot's own vocabulary.

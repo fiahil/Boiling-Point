@@ -327,9 +327,11 @@ mod tests {
             10.0,
         );
         let smells = Smell::detect(&stats, &Thresholds::default());
-        assert!(smells
-            .iter()
-            .any(|s| s.kind == "dominant_strategy" && s.detail.contains("aggressor")));
+        assert!(
+            smells
+                .iter()
+                .any(|s| s.kind == "dominant_strategy" && s.detail.contains("aggressor"))
+        );
     }
 
     /// An off-target explosion rate is flagged and names the band it missed.
@@ -337,9 +339,11 @@ mod tests {
     fn off_target_explosion_rate_is_flagged() {
         let low = stats_with(0.05, 1000, &[("a", 1)], 10.0);
         let smells = Smell::detect(&low, &Thresholds::default());
-        assert!(smells
-            .iter()
-            .any(|s| s.kind == "explosion_rate" && s.detail.contains("below")));
+        assert!(
+            smells
+                .iter()
+                .any(|s| s.kind == "explosion_rate" && s.detail.contains("below"))
+        );
     }
 
     /// The fingerprint is stable and content-sensitive.

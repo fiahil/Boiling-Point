@@ -1,0 +1,37 @@
+# Balance-dashboard stack for Boiling Point (admin-ui `balance-dashboard`).
+#
+# Prometheus scrapes the server's unsampled metrics endpoint (:9090); Grafana
+# renders the Principle IV balance panels over Prometheus. The admin web app
+# embeds these Grafana panels (see ../README.md). All figures derive from the
+# UNSAMPLED Prometheus source — never a sampled trace backend (design D6).
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9091:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    depends_on:
+      - prometheus
+    environment:
+      # Allow the admin web app to embed Grafana panels in an <iframe>.
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      # DEV ONLY: anonymous Viewer so the in-app embed renders without a Grafana
+      # login (the cross-origin :8081→:3000 iframe can't carry a SameSite=Lax
+      # session cookie). This makes the dashboard publicly viewable on :3000.
+      # In PRODUCTION, set this back to false and deploy Grafana SAME-ORIGIN behind
+      # the admin auth proxy, so the embed is reachable only by an authenticated
+      # operator (balance-dashboard: "Embed is gated by admin auth").
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_USERS_DEFAULT_THEME=dark
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"

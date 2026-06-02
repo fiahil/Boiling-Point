@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Boiling Point · Admin</title>
+    <link rel="stylesheet" href="/admin/style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>🌶️ Boiling Point <span class="muted">admin</span></h1>
+      <div class="auth">
+        <input id="token" type="password" placeholder="operator bearer token" autocomplete="off" />
+        <button id="connect">Connect</button>
+        <span id="role" class="pill"></span>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="fleet">Fleet</button>
+      <button class="tab" data-tab="rooms">Rooms</button>
+      <button class="tab" data-tab="activity">Activity</button>
+      <button class="tab" data-tab="replay">Replay</button>
+      <button class="tab" data-tab="control">Control</button>
+      <button class="tab" data-tab="balance">Balance</button>
+    </nav>
+
+    <main>
+      <section id="fleet" class="panel active">
+        <h2>Fleet overview</h2>
+        <div id="fleet-cards" class="cards"></div>
+      </section>
+
+      <section id="rooms" class="panel">
+        <h2>Live rooms <span id="rooms-count" class="muted"></span></h2>
+        <div class="split">
+          <table id="rooms-table">
+            <thead>
+              <tr><th>Room</th><th>Phase</th><th>Round</th><th>Wave</th><th>Players</th><th>Age</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <aside id="room-detail" class="detail">
+            <p class="muted">Select a room to inspect.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section id="activity" class="panel">
+        <h2>Live activity feed</h2>
+        <ul id="activity-feed" class="feed"></ul>
+      </section>
+
+      <section id="replay" class="panel">
+        <h2>Per-game replay</h2>
+        <div class="split">
+          <ul id="replay-list" class="list"></ul>
+          <aside id="replay-view" class="detail"><p class="muted">Select a game to replay.</p></aside>
+        </div>
+      </section>
+
+      <section id="control" class="panel">
+        <h2>Control plane <span class="pill warn">elevated</span></h2>
+        <div class="control-grid">
+          <div class="card">
+            <h3>Rooms</h3>
+            <button data-cmd="seed">Seed room</button>
+            <div class="row">
+              <input id="room-target" placeholder="room code" />
+              <button data-cmd="force-start">Force start</button>
+              <button data-cmd="kill" class="danger">Kill</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Toggle content</h3>
+            <select id="toggle-kind">
+              <option value="effect">effect</option>
+              <option value="modifier">modifier</option>
+              <option value="emote">emote</option>
+            </select>
+            <input id="toggle-value" placeholder="e.g. Shield / Residue / 1" />
+            <label><input type="checkbox" id="toggle-enabled" checked /> enabled</label>
+            <button data-cmd="toggle">Apply toggle</button>
+          </div>
+          <div class="card">
+            <h3>Reload config</h3>
+            <textarea id="reload-toml" rows="6" placeholder="paste content.toml"></textarea>
+            <button data-cmd="reload">Reload</button>
+          </div>
+        </div>
+        <pre id="control-log" class="log"></pre>
+      </section>
+
+      <section id="balance" class="panel">
+        <h2>Balance dashboard</h2>
+        <div id="balance-cards" class="cards"></div>
+        <p class="muted">Time-series panels are served by embedded Grafana over Prometheus (unsampled).</p>
+        <iframe id="grafana" class="grafana" src="about:blank" title="Grafana balance dashboard"></iframe>
+      </section>
+    </main>
+
+    <script src="/admin/app.js"></script>
+  </body>
+</html>
