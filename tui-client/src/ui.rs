@@ -92,7 +92,7 @@ fn entry(frame: &mut Frame, area: Rect, app: &App) {
 
     let items = [
         ("Quick match", "drop into the queue; the table fills to 4"),
-        ("Create a room", "get an invite code to share"),
+        ("Create a group", "get an invite code to share"),
         ("Join with a code", "enter a friend's BREW-XXXX"),
     ];
     let mut lines = vec![
@@ -145,7 +145,7 @@ fn join_code(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(bordered("Join a room")), body);
+    frame.render_widget(Paragraph::new(lines).block(bordered("Join a group")), body);
     hint(frame, foot, "type code   ↵ join   Esc back");
 }
 
@@ -165,12 +165,12 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
     };
     let head_lines = vec![
         Line::from(Span::styled(
-            format!("Room {code}"),
+            format!("Group {code}"),
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(status, Style::default().fg(Color::Cyan))),
         Line::from(Span::styled(
-            format!("invite code: {code}    [c] copy"),
+            format!("invite code: {code}"),
             Style::default().fg(Color::DarkGray),
         )),
     ];
@@ -207,7 +207,7 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(Color::DarkGray),
     )));
     frame.render_widget(Paragraph::new(lines).block(bordered("Seats")), body);
-    hint(frame, foot, "c copy invite   Ctrl-C quit");
+    hint(frame, foot, "Ctrl-C quit");
 }
 
 // ---- round screens -------------------------------------------------------
@@ -518,8 +518,12 @@ fn banner(frame: &mut Frame, area: Rect) {
 }
 
 fn header(frame: &mut Frame, area: Rect, app: &App, right: &str) {
+    // Keep the group invite code visible through every in-game phase (the lobby
+    // screen, where it otherwise lived, is gone the moment play begins).
+    let code = app.vm.room_code.clone().unwrap_or_else(|| "…".into());
     let left = format!(
-        " Round {}/{}   {}",
+        " Group {}   Round {}/{}   {}",
+        code,
         app.vm.round_number.max(1),
         app.vm.round_count.max(1),
         right

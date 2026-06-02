@@ -17,85 +17,39 @@ use boiling_point_bot_harness::runner::{BatchParams, TransportKind, run_batch};
 use boiling_point_bot_harness::stats::BatchStats;
 use boiling_point_bot_harness::strategy::BASELINE_NAMES;
 use boiling_point_server::config::ContentConfig;
+use clap::Parser;
 
 /// The default content config, embedded so the harness runs with no arguments.
 const DEFAULT_CONFIG: &str = include_str!("../../server/content.toml");
 
-/// Parsed command-line arguments.
-struct Args {
+/// Command-line arguments for the balance batch runner.
+#[derive(Debug, Parser)]
+#[command(
+    name = "bot-harness",
+    version,
+    about = "Boiling Point Layer-1 balance batch runner — plays N seeded games and reports balance statistics."
+)]
+struct Cli {
+    /// Number of complete games to play.
+    #[arg(long, default_value_t = 1000)]
     games: u64,
+    /// Root seed for the deterministic RNG tree.
+    #[arg(long, default_value_t = 0)]
     seed: u64,
-    transport: TransportKind,
-    strategies: Vec<String>,
-    config_path: Option<String>,
-    report_path: Option<String>,
+    /// Transport: `in-process` (reproducible) or `websocket` (smaller, real wire).
+    #[arg(long, default_value = "in-process")]
+    transport: String,
+    /// Four comma-separated seat strategies, one per seat (default: the four
+    /// baselines). Available: cautious, aggressor, diplomat, random.
+    #[arg(long, value_name = "A,B,C,D")]
+    strategies: Option<String>,
+    /// Content config TOML to load (default: the embedded server config).
+    #[arg(long, value_name = "PATH")]
+    config: Option<String>,
+    /// Write the machine-readable JSON report to this path.
+    #[arg(long, value_name = "PATH")]
+    report: Option<String>,
 }
-
-impl Args {
-    /// Parse argv, applying defaults. Returns an error message on bad input.
-    fn parse() -> Result<Args, String> {
-        let mut args = Args {
-            games: 1000,
-            seed: 0,
-            transport: TransportKind::InProcess,
-            strategies: BASELINE_NAMES.iter().map(|s| s.to_string()).collect(),
-            config_path: None,
-            report_path: None,
-        };
-        let mut it = std::env::args().skip(1);
-        while let Some(flag) = it.next() {
-            let mut value = || it.next().ok_or_else(|| format!("{flag} needs a value"));
-            match flag.as_str() {
-                "--games" => {
-                    args.games = value()?
-                        .parse()
-                        .map_err(|_| "invalid --games".to_string())?
-                }
-                "--seed" => {
-                    args.seed = value()?.parse().map_err(|_| "invalid --seed".to_string())?
-                }
-                "--transport" => {
-                    args.transport = match value()?.as_str() {
-                        "in-process" => TransportKind::InProcess,
-                        "websocket" => TransportKind::WebSocket,
-                        other => return Err(format!("unknown transport: {other}")),
-                    }
-                }
-                "--strategies" => {
-                    args.strategies = value()?.split(',').map(|s| s.trim().to_string()).collect()
-                }
-                "--config" => args.config_path = Some(value()?),
-                "--report" => args.report_path = Some(value()?),
-                "-h" | "--help" => return Err(HELP.to_string()),
-                other => return Err(format!("unknown flag: {other}\n\n{HELP}")),
-            }
-        }
-        if args.strategies.len() != 4 {
-            return Err(format!(
-                "--strategies needs exactly 4 comma-separated names (one per seat), got {}",
-                args.strategies.len()
-            ));
-        }
-        Ok(args)
-    }
-}
-
-const HELP: &str = "\
-bot-harness — Boiling Point balance batch runner
-
-Usage:
-  bot-harness [--games N] [--seed N] [--transport in-process|websocket]
-              [--strategies a,b,c,d] [--config PATH] [--report PATH]
-
-Options:
-  --games N         Number of complete games to play (default 1000)
-  --seed N          Root seed for the deterministic RNG tree (default 0)
-  --transport T     in-process (default, reproducible) or websocket (smaller, real wire)
-  --strategies LIST 4 comma-separated seat strategies (default: cautious,aggressor,diplomat,random)
-                    Available: cautious, aggressor, diplomat, random
-  --config PATH     Content config TOML (default: the embedded server config)
-  --report PATH     Write the machine-readable JSON report to PATH
-";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -109,10 +63,26 @@ async fn main() -> ExitCode {
 }
 
 async fn run() -> Result<(), String> {
-    let args = Args::parse()?;
+    let cli = Cli::parse();
+
+    let transport = match cli.transport.as_str() {
+        "in-process" => TransportKind::InProcess,
+        "websocket" => TransportKind::WebSocket,
+        other => return Err(format!("unknown transport: {other}")),
+    };
+    let strategies: Vec<String> = match &cli.strategies {
+        Some(s) => s.split(',').map(|s| s.trim().to_string()).collect(),
+        None => BASELINE_NAMES.iter().map(|s| s.to_string()).collect(),
+    };
+    if strategies.len() != 4 {
+        return Err(format!(
+            "--strategies needs exactly 4 comma-separated names (one per seat), got {}",
+            strategies.len()
+        ));
+    }
 
     // Load the config text (for both parsing and fingerprinting).
-    let config_text = match &args.config_path {
+    let config_text = match &cli.config {
         Some(path) => std::fs::read_to_string(path)
             .map_err(|e| format!("could not read config {path}: {e}"))?,
         None => DEFAULT_CONFIG.to_string(),
@@ -124,10 +94,10 @@ async fn run() -> Result<(), String> {
         .map_err(|e| format!("config failed validation: {e}"))?;
 
     let params = BatchParams {
-        games: args.games,
-        seed: args.seed,
-        transport: args.transport,
-        strategy_names: args.strategies.clone(),
+        games: cli.games,
+        seed: cli.seed,
+        transport,
+        strategy_names: strategies,
     };
 
     eprintln!(
@@ -154,7 +124,7 @@ async fn run() -> Result<(), String> {
 
     println!("{}", report.to_markdown());
 
-    if let Some(path) = &args.report_path {
+    if let Some(path) = &cli.report {
         std::fs::write(path, report.to_json())
             .map_err(|e| format!("could not write report {path}: {e}"))?;
         eprintln!("Wrote JSON report to {path}");

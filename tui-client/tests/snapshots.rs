@@ -67,6 +67,16 @@ fn playing_cauldron_is_opaque() {
 }
 
 #[test]
+fn group_code_visible_during_play() {
+    // Regression: the invite code must stay on screen through gameplay (in the
+    // persistent header), not vanish with the lobby the instant the table fills.
+    let app = reach_playing();
+    let s = screen(&app);
+    assert_has(&s, "Group");
+    assert_has(&s, "BREW-7K3F");
+}
+
+#[test]
 fn depile_safe_hides_boiling_point() {
     let mut app = reach_playing();
     app.on_server(&fixtures::depile_safe());

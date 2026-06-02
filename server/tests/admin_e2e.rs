@@ -27,7 +27,7 @@ use boiling_point_server::observability;
 
 /// Install the global span subscriber feeding a fresh projection (once).
 fn install_projection() -> Arc<AdminProjection> {
-    observability::init("127.0.0.1:0".parse().expect("metrics addr"));
+    observability::init("127.0.0.1:0".parse().expect("metrics addr"), None);
     let projection = Arc::new(AdminProjection::new());
     observability::lifecycle::register_consumer(projection.clone());
     projection

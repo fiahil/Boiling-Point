@@ -2,3 +2,7 @@
 **/*.rs.bk
 Cargo.lock.orig
 .DS_Store
+# Runtime logs from scripts/playtest.sh
+/.playtest/
+# agent-harness Node dependencies
+/agent-harness/node_modules/
