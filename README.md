@@ -1,25 +1,48 @@
-# Boiling-Point
+# Boiling Point
 
-A 4-player free-for-all card game with an authoritative Rust server. See the
-canonical [game design](knowledge/game-design.md) and the active work in
-[`openspec/changes/`](openspec/changes/).
+A 4-player free-for-all card game with an **authoritative Rust server**: the server
+owns all game state and secrets, and every client is an untrusted renderer. Players
+secretly toss ingredient cards into a shared, unstable cauldron — push the brew past
+its hidden boiling point and *everyone* eats the loss; stop in time and the dominant
+color scoops the pot.
+
+📖 **New here? Start with [docs/getting-started.md](docs/getting-started.md).** The
+full documentation hub is [docs/](docs/); the canonical rules are in
+[docs/game-design.md](docs/game-design.md).
 
 ## Workspace
 
 ```
-protocol/   wire messages + MessagePack/JSON codec (no game logic, no secrets)
-server/     authoritative game engine, content/config, game loop
+protocol/       wire messages + MessagePack/JSON codec (no game logic, no secrets)
+server/         authoritative game engine, content/config, game loop, admin + metrics
+tui-client/     terminal client — an untrusted ratatui renderer over the protocol
+bot-harness/    headless balance bots + seeded batch runner (Layer-1 testing)
+agent-harness/  Claude-as-player harness (Node/TS, Layer-2 testing)
+docs/           architecture, game design, roadmap, and code reviews
+openspec/       change proposals (changes/), resolved specs (specs/), archive
+scripts/        playtest.sh — one-command solo playtest launcher
 ```
 
-The full bot/balance harness lives in the separate `bot-balance-harness` change.
+See [docs/architecture/overview.md](docs/architecture/overview.md) for how the pieces
+fit together.
 
 ## Development
 
 ```sh
-make check   # fmt + clippy (-D warnings) + tests — the CI gate
-make run     # boot the server (loads & validates the default content config)
-make test    # cargo test --workspace
+make check    # fmt + clippy (-D warnings) + tests — the CI gate
+make run      # boot the server (loads & validates the default content config)
+make test     # cargo test --workspace
+make playtest # server + agent opponents + terminal client (see getting-started)
 ```
 
-Balance/content lives in [`server/content.toml`](server/content.toml) and is
-validated at startup; an inconsistent config fails the boot, not a game.
+Each binary has `--help` (clap). Balance/content lives in
+[`server/content.toml`](server/content.toml) and is validated at startup; an
+inconsistent config fails the boot, not a game.
+
+## How changes are made
+
+Work is proposed and tracked with a file-based [OpenSpec](openspec/) workflow:
+proposals in [`openspec/changes/`](openspec/changes/), the current resolved capability
+specs in [`openspec/specs/`](openspec/specs/), and shipped work in
+[`openspec/changes/archive/`](openspec/changes/archive/). The project
+[constitution](CLAUDE.md) governs all of it.

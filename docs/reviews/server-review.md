@@ -4,12 +4,28 @@ A thorough review of the Rust server (`server/`) and its protocol crate
 (`protocol/`), written as both an architecture reference and an evaluation. It
 covers how the server is wired, walks each subsystem, and records findings,
 risks, and prioritized recommendations against the
-[constitution](../CLAUDE.md) and the [game design](game-design.md).
+[constitution](../../CLAUDE.md) and the [game design](../game-design.md).
 
-Reviewed against `main` @ `27cc398` (2026-05-31). The full workspace test suite
-was green at review time: **51 passed, 0 failed, 2 ignored** (both ignored tests
-require a live PostgreSQL). Balance numbers tagged **[needs playtesting]** match
-the game design's convention — they are hypotheses, not settled values.
+Originally reviewed against `main` @ `27cc398` (2026-05-31); **re-reviewed
+2026-06-02**. The full workspace test suite is green (engine + transport,
+bot-harness, tui-client; 2 ignored tests require a live PostgreSQL). Balance
+numbers tagged **[needs playtesting]** match the game design's convention — they
+are hypotheses, not settled values.
+
+> **Re-review status (2026-06-02).** Every finding below still stands; their
+> dispositions are now tracked as OpenSpec changes rather than loose advice:
+> - **F1, F2, F3, F5** → folded into the **`review-remediation`** change.
+> - **F4 (persistence not wired)** is **superseded** by the **`persistence-and-replays`**
+>   change. That change replaces the "just wire the existing module" remedy with a
+>   reworked design (match results + timeless replays + runtime wiring); do **not**
+>   wire the v1 module as-is.
+> - The logging-level sub-item of F5 is **resolved**: the server now accepts
+>   `--log-level` (still honouring `RUST_LOG`) — `server/src/main.rs`,
+>   `observability.rs`.
+> - Workspace: the bot harness (`bot-harness/`) and terminal client (`tui-client/`)
+>   are now first-class crates, and the Claude-as-player harness ships in
+>   `agent-harness/` — closing the Principle II gap noted in §5. Each has its own
+>   review in this folder.
 
 **Overall:** a clean, genuinely server-authoritative implementation with an
 unusually disciplined content/loop separation and strong unit-test coverage of
@@ -23,8 +39,10 @@ but never called; and a well-designed secret-routing safety rail goes unused.
 
 ### Crates
 
-Two-crate workspace (`Cargo.toml` — `members = ["protocol", "server"]`,
-edition 2024):
+Four-crate workspace (`Cargo.toml` — `members = ["protocol", "server",
+"tui-client", "bot-harness"]`, edition 2024), plus the Node/TS `agent-harness/`.
+This review focuses on the two below; the others have dedicated reviews in this
+folder:
 
 - **`protocol/`** — the *narrow waist*: only the DTOs that cross the wire, the
   public value-types they reference, and the codec. **No game logic, no
@@ -282,6 +300,10 @@ game's broadcast stream for leaked secrets. Routing the server's sends through
 
 ### F4 — Persistence is fully built but never invoked at runtime *(wiring, medium)*
 
+> **Status (2026-06-02): superseded by the `persistence-and-replays` change.** The
+> remedy is a *rework* (match results + timeless replays + runtime wiring), not a
+> wire-up of the v1 module. The description below remains accurate as today's state.
+
 `persistence.rs` is complete and tested, and `runner.rs` even has a
 `to_game_result` bridge (`runner.rs:302-351`) — but nothing on the live path
 calls any of it. `AppState` has no `PgPool` (`transport.rs:32-44`), `main.rs`
@@ -306,10 +328,9 @@ mistaken for working.
   are guarded by prior emptiness checks (`game/deck.rs:60-71`); the deathmatch
   forced-commit `expect` is guarded by the `is_empty` short-circuit
   (`deathmatch.rs:161-177`).
-- **Logging level isn't tunable.** `observability::init` installs a JSON
-  subscriber with no `EnvFilter` (`observability.rs:14-18`), so `RUST_LOG` is
-  ignored. Fine for now; add a filter when you need to quiet/verbose logs in
-  prod.
+- **Logging level isn't tunable.** *(Resolved 2026-06-02.)* `observability::init`
+  now takes an `EnvFilter` seeded from the new `--log-level` flag (falling back to
+  `RUST_LOG`, then `info`) — `server/src/main.rs`, `observability.rs`.
 - **Doc nit.** `resolve.rs` calls the order a "fixed 7-step order"
   (`resolve.rs:2,159`) but `EffectCategory` has six variants
   (`content/effect.rs:12-26`).
@@ -325,10 +346,10 @@ mistaken for working.
    record in this doc / the wire-protocol spec that silent-drop is an
    intentional anti-leak choice. Resolve the lobby-vs-wave emote inconsistency
    the same way.
-2. **Wire or explicitly defer persistence (F4).** Add a `PgPool` to `AppState`,
-   call `run_migrations` at startup, and have `run_game` build a `GameResult`
-   and call `persist_game` at `GameOver` — or, if it's intentionally deferred,
-   say so in `knowledge/` so it isn't read as functional.
+2. **Rework persistence (F4) — superseded.** Don't wire the v1 module as-is. The
+   **`persistence-and-replays`** change replaces it with match-results + timeless
+   replays and the runtime wiring (`PgPool` in `AppState`, migrations at startup,
+   `persist_game` at `GameOver`). Tracked there, not here.
 3. **Converge the two loops (F2).** Have `run_game` delegate to a shared engine
    core, or add engine-level tests directly over the async path, so the shipping
    path inherits the determinism/stress coverage.
@@ -348,7 +369,7 @@ ones, #2 is the most visible functionality gap.
 | Principle | Verdict | Evidence | Deviation |
 |---|---|---|---|
 | **I. Server-Authoritative** | Strong | Full state (deck, hands, boiling point) is server-only; `CardId` is opaque and commits are validated against the hand (`session.rs:462-464`); all RNG server-side; secret boundary tested (`protocol/src/lib.rs:204-248`). | **F1**: invalid in-wave actions get no error response (the "no state change" half holds). |
-| **II. Agent-Driven Development** | Strong (with a gap) | Sync engine is fully agent-testable via `Decider`/`DeathmatchDecider` traits (`runner.rs:60-69`, `deathmatch.rs:35-44`), deterministic seeds, 300-game stress test; `protocol` is a clean narrow waist for bots. | The protocol bot harness and Claude-as-player harness are *designed* (openspec changes) but not yet crates in the workspace (`members = ["protocol","server"]`). |
+| **II. Agent-Driven Development** | Strong (with a gap) | Sync engine is fully agent-testable via `Decider`/`DeathmatchDecider` traits (`runner.rs:60-69`, `deathmatch.rs:35-44`), deterministic seeds, 300-game stress test; `protocol` is a clean narrow waist for bots. | **Closed (2026-06-02):** the protocol bot harness (`bot-harness/`) and terminal client (`tui-client/`) are now workspace crates, and the Claude-as-player harness ships in `agent-harness/`. |
 | **III. Start Simple, Scale Later** | Strong | Single binary; anonymous token auth; invite codes + simple 4-player matchmaking; embedded config; one fixed game mode; persistence is post-game-only by design. | Persistence seam built but not connected (**F4**) — start-simple, but record it. |
-| **IV. Playtest-Driven Balance** | Strong (with a gap) | Every tunable is externalised to `content.toml` and tagged **[needs playtesting]** in code (`content/effect.rs:60-62`, `content/modifier.rs:36-41`); `round_explosions_total` tracks the 30–40 % target. | The bot harness that would run *thousands* of games to validate balance isn't built yet, so at-scale validation can't run. |
+| **IV. Playtest-Driven Balance** | Strong (with a gap) | Every tunable is externalised to `content.toml` and tagged **[needs playtesting]** in code (`content/effect.rs:60-62`, `content/modifier.rs:36-41`); `round_explosions_total` tracks the 30–40 % target. | **Closed (2026-06-02):** the `bot-harness/` seeded batch runner now runs thousands of games for at-scale balance validation. |
 | **Typestate (accepted deviation)** | Documented | Phase/round transitions use `Option<RoundEnd>` + `is_open()` rather than compile-time typestate (`round.rs:82-133`). | This is the previously-accepted deviation in the project history. |

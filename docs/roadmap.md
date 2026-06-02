@@ -4,7 +4,7 @@ Features intentionally **out of v1 scope**, parked for a post-launch (v2) pass.
 This is a product/platform roadmap — distinct from the *design* deferrals in
 [game-design.md §18](game-design.md) (round objectives, spectator/replays,
 modifier expansions), and distinct from the historical design brainstorms in
-[`brainstorming/`](brainstorming/).
+[`architecture/`](architecture/).
 
 Per the [constitution](../CLAUDE.md) Principle III (*Start Simple, Scale Later*),
 v1 ships the simplest viable thing; these are the "scale later" items with the
@@ -45,6 +45,20 @@ game-design.md §18 — cross-referenced, not duplicated.)
   stacking system is validated. *(Design deferral — see game-design.md §18.)*
 - **OAuth / cross-device identity** — folds into the persistent-accounts work
   above.
+- **Player profiles** — per-player career stats, history, and identity surfaced
+  on top of persisted match results. Depends on **persistent accounts** (above):
+  the v1 *persistence-and-replays* work stores match results and replays but
+  attaches **no** profile or cross-game identity. Moved here out of the v1
+  persistence scope.
+- **Server benchmarks** — a performance-regression harness, deliberately out of
+  v1 (correctness and balance come first). Two layers:
+  - **Engine micro-benchmarks** (`criterion`): hot paths in the round engine —
+    wave resolution, depile/scoring, deck deal/reshuffle, modifier stacking —
+    tracked over time to catch regressions.
+  - **WebSocket load harness**: many concurrent rooms driven over the real wire
+    (reuse the `bot-harness` WebSocket transport), measuring tick latency,
+    broadcast fan-out cost, and memory per room, against target throughput/latency
+    budgets. The bot harness's existing seeded batch runner is the seam.
 
 ---
 
