@@ -27,11 +27,13 @@ docs/
 │   ├── server-architecture.md historical infra brainstorm (topology, rooms, persistence…)
 │   ├── tech-stack-exploration.md  why Rust/Axum/Tokio/Postgres/MessagePack
 │   └── span-schema-contract.md    observability span tree + attribute schema
-└── reviews/
-    ├── server-review.md           server code review (findings F1–F5)
-    ├── agent-harness-review.md     Claude-as-player harness review
-    ├── tui-client-review.md        terminal client review
-    └── release-readiness-review.md cross-cutting v1-launch gate
+├── reviews/
+│   ├── server-review.md           server code review (findings F1–F5)
+│   ├── agent-harness-review.md     Claude-as-player harness review
+│   ├── tui-client-review.md        terminal client review
+│   └── release-readiness-review.md cross-cutting v1-launch gate
+└── archive/
+    └── naming-ideas.md            resolved domain shortlist → boiling.cards / boilingpoint.xyz / overboil.xyz
 ```
 
 ## Related, outside `docs/`
