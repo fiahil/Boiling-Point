@@ -102,7 +102,10 @@ impl Options {
         } else if let Some(path) = cli.replay {
             Mode::Replay(path)
         } else {
-            Mode::Connect(cli.connect.unwrap_or_else(|| DEFAULT_SERVER_URL.to_string()))
+            Mode::Connect(
+                cli.connect
+                    .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string()),
+            )
         };
         Options {
             mode,
