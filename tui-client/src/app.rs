@@ -344,6 +344,13 @@ impl App {
             self.debug = !self.debug;
             return vec![];
         }
+        // Once the seat is abandoned there is nothing to play; any key returns to
+        // the entry menu (which also clears the connection state) rather than
+        // leaving the player stranded behind the overlay.
+        if matches!(self.conn, Conn::Abandoned) {
+            self.reset_for_new_game();
+            return vec![];
+        }
         // A Recall picker, when open, captures input.
         if self.recall.is_some() {
             return self.key_recall(key.code);
@@ -592,6 +599,7 @@ impl App {
     fn reset_for_new_game(&mut self) {
         self.vm = ViewModel::default();
         self.phase = Phase::Entry;
+        self.conn = Conn::Connected;
         self.committed = Selection::None;
         self.locked_in = false;
         self.countdown_ms = None;

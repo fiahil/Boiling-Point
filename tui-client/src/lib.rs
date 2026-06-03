@@ -37,6 +37,9 @@ use std::io::Stdout;
 const TICK_MS: u32 = 33;
 /// Spacing between scripted messages in replay/mock modes.
 const FEED_MS: u64 = 700;
+/// Server WebSocket URL used when no transport flag is given. Connecting to a
+/// live server is the default; `--mock` selects the offline demo instead.
+const DEFAULT_SERVER_URL: &str = "ws://127.0.0.1:8080/ws";
 
 /// Where the client gets its server messages from.
 enum Mode {
@@ -56,14 +59,15 @@ enum Mode {
     about = "Boiling Point terminal client — an untrusted renderer over the wire protocol."
 )]
 struct Cli {
-    /// Connect to a live server at this WebSocket URL (e.g. ws://127.0.0.1:8080/ws).
+    /// Connect to a live server at this WebSocket URL. Connecting is the default
+    /// transport; this flag only overrides the URL (default ws://127.0.0.1:8080/ws).
     #[arg(long, value_name = "URL", conflicts_with = "replay")]
     connect: Option<String>,
     /// Replay a recorded JSON-lines server-message stream instead of connecting.
     #[arg(long, value_name = "PATH")]
     replay: Option<PathBuf>,
-    /// Drive an in-process scripted demo game (the default when neither --connect
-    /// nor --replay is given).
+    /// Drive an in-process scripted demo game with no server or network, instead
+    /// of connecting to the live server.
     #[arg(long, conflicts_with_all = ["connect", "replay"])]
     mock: bool,
     /// Record incoming server messages to this file (JSON lines).
@@ -90,14 +94,15 @@ struct Options {
 impl Options {
     fn from_args() -> Options {
         let cli = Cli::parse();
-        // `--mock` is accepted for explicitness; Mock is also the default when
-        // neither --connect nor --replay is supplied.
-        let mode = if let Some(url) = cli.connect {
-            Mode::Connect(url)
+        // Connecting to the live server is the default. `--mock` selects the
+        // offline demo, `--replay` plays back a recorded stream, and `--connect`
+        // overrides the server URL.
+        let mode = if cli.mock {
+            Mode::Mock
         } else if let Some(path) = cli.replay {
             Mode::Replay(path)
         } else {
-            Mode::Mock
+            Mode::Connect(cli.connect.unwrap_or_else(|| DEFAULT_SERVER_URL.to_string()))
         };
         Options {
             mode,
@@ -137,7 +142,13 @@ async fn async_main(opts: Options) -> Result<(), Box<dyn Error>> {
 
     let (server_rx, intent_tx, connect_mode) = match opts.mode {
         Mode::Connect(url) => {
-            let (rx, tx) = net::connect(&url).await?;
+            let (rx, tx) = net::connect(&url).await.map_err(|e| {
+                format!(
+                    "could not connect to {url}: {e}\n\
+                     Is the server running? Start it with `cargo run -p boiling-point-server`, \
+                     or pass --mock for the offline demo."
+                )
+            })?;
             (rx, Some(tx), true)
         }
         Mode::Replay(path) => (spawn_feeder(replay::load(&path)?), None, false),

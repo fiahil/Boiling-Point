@@ -178,6 +178,17 @@ fn reconnect_overlay_renders() {
 }
 
 #[test]
+fn reconnect_overlay_hidden_on_entry_menu() {
+    // Regression: a dropped socket on the pre-game menu must not strand the
+    // player behind the reconnect overlay — the overlay is for seated tables.
+    let mut app = App::new(); // Entry phase, no table joined
+    app.set_reconnecting(42_000);
+    let s = screen(&app);
+    assert_lacks(&s, "reconnecting");
+    assert_has(&s, "How do you want to play?");
+}
+
+#[test]
 fn state_snapshot_resumes_after_reconnect() {
     let mut app = reach_playing();
     app.set_reconnecting(30_000);

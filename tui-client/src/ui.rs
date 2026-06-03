@@ -59,7 +59,13 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
     if app.emote_open {
         emote_palette(frame, area);
     }
-    if !matches!(app.conn, Conn::Connected) {
+    // The reconnect/abandoned overlay only makes sense once seated at a table;
+    // on the pre-game menu a dropped socket must not strand the player behind it.
+    let seated = matches!(
+        app.phase,
+        Phase::Lobby | Phase::RoundStart | Phase::Playing | Phase::Depile | Phase::Scoring
+    );
+    if seated && !matches!(app.conn, Conn::Connected) {
         reconnect_overlay(frame, area, app);
     }
     toasts(frame, area, app);
@@ -920,7 +926,8 @@ fn toasts(frame: &mut Frame, area: Rect, app: &App) {
     let n = app.toasts.len().min(3) as u16;
     let r = Rect {
         x: area.x + 1,
-        y: area.bottom().saturating_sub(n + 1),
+        // Sit clear above the two-row footer hint so it stays readable.
+        y: area.bottom().saturating_sub(n + 2),
         width: area.width.saturating_sub(2),
         height: n,
     };
@@ -930,9 +937,13 @@ fn toasts(frame: &mut Frame, area: Rect, app: &App) {
         .rev()
         .take(3)
         .map(|t| {
+            // An explicit light fg keeps the dark toast legible on light
+            // terminals, where the default foreground would be near-black.
             Line::from(Span::styled(
                 format!(" {} ", t.text),
-                Style::default().bg(Color::Rgb(40, 40, 55)),
+                Style::default()
+                    .fg(Color::Rgb(235, 235, 245))
+                    .bg(Color::Rgb(40, 40, 55)),
             ))
         })
         .collect();
