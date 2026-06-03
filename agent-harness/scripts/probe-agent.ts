@@ -17,8 +17,9 @@ configureAuth();
 
 const vm = createViewModel();
 applyServerMessage(vm, {
-  type: "RoomJoined",
-  room_code: "PROBE",
+  type: "GroupJoined",
+  session_token: "test-session",
+  group_code: "PROBE",
   your_player_id: "me",
   your_color: "Ruby",
   players: [{ id: "me", display_name: "Probe", color: "Ruby", connected: true }],

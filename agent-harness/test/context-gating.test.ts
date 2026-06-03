@@ -13,8 +13,9 @@ function withHistory() {
   const vm = createViewModel();
   const msgs: ServerMessage[] = [
     {
-      type: "RoomJoined",
-      room_code: "BREW-7K3F",
+      type: "GroupJoined",
+      session_token: "test-session",
+      group_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
       players: [

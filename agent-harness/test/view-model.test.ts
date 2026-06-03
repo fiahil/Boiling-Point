@@ -19,8 +19,9 @@ function feed(msgs: ServerMessage[]) {
 test("builds self + opponents and tracks scores, contribution, lockout, pot", () => {
   const vm = feed([
     {
-      type: "RoomJoined",
-      room_code: "BREW-7K3F",
+      type: "GroupJoined",
+      session_token: "test-session",
+      group_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
       players: [
@@ -50,8 +51,9 @@ test("builds self + opponents and tracks scores, contribution, lockout, pot", ()
 test("never holds a boiling point on a safe brew", () => {
   const vm = feed([
     {
-      type: "RoomJoined",
-      room_code: "BREW-7K3F",
+      type: "GroupJoined",
+      session_token: "test-session",
+      group_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
       players: [{ id: "me", display_name: "Me", color: "Ruby", connected: true }],

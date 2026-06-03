@@ -23,9 +23,9 @@ impl Default for PlayerId {
     }
 }
 
-/// Short, human-readable invite code for a room (e.g. `BREW-7K3F`).
+/// Short, human-readable invite code for a group (e.g. `BREW-7K3F`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RoomCode(pub String);
+pub struct GroupCode(pub String);
 
 /// Identifier for a single physical card instance within a game.
 ///

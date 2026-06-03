@@ -17,15 +17,15 @@ use serde::Serialize;
 /// pre-connection screens; the rest are driven by the server message stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) enum Phase {
-    /// The opening menu: quick-match / create-room / join-by-code + name entry.
+    /// The opening menu: quick-match / create-group / join-by-code + name entry.
     Entry,
     /// Typing an invite code.
     JoinCode,
-    /// An entry message was sent; awaiting `RoomJoined` or an `Error`.
+    /// An entry message was sent; awaiting `GroupJoined` or an `Error`.
     Connecting,
     /// In the auto-match queue, awaiting a table.
     Queue,
-    /// In a room, showing the seat roster until the game starts.
+    /// In a group, showing the seat roster until the game starts.
     Lobby,
     /// A round is about to begin: the modifier reveal and refilled hand.
     RoundStart,
@@ -113,8 +113,8 @@ pub(crate) struct ViewModel {
     pub(crate) me: Option<PlayerId>,
     /// This client's colour.
     pub(crate) my_color: Option<Color>,
-    /// The room's invite code.
-    pub(crate) room_code: Option<String>,
+    /// The group's invite code.
+    pub(crate) group_code: Option<String>,
     /// Everyone at the table.
     pub(crate) players: Vec<PlayerView>,
     /// Total rounds in the game.
@@ -171,15 +171,16 @@ impl ViewModel {
     /// phase decisions (the [`crate::app::App`] derives phase around this).
     pub(crate) fn apply(&mut self, msg: &ServerMessage) {
         match msg {
-            ServerMessage::RoomJoined {
-                room_code,
+            ServerMessage::GroupJoined {
+                group_code,
                 your_player_id,
                 your_color,
                 players,
+                ..
             } => {
                 self.me = Some(*your_player_id);
                 self.my_color = Some(*your_color);
-                self.room_code = Some(room_code.0.clone());
+                self.group_code = Some(group_code.0.clone());
                 self.players = players.iter().map(PlayerView::from_public).collect();
             }
             ServerMessage::GameStarting {
@@ -298,7 +299,7 @@ impl ViewModel {
                 }
             }
             ServerMessage::StateSnapshot {
-                room_code,
+                group_code,
                 your_player_id,
                 round_number,
                 players,
@@ -311,7 +312,7 @@ impl ViewModel {
                 // the player may know — it carries no boiling point and no other
                 // players' hands, so there is nothing secret to absorb.
                 self.me = Some(*your_player_id);
-                self.room_code = Some(room_code.0.clone());
+                self.group_code = Some(group_code.0.clone());
                 self.round_number = *round_number;
                 if !players.is_empty() {
                     self.players = players.iter().map(PlayerView::from_public).collect();
@@ -335,13 +336,40 @@ impl ViewModel {
                 self.deathmatch = true;
                 self.dm_participants = participants.clone();
             }
-            // Surfaced by the App as transient toasts/modals, not stored here.
+            // Surfaced by the App as transient toasts/modals, or handled as pure
+            // phase/connection transitions — nothing to fold into the view model.
             ServerMessage::SomeonePeeked
             | ServerMessage::Exposed { .. }
             | ServerMessage::DeckReshuffled
             | ServerMessage::EmoteBroadcast { .. }
             | ServerMessage::Error { .. }
+            | ServerMessage::LeftGroup
             | ServerMessage::Heartbeat => {}
+        }
+    }
+
+    /// Reset per-game state for a fresh game with the same group (play-again),
+    /// keeping identity, colour, group code, roster, and round count.
+    pub(crate) fn reset_for_next_game(&mut self) {
+        self.round_number = 0;
+        self.wave_number = 0;
+        self.active_modifiers.clear();
+        self.new_modifier = None;
+        self.hand.clear();
+        self.new_card_ids.clear();
+        self.cauldron_count = 0;
+        self.my_peek = None;
+        self.last_depile = None;
+        self.last_scoring = None;
+        self.last_explosion = None;
+        self.final_wave = false;
+        self.deathmatch = false;
+        self.dm_participants.clear();
+        self.game_over = false;
+        self.winners.clear();
+        self.final_scores.clear();
+        for p in &mut self.players {
+            p.contributed = 0;
         }
     }
 

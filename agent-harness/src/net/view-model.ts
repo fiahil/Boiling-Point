@@ -113,7 +113,7 @@ function activeModifiers(vm: ViewModel): ModifierKind[] {
 /** Reduce a received ServerMessage into the view model. Returns the model for chaining. */
 export function applyServerMessage(vm: ViewModel, msg: ServerMessage): ViewModel {
   switch (msg.type) {
-    case "RoomJoined": {
+    case "GroupJoined": {
       vm.self.playerId = msg.your_player_id;
       vm.self.color = msg.your_color;
       for (const info of msg.players) ensurePlayer(vm, info);
@@ -242,6 +242,7 @@ export function applyServerMessage(vm: ViewModel, msg: ServerMessage): ViewModel
       break;
     }
     case "Error":
+    case "LeftGroup":
     case "Heartbeat": {
       break;
     }

@@ -33,7 +33,7 @@ fn assert_lacks(s: &str, needle: &str) {
 #[test]
 fn lobby_shows_seats_and_code() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     let s = screen(&app);
     assert_has(&s, "Lobby");
     assert_has(&s, "BREW-7K3F");
@@ -45,7 +45,7 @@ fn lobby_shows_seats_and_code() {
 #[test]
 fn round_start_shows_modifier_and_refill() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::game_starting());
     app.on_server(&fixtures::modifier_thin_ice());
     app.on_server(&fixtures::your_hand());
@@ -136,7 +136,7 @@ fn final_wave_indicator_shows() {
 #[test]
 fn deathmatch_announced_on_game_over() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::deathmatch_started());
     app.on_server(&fixtures::game_over());
     let s = screen(&app);
@@ -147,7 +147,7 @@ fn deathmatch_announced_on_game_over() {
 #[test]
 fn game_over_shows_standings_and_winner() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::game_over());
     let s = screen(&app);
     assert_has(&s, "FINAL STANDINGS");
@@ -228,7 +228,7 @@ fn replay_round_trips() {
 /// Drive the app to an open wave 1 of round 1.
 fn reach_playing() -> App {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::game_starting());
     app.on_server(&fixtures::your_hand());
     app.on_server(&fixtures::wave_open(1, 1, 30_000));

@@ -12,12 +12,12 @@ use boiling_point_protocol::{
     ClientMessage,
     client::PROTOCOL_VERSION,
     codec,
-    ids::{CardId, RoomCode},
+    ids::{CardId, GroupCode},
     server::ServerMessage,
 };
 use boiling_point_server::{
     config::ContentConfig,
-    lobby::{MatchQueue, RoomRegistry, SessionStore},
+    lobby::{GroupRegistry, MatchQueue, SessionStore},
     transport::{AppState, app},
 };
 use boiling_point_tui::App;
@@ -40,11 +40,11 @@ async fn start_server() -> String {
     config.timing.wave_ms = 120;
     let registry = Arc::new(config.build_registry().expect("build registry"));
     let config = Arc::new(config);
-    let rooms = Arc::new(RoomRegistry::new(registry, config));
-    let queue = Arc::new(MatchQueue::new(rooms.clone()));
+    let groups = Arc::new(GroupRegistry::new(registry, config));
+    let queue = Arc::new(MatchQueue::new(groups.clone()));
     let state = AppState {
         sessions: Arc::new(SessionStore::new()),
-        rooms,
+        groups,
         queue,
         conn_timeout: Duration::from_secs(60),
     };
@@ -87,7 +87,7 @@ fn next_play(hand: &mut Vec<CardId>) -> ClientMessage {
 }
 
 /// A bot seat: plays one card per wave until the game ends. Seat 0 sends the
-/// room's invite code back over `code_tx` and returns the final rendered screen
+/// group's invite code back over `code_tx` and returns the final rendered screen
 /// of an `App` fed the real message stream.
 async fn play_seat(
     url: String,
@@ -104,9 +104,9 @@ async fn play_seat(
             app.on_server(&msg);
         }
         match &msg {
-            ServerMessage::RoomJoined { room_code, .. } => {
+            ServerMessage::GroupJoined { group_code, .. } => {
                 if let Some(tx) = code_tx.take() {
-                    let _ = tx.send(room_code.0.clone());
+                    let _ = tx.send(group_code.0.clone());
                 }
             }
             ServerMessage::YourHand { cards } => {
@@ -137,7 +137,7 @@ fn render(app: &App) -> String {
 }
 
 fn create(name: &str) -> ClientMessage {
-    ClientMessage::CreateRoom {
+    ClientMessage::CreateGroup {
         protocol_version: PROTOCOL_VERSION,
         display_name: name.into(),
         session_token: None,
@@ -145,31 +145,31 @@ fn create(name: &str) -> ClientMessage {
 }
 
 fn join(name: &str, code: &str) -> ClientMessage {
-    ClientMessage::JoinRoom {
+    ClientMessage::JoinGroup {
         protocol_version: PROTOCOL_VERSION,
         display_name: name.into(),
         session_token: None,
-        room_code: RoomCode(code.into()),
+        group_code: GroupCode(code.into()),
     }
 }
 
-/// Real server, real wire: create a room and confirm the client decodes
-/// `RoomJoined` and renders the lobby with the server-issued invite code.
+/// Real server, real wire: create a group and confirm the client decodes
+/// `GroupJoined` and renders the lobby with the server-issued invite code.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn live_create_room_handshake() {
+async fn live_create_group_handshake() {
     let url = start_server().await;
     let mut ws = connect(&url).await;
     send(&mut ws, &create("quentin")).await;
 
     let mut app = App::new();
     let mut code = None;
-    // Read until we see RoomJoined (or give up after a few frames).
+    // Read until we see GroupJoined (or give up after a few frames).
     for _ in 0..8 {
         match recv(&mut ws).await {
             Some(msg) => {
                 app.on_server(&msg);
-                if let ServerMessage::RoomJoined { room_code, .. } = &msg {
-                    code = Some(room_code.0.clone());
+                if let ServerMessage::GroupJoined { group_code, .. } = &msg {
+                    code = Some(group_code.0.clone());
                     break;
                 }
             }
@@ -177,7 +177,7 @@ async fn live_create_room_handshake() {
         }
     }
 
-    let code = code.expect("server issued a RoomJoined with an invite code");
+    let code = code.expect("server issued a GroupJoined with an invite code");
     assert!(code.starts_with("BREW-"), "unexpected code: {code}");
     let s = render(&app);
     assert!(s.contains("Lobby"), "expected the lobby screen");
@@ -193,7 +193,7 @@ async fn live_full_game_reaches_game_over() {
     let url = start_server().await;
     let (code_tx, code_rx) = oneshot::channel();
 
-    // Seat 0 creates the room, reports the code, and captures the rendered game.
+    // Seat 0 creates the group, reports the code, and captures the rendered game.
     let seat0 = tokio::spawn(play_seat(url.clone(), create("seat0"), Some(code_tx), true));
 
     let code = tokio::time::timeout(Duration::from_secs(5), code_rx)

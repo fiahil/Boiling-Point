@@ -130,15 +130,15 @@ fn build_otel_tracer() -> Option<opentelemetry_sdk::trace::SdkTracer> {
 /// The game-balance metrics, named in one place. These compile to no-ops when no
 /// recorder is installed (e.g. in tests).
 pub mod metric {
-    /// A room was created.
-    pub fn room_created() {
-        metrics::counter!("rooms_created_total").increment(1);
-        metrics::gauge!("rooms_active").increment(1.0);
+    /// A group was created.
+    pub fn group_created() {
+        metrics::counter!("groups_created_total").increment(1);
+        metrics::gauge!("groups_active").increment(1.0);
     }
 
-    /// A room task ended.
-    pub fn room_closed() {
-        metrics::gauge!("rooms_active").decrement(1.0);
+    /// A group task ended.
+    pub fn group_closed() {
+        metrics::gauge!("groups_active").decrement(1.0);
     }
 
     /// A game began.

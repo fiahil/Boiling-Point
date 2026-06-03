@@ -1,18 +1,18 @@
 // Wire protocol — a faithful TypeScript mirror of the Rust `protocol/` crate
 // (protocol/src/{client,server,vocab,ids}.rs). Newtypes serialize transparently
-// (PlayerId→uuid string, CardId/EmoteId→number, RoomCode→string); unit enums serialize
+// (PlayerId→uuid string, CardId/EmoteId→number, GroupCode→string); unit enums serialize
 // as their variant name; `rmp_serde::to_vec_named` matches this object shape.
 //
 // This is now an exact hand-mirror, not the earlier guess. The proper long-term step is a
 // feature-gated `ts-rs` derive on the Rust crate feeding `npm run gen:protocol`; that
 // remains a documented follow-up (the crate does not derive ts-rs today).
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 export type PlayerId = string; // PlayerId(Uuid) — transparent uuid string
 export type CardId = number; //   CardId(u32)
 export type EmoteId = number; //  EmoteId(u16)
-export type RoomCode = string; // RoomCode(String)
+export type GroupCode = string; // GroupCode(String)
 
 export type Color = "Ruby" | "Sapphire" | "Emerald" | "Amethyst" | "Wild";
 
@@ -36,7 +36,7 @@ export type ModifierKind =
 
 export type ErrorCode =
   | "VersionMismatch"
-  | "UnknownRoom"
+  | "UnknownGroup"
   | "NotYourCard"
   | "WrongPhase"
   | "LockedOut"
@@ -88,13 +88,15 @@ export type ScoringOutcome =
 // ---------------------------------------------------------------------------
 
 export type ClientMessage =
-  | { type: "JoinRoom"; protocol_version: number; display_name: string; session_token: string | null; room_code: RoomCode }
-  | { type: "CreateRoom"; protocol_version: number; display_name: string; session_token: string | null }
+  | { type: "JoinGroup"; protocol_version: number; display_name: string; session_token: string | null; group_code: GroupCode }
+  | { type: "CreateGroup"; protocol_version: number; display_name: string; session_token: string | null }
   | { type: "EnqueueMatch"; protocol_version: number; display_name: string; session_token: string | null }
   | { type: "CommitCard"; card: CardId }
   | { type: "CommitPass" }
   | { type: "LockIn" }
   | { type: "Emote"; emote: EmoteId }
+  | { type: "PlayAgain" }
+  | { type: "LeaveGroup" }
   | { type: "Heartbeat" };
 
 // ---------------------------------------------------------------------------
@@ -102,7 +104,7 @@ export type ClientMessage =
 // ---------------------------------------------------------------------------
 
 export type ServerMessage =
-  | { type: "RoomJoined"; room_code: RoomCode; your_player_id: PlayerId; your_color: Color; players: PlayerPublic[] }
+  | { type: "GroupJoined"; group_code: GroupCode; your_player_id: PlayerId; your_color: Color; session_token: string; players: PlayerPublic[] }
   | { type: "GameStarting"; players: PlayerPublic[]; round_count: number }
   | { type: "YourHand"; cards: HandCard[] }
   | { type: "WaveOpened"; round_number: number; wave_number: number; timer_ms: number; final_wave: boolean }
@@ -121,9 +123,10 @@ export type ServerMessage =
   | { type: "DeathmatchStarted"; participants: PlayerId[] }
   | { type: "Error"; code: ErrorCode; message: string }
   | { type: "PlayerConnectionChanged"; player: PlayerId; connected: boolean }
+  | { type: "LeftGroup" }
   | {
       type: "StateSnapshot";
-      room_code: RoomCode;
+      group_code: GroupCode;
       your_player_id: PlayerId;
       round_number: number;
       players: PlayerPublic[];

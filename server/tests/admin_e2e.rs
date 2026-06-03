@@ -1,10 +1,10 @@
 //! End-to-end validation of the admin surface against a real running game loop
 //! (`admin-ui` tasks 9.1 and 9.2). This is the in-repo stand-in for a bot-harness
 //! session: it registers the admin projection as the span-lifecycle consumer,
-//! drives a full four-player game through the authoritative room/game loop, and
-//! asserts the inspector reflects the live room, the reveal matches authoritative
+//! drives a full four-player game through the authoritative group/game loop, and
+//! asserts the inspector reflects the live group, the reveal matches authoritative
 //! hidden state, the balance figures count every completed round, and an operator
-//! kill-room command closes the loop *through telemetry* (the room leaving the
+//! kill-group command closes the loop *through telemetry* (the group leaving the
 //! live registry).
 //!
 //! The whole thing runs in one test function so the process-global span subscriber
@@ -22,7 +22,7 @@ use boiling_point_protocol::{CardId, ClientMessage, PlayerId, ServerMessage};
 use boiling_point_server::admin::AdminProjection;
 use boiling_point_server::admin::projection::RevealOutcome;
 use boiling_point_server::config::ContentConfig;
-use boiling_point_server::lobby::{RoomCommand, RoomRegistry};
+use boiling_point_server::lobby::{GroupCommand, GroupRegistry};
 use boiling_point_server::observability;
 
 /// Install the global span subscriber feeding a fresh projection (once).
@@ -34,19 +34,19 @@ fn install_projection() -> Arc<AdminProjection> {
 }
 
 /// A registry with short wave timers so a full game completes quickly.
-fn fast_registry() -> Arc<RoomRegistry> {
+fn fast_registry() -> Arc<GroupRegistry> {
     let mut config = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
     config.timing.wave1_ms = 250;
     config.timing.wave_ms = 200;
     let registry = Arc::new(config.build_registry().unwrap());
-    Arc::new(RoomRegistry::new(registry, Arc::new(config)))
+    Arc::new(GroupRegistry::new(registry, Arc::new(config)))
 }
 
-/// A bot seated in a room: commits one hand card per wave (passing once empty),
+/// A bot seated in a group: commits one hand card per wave (passing once empty),
 /// driving the round to a natural end. Returns whether it saw `GameOver`.
 async fn bot(
     player: PlayerId,
-    tx: mpsc::Sender<RoomCommand>,
+    tx: mpsc::Sender<GroupCommand>,
     mut out: mpsc::Receiver<ServerMessage>,
 ) -> bool {
     let mut hand: Vec<CardId> = Vec::new();
@@ -66,7 +66,7 @@ async fn bot(
                     ClientMessage::CommitPass
                 };
                 let _ = tx
-                    .send(RoomCommand::Action {
+                    .send(GroupCommand::Action {
                         player,
                         msg: action,
                     })
@@ -95,18 +95,21 @@ async fn wait_until(mut f: impl FnMut() -> bool) -> bool {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn admin_surface_reflects_a_live_game_and_closes_the_control_loop() {
     let projection = install_projection();
-    let rooms = fast_registry();
+    let groups = fast_registry();
 
     // ---- 9.1: a full game appears live, the reveal matches state, balance counts.
-    let (game_code, tx) = rooms.create();
+    let (game_code, tx) = groups.create();
     let done = Arc::new(AtomicUsize::new(0));
     let mut bots = Vec::new();
+    let mut players = Vec::new();
     for i in 0..4 {
         let player = PlayerId(Uuid::new_v4());
+        players.push(player);
         let (otx, orx) = mpsc::channel::<ServerMessage>(256);
-        tx.send(RoomCommand::Join {
+        tx.send(GroupCommand::Join {
             player,
             name: format!("bot{i}"),
+            session_token: String::new(),
             out: otx,
         })
         .await
@@ -120,18 +123,18 @@ async fn admin_surface_reflects_a_live_game_and_closes_the_control_loop() {
         }));
     }
 
-    // Poll the projection while the game runs: the room must appear live and the
+    // Poll the projection while the game runs: the group must appear live and the
     // privileged reveal must return the round's (secret) boiling point.
-    let mut saw_live_room = false;
+    let mut saw_live_group = false;
     let mut saw_reveal_bp = false;
     let game_code_str = game_code.0.clone();
     let _ = wait_until(|| {
-        let rooms_now = projection.rooms();
-        if rooms_now
+        let groups_now = projection.groups();
+        if groups_now
             .iter()
-            .any(|r| r.room_code.as_deref() == Some(&game_code_str))
+            .any(|r| r.group_code.as_deref() == Some(&game_code_str))
         {
-            saw_live_room = true;
+            saw_live_group = true;
         }
         if let RevealOutcome::Revealed(reveal) = projection.reveal(&game_code_str)
             && reveal.boiling_point.is_some()
@@ -151,8 +154,8 @@ async fn admin_surface_reflects_a_live_game_and_closes_the_control_loop() {
     }
 
     assert!(
-        saw_live_room,
-        "the inspector never showed the live game room"
+        saw_live_group,
+        "the inspector never showed the live game group"
     );
     assert!(
         saw_reveal_bp,
@@ -166,45 +169,57 @@ async fn admin_surface_reflects_a_live_game_and_closes_the_control_loop() {
         "the unsampled aggregate should count all five completed rounds, got {}",
         balance.rounds
     );
-    // The room left the live registry once the game ended (room.lifetime closed).
-    assert!(
-        wait_until(|| {
-            !projection
-                .rooms()
-                .iter()
-                .any(|r| r.room_code.as_deref() == Some(&game_code_str))
-        })
-        .await,
-        "the finished game's room should leave the live view"
-    );
     // The game is replayable from the buffer.
     assert!(
         !projection.replay_list().is_empty(),
         "a completed game should be retained for replay"
     );
+    // A persistent group OUTLIVES the game (group-model D2): after `GameOver` it
+    // returns to its lobby and stays in the live registry rather than closing.
+    assert!(
+        projection
+            .groups()
+            .iter()
+            .any(|r| r.group_code.as_deref() == Some(&game_code_str)),
+        "the group should persist in the live view after the game (it returns to its lobby)"
+    );
+    // It closes through telemetry once every player leaves (group.lifetime ends).
+    for player in &players {
+        let _ = tx.send(GroupCommand::Leave { player: *player }).await;
+    }
+    assert!(
+        wait_until(|| {
+            !projection
+                .groups()
+                .iter()
+                .any(|r| r.group_code.as_deref() == Some(&game_code_str))
+        })
+        .await,
+        "the group should leave the live view once all players have left"
+    );
 
-    // ---- 9.2: a kill-room command is confirmed by telemetry (the loop closes).
-    let (kill_code, _kill_tx) = rooms.create();
+    // ---- 9.2: a kill-group command is confirmed by telemetry (the loop closes).
+    let (kill_code, _kill_tx) = groups.create();
     let kill_code_str = kill_code.0.clone();
     assert!(
         wait_until(|| projection
-            .rooms()
+            .groups()
             .iter()
-            .any(|r| r.room_code.as_deref() == Some(&kill_code_str)))
+            .any(|r| r.group_code.as_deref() == Some(&kill_code_str)))
         .await,
-        "the seeded room should appear in the live registry"
+        "the seeded group should appear in the live registry"
     );
     // Operator command goes through the authoritative registry, not the projection.
     assert!(
-        rooms.kill_room(&kill_code, "e2e-operator"),
+        groups.kill_group(&kill_code, "e2e-operator"),
         "kill should be delivered"
     );
     assert!(
         wait_until(|| !projection
-            .rooms()
+            .groups()
             .iter()
-            .any(|r| r.room_code.as_deref() == Some(&kill_code_str)))
+            .any(|r| r.group_code.as_deref() == Some(&kill_code_str)))
         .await,
-        "the killed room should disappear from the live view — the loop closes through telemetry"
+        "the killed group should disappear from the live view — the loop closes through telemetry"
     );
 }

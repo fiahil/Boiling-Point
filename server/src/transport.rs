@@ -1,11 +1,11 @@
 //! WebSocket transport: the Axum app, the per-connection read/write tasks, the
 //! protocol-version handshake, and per-connection rate limiting.
 //!
-//! Each connection owns an outbound mpsc channel the room writes to; a writer
+//! Each connection owns an outbound mpsc channel the group writes to; a writer
 //! task serialises those messages to the socket as MessagePack. The first client
-//! message must be an entry message (`CreateRoom`/`JoinRoom`) carrying a
+//! message must be an entry message (`CreateGroup`/`JoinGroup`) carrying a
 //! compatible protocol version, after which the connection is bridged to its
-//! room and subsequent messages are forwarded as actions.
+//! group and subsequent messages are forwarded as actions.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -23,8 +23,8 @@ use boiling_point_protocol::client::PROTOCOL_VERSION;
 use boiling_point_protocol::server::ErrorCode;
 use boiling_point_protocol::{ClientMessage, PlayerId, ServerMessage, codec};
 
-use crate::lobby::room::RoomCommand;
-use crate::lobby::{MatchQueue, RoomRegistry, SessionStore};
+use crate::lobby::group::GroupCommand;
+use crate::lobby::{GroupRegistry, MatchQueue, SessionStore};
 
 /// Minimum spacing between accepted actions on one connection.
 const RATE_LIMIT: Duration = Duration::from_millis(100);
@@ -34,8 +34,8 @@ const RATE_LIMIT: Duration = Duration::from_millis(100);
 pub struct AppState {
     /// Anonymous session authentication.
     pub sessions: Arc<SessionStore>,
-    /// The live-room registry.
-    pub rooms: Arc<RoomRegistry>,
+    /// The live-group registry.
+    pub groups: Arc<GroupRegistry>,
     /// The auto-match queue.
     pub queue: Arc<MatchQueue>,
     /// Max silence on a connection before it's treated as disconnected (clients
@@ -71,7 +71,47 @@ async fn next_client_message(stream: &mut SplitStream<WebSocket>) -> Option<Clie
     None
 }
 
-/// Drive one WebSocket connection end to end.
+/// The authenticated, durable identity of one connection (the "session"). It is
+/// established once, on the first entry message, and outlives any single group the
+/// connection binds to.
+struct Session {
+    /// Stable player identity for this connection.
+    player: PlayerId,
+    /// The session token, replayed to the client in `GroupJoined` so it can resume
+    /// this identity after a socket drop.
+    token: String,
+    /// The group this connection is currently bound to, or `None` in the unbound
+    /// "menu" state (after a `LeaveGroup`, or before the first bind).
+    binding: Option<mpsc::Sender<GroupCommand>>,
+}
+
+/// Whether a message is a group **entry** message (binds the connection to a group).
+fn is_entry(msg: &ClientMessage) -> bool {
+    matches!(
+        msg,
+        ClientMessage::CreateGroup { .. }
+            | ClientMessage::JoinGroup { .. }
+            | ClientMessage::EnqueueMatch { .. }
+    )
+}
+
+/// Whether a table/game action requires the connection to be bound to a group and
+/// is subject to the per-connection rate limit.
+fn is_table_action(msg: &ClientMessage) -> bool {
+    matches!(
+        msg,
+        ClientMessage::CommitCard { .. }
+            | ClientMessage::CommitPass
+            | ClientMessage::LockIn
+            | ClientMessage::Emote { .. }
+    )
+}
+
+/// Drive one WebSocket connection end to end as a durable **session** (group-model
+/// D5): the connection authenticates once, then acts as a small router — entry
+/// messages set its group binding, `LeaveGroup` clears it (back to the menu state),
+/// table actions forward to the bound group, and the socket survives a game or
+/// group ending. It closes only on transport drop / client close.
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let (mut sink, mut stream) = socket.split();
     let (out_tx, mut out_rx) = mpsc::channel::<ServerMessage>(64);
@@ -88,21 +128,24 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     });
 
-    // Handshake. On a rejected handshake, drop the sender and let the writer
-    // drain (so the client actually receives the `Error`) rather than aborting.
+    // Handshake: the first message must be an entry message; it negotiates the
+    // version, authenticates the identity, and makes the first binding. On a
+    // rejected handshake, drop the sender and let the writer drain (so the client
+    // actually receives the `Error`) rather than aborting.
     let Some(entry) = next_client_message(&mut stream).await else {
         drop(out_tx);
         let _ = writer.await;
         return;
     };
-    let Some((player, room_tx)) = handle_entry(&state, entry, &out_tx).await else {
+    let Some(mut session) = handle_first_entry(&state, entry, &out_tx).await else {
         drop(out_tx);
         let _ = writer.await;
         return;
     };
 
-    // Action loop with per-connection rate limiting and a heartbeat-driven idle
-    // timeout (a connection silent past `conn_timeout` is treated as dropped).
+    // Router loop with a heartbeat-driven idle timeout (a connection silent past
+    // `conn_timeout` is treated as dropped). Table actions are rate-limited; entry,
+    // leave, play-again, and heartbeat are not (they must not be silently dropped).
     let conn_timeout = state.conn_timeout;
     let mut last = Instant::now()
         .checked_sub(RATE_LIMIT)
@@ -113,89 +156,175 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             Ok(None) => break, // client closed the connection
             Err(_) => break,   // no heartbeat within the window → disconnect
         };
-        let now = Instant::now();
-        if now.duration_since(last) < RATE_LIMIT {
-            continue; // silently drop excess
+        if is_table_action(&msg) {
+            let now = Instant::now();
+            if now.duration_since(last) < RATE_LIMIT {
+                continue; // silently drop excess
+            }
+            last = now;
         }
-        last = now;
         // `ws.message` span (span_schema::span::WS_MESSAGE): only the message *kind*
         // (the variant name) rides as a public attribute — never the payload.
         let _msg_span = tracing::info_span!("ws.message", ws.message_kind = message_kind(&msg));
-        if room_tx
-            .send(RoomCommand::Action { player, msg })
-            .await
-            .is_err()
-        {
-            break;
+
+        match msg {
+            // Heartbeat is serviced in any state (bound or unbound), keeping a menu
+            // connection alive without forwarding to a group.
+            ClientMessage::Heartbeat => {
+                let _ = out_tx.send(ServerMessage::Heartbeat).await;
+            }
+            // Re-entry: bind to a (different) group on the same socket. Rejected
+            // while already bound — the client must `LeaveGroup` first.
+            _ if is_entry(&msg) => {
+                if session.binding.is_some() {
+                    send_error(
+                        &out_tx,
+                        ErrorCode::WrongPhase,
+                        "already in a group — leave it before joining another",
+                    )
+                    .await;
+                } else if let Some(group_tx) = bind_entry(&state, msg, &session, &out_tx).await {
+                    session.binding = Some(group_tx);
+                }
+            }
+            // Leave the current group and return to the unbound menu state, keeping
+            // the socket open.
+            ClientMessage::LeaveGroup => match session.binding.take() {
+                Some(group_tx) => {
+                    let _ = group_tx
+                        .send(GroupCommand::Leave {
+                            player: session.player,
+                        })
+                        .await;
+                    let _ = out_tx.send(ServerMessage::LeftGroup).await;
+                }
+                None => {
+                    send_error(&out_tx, ErrorCode::WrongPhase, "not in a group").await;
+                }
+            },
+            // Table/game actions (incl. `PlayAgain`) require a bound group.
+            _ => match &session.binding {
+                Some(group_tx) => {
+                    if group_tx
+                        .send(GroupCommand::Action {
+                            player: session.player,
+                            msg,
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                None => {
+                    send_error(&out_tx, ErrorCode::WrongPhase, "join a group first").await;
+                }
+            },
         }
     }
 
-    let _ = room_tx.send(RoomCommand::Leave { player }).await;
+    if let Some(group_tx) = session.binding {
+        let _ = group_tx
+            .send(GroupCommand::Leave {
+                player: session.player,
+            })
+            .await;
+    }
     writer.abort();
 }
 
-/// Validate the entry message, authenticate, and join/create a room. Returns the
-/// player's id and the room's command channel, or `None` after sending an error.
-async fn handle_entry(
+/// Handle the first entry message: validate the version, authenticate the identity
+/// (establishing the durable session), and bind to the first group. Returns the new
+/// [`Session`], or `None` after sending an error.
+async fn handle_first_entry(
     state: &AppState,
     entry: ClientMessage,
     out: &mpsc::Sender<ServerMessage>,
-) -> Option<(PlayerId, mpsc::Sender<RoomCommand>)> {
-    match entry {
-        ClientMessage::CreateRoom {
-            protocol_version,
-            display_name,
-            session_token,
-        } => {
-            if !version_ok(protocol_version, out).await {
-                return None;
-            }
-            let (player, _) = state.sessions.authenticate(session_token.as_deref());
-            let (_code, room_tx) = state.rooms.create();
-            join_room(out, room_tx, player, display_name).await
+) -> Option<Session> {
+    let version = match &entry {
+        ClientMessage::CreateGroup {
+            protocol_version, ..
         }
-        ClientMessage::JoinRoom {
-            protocol_version,
-            display_name,
-            session_token,
-            room_code,
-        } => {
-            if !version_ok(protocol_version, out).await {
-                return None;
-            }
-            let (player, _) = state.sessions.authenticate(session_token.as_deref());
-            let Some(room_tx) = state.rooms.get(&room_code) else {
-                send_error(out, ErrorCode::UnknownRoom, "no such room").await;
-                return None;
-            };
-            join_room(out, room_tx, player, display_name).await
+        | ClientMessage::JoinGroup {
+            protocol_version, ..
         }
-        ClientMessage::EnqueueMatch {
-            protocol_version,
-            display_name,
-            session_token,
-        } => {
-            if !version_ok(protocol_version, out).await {
-                return None;
-            }
-            let (player, _) = state.sessions.authenticate(session_token.as_deref());
-            // Park until the queue assembles a table and hands back the room.
-            let (notify_tx, notify_rx) = oneshot::channel();
-            state
-                .queue
-                .enqueue(player, display_name, out.clone(), notify_tx)
-                .await;
-            notify_rx.await.ok().map(|room_tx| (player, room_tx))
-        }
+        | ClientMessage::EnqueueMatch {
+            protocol_version, ..
+        } => *protocol_version,
         _ => {
             send_error(
                 out,
                 ErrorCode::WrongPhase,
-                "expected CreateRoom, JoinRoom, or EnqueueMatch",
+                "expected CreateGroup, JoinGroup, or EnqueueMatch",
             )
             .await;
-            None
+            return None;
         }
+    };
+    if !version_ok(version, out).await {
+        return None;
+    }
+    let session_token = match &entry {
+        ClientMessage::CreateGroup { session_token, .. }
+        | ClientMessage::JoinGroup { session_token, .. }
+        | ClientMessage::EnqueueMatch { session_token, .. } => session_token.as_deref(),
+        _ => None,
+    };
+    let (player, token) = state.sessions.authenticate(session_token);
+    let session = Session {
+        player,
+        token,
+        binding: None,
+    };
+    let group_tx = bind_entry(state, entry, &session, out).await?;
+    Some(Session {
+        binding: Some(group_tx),
+        ..session
+    })
+}
+
+/// Bind an established session to a group via an entry message (no version
+/// renegotiation; identity reused). Returns the group's command channel, or `None`
+/// after sending an error.
+async fn bind_entry(
+    state: &AppState,
+    entry: ClientMessage,
+    session: &Session,
+    out: &mpsc::Sender<ServerMessage>,
+) -> Option<mpsc::Sender<GroupCommand>> {
+    match entry {
+        ClientMessage::CreateGroup { display_name, .. } => {
+            let (_code, group_tx) = state.groups.create();
+            send_join(out, group_tx, session, display_name).await
+        }
+        ClientMessage::JoinGroup {
+            display_name,
+            group_code,
+            ..
+        } => {
+            let Some(group_tx) = state.groups.get(&group_code) else {
+                send_error(out, ErrorCode::UnknownGroup, "no such group").await;
+                return None;
+            };
+            send_join(out, group_tx, session, display_name).await
+        }
+        ClientMessage::EnqueueMatch { display_name, .. } => {
+            // Park until the queue assembles a table and hands back the group (the
+            // queue sends the `Join` itself, so we only await the binding).
+            let (notify_tx, notify_rx) = oneshot::channel();
+            state
+                .queue
+                .enqueue(
+                    session.player,
+                    display_name,
+                    session.token.clone(),
+                    out.clone(),
+                    notify_tx,
+                )
+                .await;
+            notify_rx.await.ok()
+        }
+        _ => None,
     }
 }
 
@@ -214,17 +343,18 @@ async fn version_ok(version: u16, out: &mpsc::Sender<ServerMessage>) -> bool {
     }
 }
 
-/// Send a `Join` to a room and return this connection's `(player, room channel)`.
-async fn join_room(
+/// Send a `Join` (carrying the session token) to a group and return its channel.
+async fn send_join(
     out: &mpsc::Sender<ServerMessage>,
-    room_tx: mpsc::Sender<RoomCommand>,
-    player: PlayerId,
+    group_tx: mpsc::Sender<GroupCommand>,
+    session: &Session,
     name: String,
-) -> Option<(PlayerId, mpsc::Sender<RoomCommand>)> {
-    if room_tx
-        .send(RoomCommand::Join {
-            player,
+) -> Option<mpsc::Sender<GroupCommand>> {
+    if group_tx
+        .send(GroupCommand::Join {
+            player: session.player,
             name,
+            session_token: session.token.clone(),
             out: out.clone(),
         })
         .await
@@ -232,20 +362,22 @@ async fn join_room(
     {
         return None;
     }
-    Some((player, room_tx))
+    Some(group_tx)
 }
 
 /// The variant name of an inbound message, for the `ws.message` span. This is a
 /// public label only — it deliberately carries none of the message's payload.
 fn message_kind(msg: &ClientMessage) -> &'static str {
     match msg {
-        ClientMessage::CreateRoom { .. } => "CreateRoom",
-        ClientMessage::JoinRoom { .. } => "JoinRoom",
+        ClientMessage::CreateGroup { .. } => "CreateGroup",
+        ClientMessage::JoinGroup { .. } => "JoinGroup",
         ClientMessage::EnqueueMatch { .. } => "EnqueueMatch",
         ClientMessage::CommitCard { .. } => "CommitCard",
         ClientMessage::CommitPass => "CommitPass",
         ClientMessage::LockIn => "LockIn",
         ClientMessage::Emote { .. } => "Emote",
+        ClientMessage::PlayAgain => "PlayAgain",
+        ClientMessage::LeaveGroup => "LeaveGroup",
         ClientMessage::Heartbeat => "Heartbeat",
     }
 }
@@ -280,11 +412,11 @@ mod tests {
         config.timing.wave_ms = 200;
         let registry = Arc::new(config.build_registry().unwrap());
         let config = Arc::new(config);
-        let rooms = Arc::new(RoomRegistry::new(registry, config));
-        let queue = Arc::new(MatchQueue::new(rooms.clone()));
+        let groups = Arc::new(GroupRegistry::new(registry, config));
+        let queue = Arc::new(MatchQueue::new(groups.clone()));
         let state = AppState {
             sessions: Arc::new(SessionStore::new()),
-            rooms,
+            groups,
             queue,
             conn_timeout,
         };
@@ -297,7 +429,7 @@ mod tests {
     }
 
     fn create(name: &str, version: u16) -> ClientMessage {
-        ClientMessage::CreateRoom {
+        ClientMessage::CreateGroup {
             protocol_version: version,
             display_name: name.into(),
             session_token: None,
@@ -335,12 +467,12 @@ mod tests {
         }
     }
 
-    fn join(name: &str, code: boiling_point_protocol::RoomCode) -> ClientMessage {
-        ClientMessage::JoinRoom {
+    fn join(name: &str, code: boiling_point_protocol::GroupCode) -> ClientMessage {
+        ClientMessage::JoinGroup {
             protocol_version: PROTOCOL_VERSION,
             display_name: name.into(),
             session_token: None,
-            room_code: code,
+            group_code: code,
         }
     }
 
@@ -364,7 +496,7 @@ mod tests {
                 let (mut joined, mut started) = (false, false);
                 while !(joined && started) {
                     match recv_opt(&mut ws).await {
-                        Some(ServerMessage::RoomJoined { .. }) => joined = true,
+                        Some(ServerMessage::GroupJoined { .. }) => joined = true,
                         Some(ServerMessage::GameStarting { .. }) => started = true,
                         Some(_) => continue,
                         None => break,
@@ -422,7 +554,7 @@ mod tests {
         let (mut ws, _) = connect_async(url).await.unwrap();
         send(&mut ws, &create("p1", PROTOCOL_VERSION)).await;
         let joined = recv(&mut ws).await;
-        assert!(matches!(joined, ServerMessage::RoomJoined { .. }));
+        assert!(matches!(joined, ServerMessage::GroupJoined { .. }));
         // A lobby message must not carry any secret (e.g. the boiling point).
         assert!(
             !codec::encode_json(&joined)
@@ -463,7 +595,7 @@ mod tests {
         send(&mut ws, &create("idle", PROTOCOL_VERSION)).await;
         assert!(matches!(
             recv(&mut ws).await,
-            ServerMessage::RoomJoined { .. }
+            ServerMessage::GroupJoined { .. }
         ));
         // Stay silent — the server should close the connection within the window.
         let closed = tokio::time::timeout(std::time::Duration::from_secs(3), recv_opt(&mut ws))
@@ -478,8 +610,8 @@ mod tests {
         let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
         send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
         let code = loop {
-            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
-                break room_code;
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
             }
         };
 
@@ -514,8 +646,8 @@ mod tests {
         let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
         send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
         let code = loop {
-            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
-                break room_code;
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
             }
         };
 
@@ -527,7 +659,7 @@ mod tests {
             players.push(tokio::spawn(async move {
                 let (mut ws, _) = connect_async(url).await.unwrap();
                 send(&mut ws, &join(&format!("p{i}"), code)).await;
-                while !matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {}
+                while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
                 play_loop(&mut ws).await
             }));
         }
@@ -566,12 +698,12 @@ mod tests {
     async fn four_clients_play_a_full_game_to_game_over() {
         let url = start_server().await;
 
-        // Player 1 creates the room and learns the invite code.
+        // Player 1 creates the group and learns the invite code.
         let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
         send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
         let code = loop {
-            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
-                break room_code;
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
             }
         };
 
@@ -584,7 +716,7 @@ mod tests {
                 let (mut ws, _) = connect_async(url).await.unwrap();
                 send(&mut ws, &join(&format!("p{i}"), code)).await;
                 loop {
-                    if matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {
+                    if matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {
                         break;
                     }
                 }
@@ -607,14 +739,167 @@ mod tests {
         assert!(outcome, "every client saw GameOver");
     }
 
+    /// Like [`play_loop`], but plays through `n` games on one connection, opting in
+    /// with `PlayAgain` after each `GameOver` until the last. Returns how many
+    /// `GameOver`s it saw.
+    async fn play_n_games(ws: &mut Ws, n: usize) -> usize {
+        let mut hand: Vec<boiling_point_protocol::CardId> = Vec::new();
+        let mut idx = 0usize;
+        let mut games = 0usize;
+        loop {
+            let Some(msg) = recv_opt(ws).await else {
+                return games;
+            };
+            match msg {
+                ServerMessage::YourHand { cards } => {
+                    hand = cards.iter().map(|c| c.id).collect();
+                    idx = 0;
+                }
+                ServerMessage::WaveOpened { .. } => {
+                    if idx < hand.len() {
+                        send(ws, &ClientMessage::CommitCard { card: hand[idx] }).await;
+                        idx += 1;
+                    } else {
+                        send(ws, &ClientMessage::CommitPass).await;
+                    }
+                }
+                ServerMessage::GameOver { .. } => {
+                    games += 1;
+                    if games >= n {
+                        return games;
+                    }
+                    // Opt in to another game with the same group.
+                    send(ws, &ClientMessage::PlayAgain).await;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// A persistent group plays two back-to-back games via "play again": after the
+    /// first `GameOver` every seat opts in with `PlayAgain` and the same table is
+    /// re-dealt without re-queuing (group-model D2/D3; tasks.md 6.2).
     #[tokio::test]
-    async fn create_room_handshake_returns_room_joined() {
+    async fn group_plays_two_games_via_play_again() {
+        let url = start_server().await;
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
+            }
+        };
+
+        let mut joiners = Vec::new();
+        for i in 2..=4 {
+            let url = url.clone();
+            let code = code.clone();
+            joiners.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(&format!("p{i}"), code)).await;
+                while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
+                play_n_games(&mut ws, 2).await
+            }));
+        }
+        let creator = tokio::spawn(async move { play_n_games(&mut ws1, 2).await });
+
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(25), async {
+            let mut all = creator.await.unwrap() == 2;
+            for j in joiners {
+                all &= j.await.unwrap() == 2;
+            }
+            all
+        })
+        .await
+        .expect("two back-to-back games completed before timeout");
+        assert!(outcome, "every client saw two GameOvers via play-again");
+    }
+
+    /// The session connection outlives the group: on one socket a player plays a
+    /// game, leaves to the menu (`LeaveGroup` → `LeftGroup`), is rejected for a
+    /// table action while unbound, then joins a *second*, different group — all
+    /// without reconnecting (group-model D5; tasks.md 6.3).
+    #[tokio::test]
+    async fn one_socket_plays_leaves_then_joins_another_group() {
+        let url = start_server().await;
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code_a = loop {
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
+            }
+        };
+
+        // Fill the table so a game runs; the joiners play to GameOver then drop.
+        let mut joiners = Vec::new();
+        for i in 2..=4 {
+            let url = url.clone();
+            let code = code_a.clone();
+            joiners.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(&format!("p{i}"), code)).await;
+                while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
+                play_loop(&mut ws).await
+            }));
+        }
+
+        let body = async {
+            // p1 plays the first group's game to completion on this socket.
+            assert!(play_loop(&mut ws1).await, "p1 should reach GameOver");
+            for j in joiners {
+                let _ = j.await;
+            }
+
+            // Leave to the menu — the socket stays open.
+            send(&mut ws1, &ClientMessage::LeaveGroup).await;
+            let saw_left = loop {
+                match recv_opt(&mut ws1).await {
+                    Some(ServerMessage::LeftGroup) => break true,
+                    Some(_) => continue,
+                    None => break false,
+                }
+            };
+            assert!(saw_left, "LeaveGroup should be acknowledged with LeftGroup");
+
+            // A table action while unbound is rejected (it changes no state).
+            send(&mut ws1, &ClientMessage::CommitPass).await;
+            let rejected = loop {
+                match recv_opt(&mut ws1).await {
+                    Some(ServerMessage::Error { .. }) => break true,
+                    Some(_) => continue,
+                    None => break false,
+                }
+            };
+            assert!(
+                rejected,
+                "a table action in the menu state must be rejected"
+            );
+
+            // Join a second group on the SAME socket (re-entry, no reconnect).
+            send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+            let code_b = loop {
+                match recv_opt(&mut ws1).await {
+                    Some(ServerMessage::GroupJoined { group_code, .. }) => break Some(group_code),
+                    Some(_) => continue,
+                    None => break None,
+                }
+            };
+            let code_b = code_b.expect("rejoined a new group on the same socket");
+            assert_ne!(code_a.0, code_b.0, "the second group is a distinct group");
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(20), body)
+            .await
+            .expect("the leave/rejoin flow completed before timeout");
+    }
+
+    #[tokio::test]
+    async fn create_group_handshake_returns_group_joined() {
         let url = start_server().await;
         let (mut ws, _) = connect_async(url).await.unwrap();
         send(&mut ws, &create("alice", PROTOCOL_VERSION)).await;
         assert!(matches!(
             recv(&mut ws).await,
-            ServerMessage::RoomJoined { .. }
+            ServerMessage::GroupJoined { .. }
         ));
     }
 
@@ -639,7 +924,7 @@ mod tests {
         send(&mut ws, &create("cara", PROTOCOL_VERSION)).await;
         assert!(matches!(
             recv(&mut ws).await,
-            ServerMessage::RoomJoined { .. }
+            ServerMessage::GroupJoined { .. }
         ));
         send(&mut ws, &ClientMessage::Heartbeat).await;
         assert!(matches!(recv(&mut ws).await, ServerMessage::Heartbeat));
@@ -662,7 +947,7 @@ mod tests {
     }
 
     /// Install a process-global subscriber feeding a [`SpanCapture`] (once). A
-    /// global subscriber is required so spans emitted on spawned room/session tasks
+    /// global subscriber is required so spans emitted on spawned group/session tasks
     /// are observed; the per-thread `with_default` used by unit tests would miss
     /// them.
     fn install_span_capture() -> std::sync::Arc<SpanCapture> {
@@ -704,8 +989,8 @@ mod tests {
         let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
         send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
         let code = loop {
-            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
-                break room_code;
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
             }
         };
         let mut joiners = Vec::new();
@@ -715,7 +1000,7 @@ mod tests {
             joiners.push(tokio::spawn(async move {
                 let (mut ws, _) = connect_async(url).await.unwrap();
                 send(&mut ws, &join(&format!("p{i}"), code)).await;
-                while !matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {}
+                while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
                 play_loop(&mut ws).await
             }));
         }
@@ -733,7 +1018,7 @@ mod tests {
 
         // The documented span tree should now be visible to the lifecycle consumer.
         let expected = [
-            "room.lifetime",
+            "group.lifetime",
             "game",
             "round",
             "wave",
@@ -752,8 +1037,8 @@ mod tests {
         assert!(
             events
                 .iter()
-                .any(|e| e.name == "room.lifetime" && e.attributes.contains_key("room.code")),
-            "room.lifetime missing room.code"
+                .any(|e| e.name == "group.lifetime" && e.attributes.contains_key("group.code")),
+            "group.lifetime missing group.code"
         );
         assert!(
             events
@@ -774,19 +1059,19 @@ mod tests {
                 .any(|e| e.name == "round" && e.attributes.contains_key("boiling_point")),
             "boiling_point (secret) not carried in-process on a round span"
         );
-        // room.lifetime both opens and (after teardown) closes.
+        // group.lifetime both opens and (after teardown) closes.
         assert!(
             events
                 .iter()
-                .any(|e| e.name == "room.lifetime" && e.kind == SpanEventKind::Start),
-            "no room.lifetime Start observed"
+                .any(|e| e.name == "group.lifetime" && e.kind == SpanEventKind::Start),
+            "no group.lifetime Start observed"
         );
         assert!(
             wait_until(|| cap
                 .events()
                 .iter()
-                .any(|e| e.name == "room.lifetime" && e.kind == SpanEventKind::End)),
-            "room.lifetime never ended after the game completed"
+                .any(|e| e.name == "group.lifetime" && e.kind == SpanEventKind::End)),
+            "group.lifetime never ended after the game completed"
         );
     }
 }

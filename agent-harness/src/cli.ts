@@ -3,8 +3,8 @@
 // its own process with its own connection, session, difficulty, and persona. To fill a
 // table, run several and join as the remaining seat.
 //
-//   bp-bot --create                       # bot opens a room, prints the invite code
-//   bp-bot --room BREW-7K3F --persona gambler
+//   bp-bot --create                       # bot opens a group, prints the invite code
+//   bp-bot --group BREW-7K3F --persona gambler
 //   bp-bot --enqueue --brain fallback     # zero-cost seat filler via matchmaking
 
 import { parseArgs } from "node:util";
@@ -18,7 +18,7 @@ import type { WireMode } from "./protocol/codec.ts";
 function main(): void {
   const { values } = parseArgs({
     options: {
-      room: { type: "string" },
+      group: { type: "string" },
       create: { type: "boolean", default: false },
       enqueue: { type: "boolean", default: false },
       difficulty: { type: "string", default: "hard" },
@@ -58,8 +58,8 @@ function main(): void {
   let entry: EntryConfig;
   if (values.create) entry = { kind: "create", displayName: name };
   else if (values.enqueue) entry = { kind: "enqueue", displayName: name };
-  else if (values.room) entry = { kind: "join", displayName: name, roomCode: values.room };
-  else fatal("specify one of --room <code>, --create, or --enqueue");
+  else if (values.group) entry = { kind: "join", displayName: name, groupCode: values.group };
+  else fatal("specify one of --group <code>, --create, or --enqueue");
 
   // Auth is only needed for the LLM brain.
   if (brain === "claude") configureAuth();
@@ -79,7 +79,7 @@ function main(): void {
   runner
     .start()
     .then(async (joined) => {
-      console.error(`[bp-bot] joined room ${joined.roomCode} as color ${joined.yourColor} (id ${joined.yourPlayerId})`);
+      console.error(`[bp-bot] joined group ${joined.groupCode} as color ${joined.yourColor} (id ${joined.yourPlayerId})`);
       const result = await runner.whenDone();
       if (result.aborted) {
         console.error("[bp-bot] connection closed before game over");

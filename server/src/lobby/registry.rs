@@ -1,14 +1,14 @@
-//! The room registry: a concurrent map from invite code to the room's command
-//! channel, with collision-safe room creation, the swappable content bundle, and
+//! The group registry: a concurrent map from invite code to the group's command
+//! channel, with collision-safe group creation, the swappable content bundle, and
 //! the server-owned admin command primitives.
 //!
 //! The active content (config + derived registry + emote palette) lives behind a
-//! single [`ArcSwap`] so a reload/toggle swaps all three **atomically**; rooms
-//! snapshot the current bundle when they are created, so a swap affects rooms
+//! single [`ArcSwap`] so a reload/toggle swaps all three **atomically**; groups
+//! snapshot the current bundle when they are created, so a swap affects groups
 //! created afterward (matching `admin-control`: "subsequent deals exclude that
-//! card"). The command primitives ([`reload`](RoomRegistry::reload),
-//! [`toggle_item`](RoomRegistry::toggle_item), [`seed_room`](RoomRegistry::seed_room),
-//! [`force_start`](RoomRegistry::force_start), [`kill_room`](RoomRegistry::kill_room))
+//! card"). The command primitives ([`reload`](GroupRegistry::reload),
+//! [`toggle_item`](GroupRegistry::toggle_item), [`seed_group`](GroupRegistry::seed_group),
+//! [`force_start`](GroupRegistry::force_start), [`kill_group`](GroupRegistry::kill_group))
 //! are server-owned and exposed for the admin command plane; none is reachable from
 //! the player wire. Each emits an `admin.command` audit span.
 
@@ -19,16 +19,16 @@ use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
-use boiling_point_protocol::RoomCode;
+use boiling_point_protocol::GroupCode;
 use boiling_point_protocol::vocab::{EffectKind, ModifierKind};
 
 use crate::config::{ConfigError, ContentConfig};
 use crate::content::ContentRegistry;
 
 use super::codes::generate_code;
-use super::room::{RoomCommand, spawn};
+use super::group::{GroupCommand, spawn};
 
-/// The active content snapshot rooms run against: the validated config, its derived
+/// The active content snapshot groups run against: the validated config, its derived
 /// registry, and the enabled-emote palette. Swapped atomically as a unit.
 struct Content {
     config: Arc<ContentConfig>,
@@ -90,15 +90,15 @@ impl ContentSelector {
     }
 }
 
-/// Concurrent registry of live rooms. Holds the shared content the rooms need to
+/// Concurrent registry of live groups. Holds the shared content the groups need to
 /// run games.
-pub struct RoomRegistry {
-    rooms: DashMap<RoomCode, mpsc::Sender<RoomCommand>>,
+pub struct GroupRegistry {
+    groups: DashMap<GroupCode, mpsc::Sender<GroupCommand>>,
     content: ArcSwap<Content>,
 }
 
-impl RoomRegistry {
-    /// Create an empty registry sharing `registry`/`config` with every room it
+impl GroupRegistry {
+    /// Create an empty registry sharing `registry`/`config` with every group it
     /// spawns; the emote palette is derived from the config's enabled emotes.
     pub fn new(registry: Arc<ContentRegistry>, config: Arc<ContentConfig>) -> Self {
         let palette = Arc::new(
@@ -109,8 +109,8 @@ impl RoomRegistry {
                 .map(|e| e.id)
                 .collect::<HashSet<u16>>(),
         );
-        RoomRegistry {
-            rooms: DashMap::new(),
+        GroupRegistry {
+            groups: DashMap::new(),
             content: ArcSwap::from_pointee(Content {
                 config,
                 registry,
@@ -119,15 +119,15 @@ impl RoomRegistry {
         }
     }
 
-    /// Create a fresh room with a unique invite code; returns the code and its
-    /// command channel. Takes `Arc<Self>` so the room can deregister itself when
-    /// it ends (idle timeout or game over). The room snapshots the *current*
+    /// Create a fresh group with a unique invite code; returns the code and its
+    /// command channel. Takes `Arc<Self>` so the group can deregister itself when
+    /// it ends (idle timeout or game over). The group snapshots the *current*
     /// content bundle.
-    pub fn create(self: &Arc<Self>) -> (RoomCode, mpsc::Sender<RoomCommand>) {
+    pub fn create(self: &Arc<Self>) -> (GroupCode, mpsc::Sender<GroupCommand>) {
         let content = self.content.load_full();
         loop {
             let code = generate_code();
-            if !self.rooms.contains_key(&code) {
+            if !self.groups.contains_key(&code) {
                 let handle = spawn(
                     code.clone(),
                     Arc::clone(self),
@@ -135,39 +135,39 @@ impl RoomRegistry {
                     content.config.clone(),
                     content.palette.clone(),
                 );
-                self.rooms.insert(code.clone(), handle.tx.clone());
-                crate::observability::metric::room_created();
-                tracing::info!(code = %code.0, "room created");
+                self.groups.insert(code.clone(), handle.tx.clone());
+                crate::observability::metric::group_created();
+                tracing::info!(code = %code.0, "group created");
                 return (code, handle.tx);
             }
         }
     }
 
-    /// Look up an existing room's command channel by code.
-    pub fn get(&self, code: &RoomCode) -> Option<mpsc::Sender<RoomCommand>> {
-        self.rooms.get(code).map(|r| r.clone())
+    /// Look up an existing group's command channel by code.
+    pub fn get(&self, code: &GroupCode) -> Option<mpsc::Sender<GroupCommand>> {
+        self.groups.get(code).map(|r| r.clone())
     }
 
-    /// Remove a room from the registry (called by a room when it ends).
-    pub fn remove(&self, code: &RoomCode) {
-        self.rooms.remove(code);
+    /// Remove a group from the registry (called by a group when it ends).
+    pub fn remove(&self, code: &GroupCode) {
+        self.groups.remove(code);
     }
 
-    /// Number of live rooms (for metrics/tests).
+    /// Number of live groups (for metrics/tests).
     pub fn len(&self) -> usize {
-        self.rooms.len()
+        self.groups.len()
     }
 
-    /// Whether there are no live rooms.
+    /// Whether there are no live groups.
     pub fn is_empty(&self) -> bool {
-        self.rooms.is_empty()
+        self.groups.is_empty()
     }
 
     // ---- Admin command primitives (server-owned; never on the player wire) ----
 
     /// Validate a new content config from TOML and swap it in atomically. On a
     /// validation failure the running config is unchanged and the `ConfigError` is
-    /// returned. Affects rooms created after the swap.
+    /// returned. Affects groups created after the swap.
     pub fn reload(&self, toml: &str, operator: &str) -> Result<(), ConfigError> {
         let span = tracing::info_span!(
             "admin.command",
@@ -215,8 +215,8 @@ impl RoomRegistry {
         outcome
     }
 
-    /// Seed (create) a fresh room and return its invite code.
-    pub fn seed_room(self: &Arc<Self>, operator: &str) -> RoomCode {
+    /// Seed (create) a fresh group and return its invite code.
+    pub fn seed_group(self: &Arc<Self>, operator: &str) -> GroupCode {
         let span = tracing::info_span!(
             "admin.command",
             operator,
@@ -230,20 +230,20 @@ impl RoomRegistry {
         code
     }
 
-    /// Force-start a room that has not yet auto-started. Returns whether the command
-    /// was delivered (the room exists and accepted it).
-    pub fn force_start(&self, code: &RoomCode, operator: &str) -> bool {
-        self.deliver(code, operator, "force_start", RoomCommand::ForceStart)
+    /// Force-start a group that has not yet auto-started. Returns whether the command
+    /// was delivered (the group exists and accepted it).
+    pub fn force_start(&self, code: &GroupCode, operator: &str) -> bool {
+        self.deliver(code, operator, "force_start", GroupCommand::ForceStart)
     }
 
-    /// Kill a room (idle or stuck): the room's task tears it down and its
-    /// `room.lifetime` span ends. Returns whether the command was delivered.
-    pub fn kill_room(&self, code: &RoomCode, operator: &str) -> bool {
-        self.deliver(code, operator, "kill", RoomCommand::Shutdown)
+    /// Kill a group (idle or stuck): the group's task tears it down and its
+    /// `group.lifetime` span ends. Returns whether the command was delivered.
+    pub fn kill_group(&self, code: &GroupCode, operator: &str) -> bool {
+        self.deliver(code, operator, "kill", GroupCommand::Shutdown)
     }
 
-    /// Deliver a lifecycle command to a room's task, auditing the action/outcome.
-    fn deliver(&self, code: &RoomCode, operator: &str, action: &str, cmd: RoomCommand) -> bool {
+    /// Deliver a lifecycle command to a group's task, auditing the action/outcome.
+    fn deliver(&self, code: &GroupCode, operator: &str, action: &str, cmd: GroupCommand) -> bool {
         let span = tracing::info_span!(
             "admin.command",
             operator,
@@ -256,7 +256,7 @@ impl RoomRegistry {
             Some(tx) => tx.try_send(cmd).is_ok(),
             None => false,
         };
-        span.record("outcome", if ok { "ok" } else { "no_such_room" });
+        span.record("outcome", if ok { "ok" } else { "no_such_group" });
         ok
     }
 }
@@ -290,12 +290,12 @@ mod tests {
         c
     }
 
-    fn registry_with(config: ContentConfig) -> Arc<RoomRegistry> {
+    fn registry_with(config: ContentConfig) -> Arc<GroupRegistry> {
         let reg = Arc::new(config.build_registry().unwrap());
-        Arc::new(RoomRegistry::new(reg, Arc::new(config)))
+        Arc::new(GroupRegistry::new(reg, Arc::new(config)))
     }
 
-    fn default_registry() -> Arc<RoomRegistry> {
+    fn default_registry() -> Arc<GroupRegistry> {
         registry_with(default_config())
     }
 
@@ -325,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn disabling_a_card_takes_effect_for_new_rooms() {
+    fn disabling_a_card_takes_effect_for_new_groups() {
         let reg = default_registry();
         let outcome = reg.toggle_item(ContentSelector::Effect(EffectKind::Shield), false, "tester");
         assert!(outcome.is_ok(), "disabling one effect card should validate");
@@ -372,21 +372,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seed_room_creates_a_room() {
+    async fn seed_group_creates_a_group() {
         let reg = default_registry();
         let before = reg.len();
-        let code = reg.seed_room("tester");
+        let code = reg.seed_group("tester");
         assert!(reg.get(&code).is_some());
         assert!(reg.len() > before);
     }
 
     #[tokio::test]
-    async fn kill_room_tears_it_down() {
+    async fn kill_group_tears_it_down() {
         let reg = default_registry();
         let (code, _tx) = reg.create();
         assert!(reg.get(&code).is_some());
-        assert!(reg.kill_room(&code, "tester"), "kill should be delivered");
-        // The room task processes Shutdown and deregisters (ending room.lifetime).
+        assert!(reg.kill_group(&code, "tester"), "kill should be delivered");
+        // The group task processes Shutdown and deregisters (ending group.lifetime).
         let mut gone = false;
         for _ in 0..200 {
             if reg.get(&code).is_none() {
@@ -395,9 +395,9 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        assert!(gone, "a killed room must be deregistered");
-        // Killing an unknown room is a no-op that reports failure.
-        assert!(!reg.kill_room(&code, "tester"));
+        assert!(gone, "a killed group must be deregistered");
+        // Killing an unknown group is a no-op that reports failure.
+        assert!(!reg.kill_group(&code, "tester"));
     }
 
     #[tokio::test]
@@ -405,9 +405,10 @@ mod tests {
         let reg = default_registry();
         let (code, tx) = reg.create();
         let (out_tx, mut out_rx) = mpsc::channel(64);
-        tx.send(RoomCommand::Join {
+        tx.send(GroupCommand::Join {
             player: PlayerId(Uuid::new_v4()),
             name: "solo".into(),
+            session_token: String::new(),
             out: out_tx,
         })
         .await
@@ -439,30 +440,31 @@ mod tests {
         let (code, tx) = reg.create();
         let (out_tx, mut out_rx) = mpsc::channel(64);
         let player = PlayerId(Uuid::new_v4());
-        tx.send(RoomCommand::Join {
+        tx.send(GroupCommand::Join {
             player,
             name: "solo".into(),
+            session_token: String::new(),
             out: out_tx,
         })
         .await
         .unwrap();
-        // Drain the RoomJoined ack.
+        // Drain the GroupJoined ack.
         let _ = tokio::time::timeout(Duration::from_secs(1), out_rx.recv()).await;
 
-        // Every gameplay/table ClientMessage routes through RoomCommand::Action and
-        // must not start a game or tear the room down.
+        // Every gameplay/table ClientMessage routes through GroupCommand::Action and
+        // must not start a game or tear the group down.
         for msg in [
             ClientMessage::LockIn,
             ClientMessage::CommitPass,
             ClientMessage::Heartbeat,
         ] {
-            tx.send(RoomCommand::Action { player, msg }).await.unwrap();
+            tx.send(GroupCommand::Action { player, msg }).await.unwrap();
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         assert!(
             reg.get(&code).is_some(),
-            "player messages must not kill the room"
+            "player messages must not kill the group"
         );
         let mut saw_game_starting = false;
         while let Ok(Some(m)) = tokio::time::timeout(Duration::from_millis(50), out_rx.recv()).await

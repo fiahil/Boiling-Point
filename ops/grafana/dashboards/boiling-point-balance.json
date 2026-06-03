@@ -104,7 +104,7 @@
     {
       "id": 6,
       "type": "stat",
-      "title": "Active rooms",
+      "title": "Active groups",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
       "fieldConfig": { "defaults": { "unit": "short" } },
@@ -112,7 +112,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rooms_active"
+          "expr": "groups_active"
         }
       ]
     },

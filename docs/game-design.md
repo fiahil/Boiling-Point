@@ -605,18 +605,25 @@ healthy explosion rate before human playtesting).
 
 ---
 
-## 14. Rooms, Matchmaking, Reconnection (Reference)
+## 14. Groups, Matchmaking, Reconnection (Reference)
 
 Mostly per prior decisions; see [server-architecture.md](architecture/server-architecture.md).
 
-- **Rooms:** invite link to group up; **auto-start at exactly 4 players.** No
-  host, no settings, always 4 players. 5-minute idle timeout.
+- **Groups:** players **join a group** (by invite link) and then go on **games**
+  together; **auto-start at exactly 4 ready players.** No host, no settings,
+  always 4 players. A group **persists across games** — after a game it returns to
+  its lobby and the same table can **play again** (each seat opts in) without
+  re-queuing; it is reclaimed after a 5-minute idle timeout once empty/idle.
+- **Session connection:** a client connects once and keeps that connection across
+  games and groups — it can join a group, leave back to a menu, and join another
+  on the **same socket** (it is not torn down when a game or group ends).
 - **Matchmaking — in v1.** A queue that assembles 4-player tables by simple
   fill (next open table / FIFO), **not skill-based.** This works fine on
-  anonymous sessions — no rating needed. Invite-link rooms and the matchmaking
+  anonymous sessions — no rating needed. Invite-link groups and the matchmaking
   queue both ship at launch.
 - **Auth (v1):** anonymous session tokens (per the server doc) — no persistent
-  accounts.
+  accounts. The client persists its token and replays it so identity (and a held
+  seat) survives a socket drop.
 - **Deferred to v2:** player **rating** (FFA needs TrueSkill / Weng-Lin, not
   Elo), **persistent accounts**, and **skill-based matchmaking** that depends on
   them. See [roadmap.md](roadmap.md).

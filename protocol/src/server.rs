@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{EmoteId, PlayerId, RoomCode};
+use crate::ids::{EmoteId, GroupCode, PlayerId};
 use crate::vocab::{CardView, Color, HandCard, ModifierKind};
 
 /// Public, per-player lobby/table information (never includes hand contents).
@@ -74,8 +74,8 @@ pub enum ScoringOutcome {
 pub enum ErrorCode {
     /// The client's protocol version is unsupported.
     VersionMismatch,
-    /// The invite code maps to no active room.
-    UnknownRoom,
+    /// The invite code maps to no active group.
+    UnknownGroup,
     /// The committed card is not in the player's hand.
     NotYourCard,
     /// The action is illegal in the current phase.
@@ -93,14 +93,18 @@ pub enum ErrorCode {
 #[serde(tag = "type")]
 pub enum ServerMessage {
     /// Confirms a join and conveys the joining player's identity and the table. (private)
-    RoomJoined {
-        /// The room's invite code.
-        room_code: RoomCode,
+    GroupJoined {
+        /// The group's invite code.
+        group_code: GroupCode,
         /// The joining player's id.
         your_player_id: PlayerId,
         /// The joining player's assigned colour.
         your_color: Color,
-        /// Everyone currently in the room.
+        /// The connection's session token. The client persists this and replays it
+        /// (as `session_token`) on future entry messages so its identity — and a
+        /// held seat — survives a socket drop.
+        session_token: String,
+        /// Everyone currently in the group.
         players: Vec<PlayerPublic>,
     },
     /// The game is starting. (broadcast)
@@ -229,8 +233,8 @@ pub enum ServerMessage {
     /// Deliberately omits secrets: no boiling point, no other players' hands, no
     /// face-down cauldron card identities.
     StateSnapshot {
-        /// The room's invite code.
-        room_code: RoomCode,
+        /// The group's invite code.
+        group_code: GroupCode,
         /// The recipient's id.
         your_player_id: PlayerId,
         /// Current 1-based round number.
@@ -252,6 +256,9 @@ pub enum ServerMessage {
         /// The players tied for the lead who are contesting the tiebreaker.
         participants: Vec<PlayerId>,
     },
+    /// Acknowledges a `LeaveGroup`: the seat is freed and the connection is now in
+    /// the unbound menu state, ready for another entry message. (private)
+    LeftGroup,
     /// Liveness acknowledgement. (private)
     Heartbeat,
 }
@@ -261,7 +268,7 @@ pub enum ServerMessage {
 pub enum Audience {
     /// Delivered only to one player's connection.
     Private(PlayerId),
-    /// Delivered to every connection in the room.
+    /// Delivered to every connection in the group.
     Broadcast,
 }
 
@@ -285,8 +292,9 @@ impl ServerMessage {
                 | ServerMessage::PeekResult { .. }
                 | ServerMessage::Error { .. }
                 | ServerMessage::Heartbeat
-                | ServerMessage::RoomJoined { .. }
+                | ServerMessage::GroupJoined { .. }
                 | ServerMessage::StateSnapshot { .. }
+                | ServerMessage::LeftGroup
         )
     }
 
@@ -298,7 +306,7 @@ impl ServerMessage {
         }
     }
 
-    /// Address this message to the whole room.
+    /// Address this message to the whole group.
     pub fn broadcast(self) -> Outbound {
         debug_assert!(
             !self.is_private_only(),

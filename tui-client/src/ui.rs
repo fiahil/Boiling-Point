@@ -163,7 +163,7 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
     ])
     .areas(area);
 
-    let code = app.vm.room_code.clone().unwrap_or_else(|| "…".into());
+    let code = app.vm.group_code.clone().unwrap_or_else(|| "…".into());
     let status = match app.phase {
         Phase::Queue => "assembling a table…".to_string(),
         Phase::Connecting => "connecting…".to_string(),
@@ -526,7 +526,7 @@ fn banner(frame: &mut Frame, area: Rect) {
 fn header(frame: &mut Frame, area: Rect, app: &App, right: &str) {
     // Keep the group invite code visible through every in-game phase (the lobby
     // screen, where it otherwise lived, is gone the moment play begins).
-    let code = app.vm.room_code.clone().unwrap_or_else(|| "…".into());
+    let code = app.vm.group_code.clone().unwrap_or_else(|| "…".into());
     let left = format!(
         " Group {}   Round {}/{}   {}",
         code,
