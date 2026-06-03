@@ -67,6 +67,16 @@ fn playing_cauldron_is_opaque() {
 }
 
 #[test]
+fn group_code_visible_during_play() {
+    // Regression: the invite code must stay on screen through gameplay (in the
+    // persistent header), not vanish with the lobby the instant the table fills.
+    let app = reach_playing();
+    let s = screen(&app);
+    assert_has(&s, "Group");
+    assert_has(&s, "BREW-7K3F");
+}
+
+#[test]
 fn depile_safe_hides_boiling_point() {
     let mut app = reach_playing();
     app.on_server(&fixtures::depile_safe());
@@ -165,6 +175,17 @@ fn reconnect_overlay_renders() {
     let s = screen(&app);
     assert_has(&s, "reconnecting");
     assert_has(&s, "auto-pass");
+}
+
+#[test]
+fn reconnect_overlay_hidden_on_entry_menu() {
+    // Regression: a dropped socket on the pre-game menu must not strand the
+    // player behind the reconnect overlay — the overlay is for seated tables.
+    let mut app = App::new(); // Entry phase, no table joined
+    app.set_reconnecting(42_000);
+    let s = screen(&app);
+    assert_lacks(&s, "reconnecting");
+    assert_has(&s, "How do you want to play?");
 }
 
 #[test]

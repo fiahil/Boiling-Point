@@ -28,7 +28,8 @@ fn lifecycle_hook_sees_info_spans_even_when_rust_log_is_warn() {
     unsafe {
         std::env::set_var("RUST_LOG", "warn");
     }
-    observability::init("127.0.0.1:0".parse().expect("metrics addr"));
+    // `None` log level → fall back to `RUST_LOG` (set to `warn` above).
+    observability::init("127.0.0.1:0".parse().expect("metrics addr"), None);
 
     let cap = Arc::new(Capture::default());
     observability::lifecycle::register_consumer(cap.clone());

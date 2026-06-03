@@ -34,12 +34,21 @@ static PROVIDER: OnceLock<opentelemetry_sdk::trace::SdkTracerProvider> = OnceLoc
 
 /// Initialise logging, the OTEL span bridge, the lifecycle hook, and Prometheus.
 /// Call once at startup. Never fails on a missing trace backend.
-pub fn init(metrics_addr: SocketAddr) {
+///
+/// `log_level`, when `Some`, sets the JSON-log verbosity (e.g. `"info"`,
+/// `"debug"`, `"boiling_point_server=debug,info"`) and takes precedence over the
+/// `RUST_LOG` environment variable; when `None` the level falls back to `RUST_LOG`
+/// and then to `info`. Invalid directives are ignored (lossy parse) rather than
+/// aborting startup.
+pub fn init(metrics_addr: SocketAddr, log_level: Option<&str>) {
     use tracing_subscriber::Layer as _;
     use tracing_subscriber::filter::LevelFilter;
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let env_filter = match log_level {
+        Some(level) => tracing_subscriber::EnvFilter::new(level),
+        None => tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+    };
 
     // The OTEL layer is present only when an OTLP endpoint is configured; an
     // `Option<Layer>` is itself a `Layer` (a no-op when `None`).

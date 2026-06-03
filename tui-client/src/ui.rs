@@ -59,7 +59,13 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
     if app.emote_open {
         emote_palette(frame, area);
     }
-    if !matches!(app.conn, Conn::Connected) {
+    // The reconnect/abandoned overlay only makes sense once seated at a table;
+    // on the pre-game menu a dropped socket must not strand the player behind it.
+    let seated = matches!(
+        app.phase,
+        Phase::Lobby | Phase::RoundStart | Phase::Playing | Phase::Depile | Phase::Scoring
+    );
+    if seated && !matches!(app.conn, Conn::Connected) {
         reconnect_overlay(frame, area, app);
     }
     toasts(frame, area, app);
@@ -92,7 +98,7 @@ fn entry(frame: &mut Frame, area: Rect, app: &App) {
 
     let items = [
         ("Quick match", "drop into the queue; the table fills to 4"),
-        ("Create a room", "get an invite code to share"),
+        ("Create a group", "get an invite code to share"),
         ("Join with a code", "enter a friend's BREW-XXXX"),
     ];
     let mut lines = vec![
@@ -145,7 +151,7 @@ fn join_code(frame: &mut Frame, area: Rect, app: &App) {
                 .add_modifier(Modifier::BOLD),
         )),
     ];
-    frame.render_widget(Paragraph::new(lines).block(bordered("Join a room")), body);
+    frame.render_widget(Paragraph::new(lines).block(bordered("Join a group")), body);
     hint(frame, foot, "type code   ↵ join   Esc back");
 }
 
@@ -165,12 +171,12 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
     };
     let head_lines = vec![
         Line::from(Span::styled(
-            format!("Room {code}"),
+            format!("Group {code}"),
             Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(status, Style::default().fg(Color::Cyan))),
         Line::from(Span::styled(
-            format!("invite code: {code}    [c] copy"),
+            format!("invite code: {code}"),
             Style::default().fg(Color::DarkGray),
         )),
     ];
@@ -207,7 +213,7 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
         Style::default().fg(Color::DarkGray),
     )));
     frame.render_widget(Paragraph::new(lines).block(bordered("Seats")), body);
-    hint(frame, foot, "c copy invite   Ctrl-C quit");
+    hint(frame, foot, "Ctrl-C quit");
 }
 
 // ---- round screens -------------------------------------------------------
@@ -518,8 +524,12 @@ fn banner(frame: &mut Frame, area: Rect) {
 }
 
 fn header(frame: &mut Frame, area: Rect, app: &App, right: &str) {
+    // Keep the group invite code visible through every in-game phase (the lobby
+    // screen, where it otherwise lived, is gone the moment play begins).
+    let code = app.vm.room_code.clone().unwrap_or_else(|| "…".into());
     let left = format!(
-        " Round {}/{}   {}",
+        " Group {}   Round {}/{}   {}",
+        code,
         app.vm.round_number.max(1),
         app.vm.round_count.max(1),
         right
@@ -916,7 +926,8 @@ fn toasts(frame: &mut Frame, area: Rect, app: &App) {
     let n = app.toasts.len().min(3) as u16;
     let r = Rect {
         x: area.x + 1,
-        y: area.bottom().saturating_sub(n + 1),
+        // Sit clear above the two-row footer hint so it stays readable.
+        y: area.bottom().saturating_sub(n + 2),
         width: area.width.saturating_sub(2),
         height: n,
     };
@@ -926,9 +937,13 @@ fn toasts(frame: &mut Frame, area: Rect, app: &App) {
         .rev()
         .take(3)
         .map(|t| {
+            // An explicit light fg keeps the dark toast legible on light
+            // terminals, where the default foreground would be near-black.
             Line::from(Span::styled(
                 format!(" {} ", t.text),
-                Style::default().bg(Color::Rgb(40, 40, 55)),
+                Style::default()
+                    .fg(Color::Rgb(235, 235, 245))
+                    .bg(Color::Rgb(40, 40, 55)),
             ))
         })
         .collect();

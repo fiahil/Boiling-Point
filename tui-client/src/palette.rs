@@ -1,7 +1,7 @@
 //! Player-colour palette.
 //!
 //! Every colour is shown with a distinct **emoji glyph** as well as its colour,
-//! so a player is identifiable by *shape* (diamond / heart / circle / square /
+//! so a player is identifiable by *shape* (triangle / heart / circle / square /
 //! lion) and not by colour alone — keeping the table legible for colour-blind
 //! players and on terminals that downsample colours (research R4). The glyphs
 //! double as the player's icon throughout the UI. Truecolor values are used
@@ -15,7 +15,7 @@ use ratatui::style::Color;
 /// shape so colour is never the sole signal.
 pub(crate) fn glyph(c: Wire) -> &'static str {
     match c {
-        Wire::Ruby => "♦️",
+        Wire::Ruby => "🔻",
         Wire::Sapphire => "💙",
         Wire::Emerald => "🟢",
         Wire::Amethyst => "🟪",

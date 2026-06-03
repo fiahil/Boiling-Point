@@ -1,3 +1,5 @@
+> **Archived 2026-06-02 as shipped.** The harness is implemented and live-tested; the sole trailing item (7.6, a manual developer playtest) is left unchecked intentionally and tracked as ongoing playtesting rather than incomplete delivery.
+
 ## 1. Package Setup
 
 - [x] 1.1 Create the `agent-harness/` Node package (TypeScript, outside the cargo workspace) with `@anthropic-ai/claude-agent-sdk`, `zod`, and `ws`

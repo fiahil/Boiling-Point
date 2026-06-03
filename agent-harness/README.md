@@ -2,8 +2,11 @@
 
 A tunable, persona-driven Claude opponent that fills seats so Boiling Point can be
 playtested by one person. It connects over the **same public WebSocket protocol a real
-client uses** (`protocol/`) and receives only player-permitted information. See
-`openspec/changes/agent-player-harness/` for the proposal, research, specs, and design.
+client uses** (`protocol/`) and receives only player-permitted information. See the
+shipped proposal/research/specs/design in
+`openspec/changes/archive/2026-06-02-agent-player-harness/`, the review in
+[`docs/reviews/agent-harness-review.md`](../docs/reviews/agent-harness-review.md), and
+the project [docs hub](../docs/).
 
 This is a **TypeScript/Node package** (not a cargo crate) so it can use the **Claude Agent
 SDK** and bill against a Claude subscription — see design D1/D2.

@@ -10,7 +10,6 @@ pub mod app;
 pub mod fixtures;
 pub mod replay;
 
-mod clipboard;
 mod net;
 mod palette;
 mod term;
@@ -26,6 +25,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use boiling_point_protocol::{ClientMessage, ServerMessage};
+use clap::Parser;
 use crossterm::event::{Event, EventStream};
 use futures_util::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -37,6 +37,9 @@ use std::io::Stdout;
 const TICK_MS: u32 = 33;
 /// Spacing between scripted messages in replay/mock modes.
 const FEED_MS: u64 = 700;
+/// Server WebSocket URL used when no transport flag is given. Connecting to a
+/// live server is the default; `--mock` selects the offline demo instead.
+const DEFAULT_SERVER_URL: &str = "ws://127.0.0.1:8080/ws";
 
 /// Where the client gets its server messages from.
 enum Mode {
@@ -48,42 +51,68 @@ enum Mode {
     Mock,
 }
 
-/// Parsed command-line options.
+/// Command-line options for the terminal client.
+#[derive(Debug, Parser)]
+#[command(
+    name = "boiling-point-tui",
+    version,
+    about = "Boiling Point terminal client — an untrusted renderer over the wire protocol."
+)]
+struct Cli {
+    /// Connect to a live server at this WebSocket URL. Connecting is the default
+    /// transport; this flag only overrides the URL (default ws://127.0.0.1:8080/ws).
+    #[arg(long, value_name = "URL", conflicts_with = "replay")]
+    connect: Option<String>,
+    /// Replay a recorded JSON-lines server-message stream instead of connecting.
+    #[arg(long, value_name = "PATH")]
+    replay: Option<PathBuf>,
+    /// Drive an in-process scripted demo game with no server or network, instead
+    /// of connecting to the live server.
+    #[arg(long, conflicts_with_all = ["connect", "replay"])]
+    mock: bool,
+    /// Record incoming server messages to this file (JSON lines).
+    #[arg(long, value_name = "PATH")]
+    record: Option<PathBuf>,
+    /// Display name to use at the table.
+    #[arg(long, value_name = "NAME")]
+    name: Option<String>,
+    /// On connect, immediately enter the matchmaking queue, skipping the entry
+    /// menu. Intended for scripted launches (see scripts/playtest.sh).
+    #[arg(long, requires = "connect")]
+    enqueue: bool,
+}
+
+/// Parsed command-line options, resolved into a single transport [`Mode`].
 struct Options {
     mode: Mode,
     record: Option<PathBuf>,
     name: Option<String>,
+    /// Auto-enter the matchmaking queue on connect (scripted launch).
+    enqueue: bool,
 }
 
 impl Options {
     fn from_args() -> Options {
-        let mut mode = Mode::Mock;
-        let mut record = None;
-        let mut name = None;
-        let mut args = std::env::args().skip(1);
-        while let Some(a) = args.next() {
-            match a.as_str() {
-                "--connect" => {
-                    if let Some(u) = args.next() {
-                        mode = Mode::Connect(u);
-                    }
-                }
-                "--replay" => {
-                    if let Some(p) = args.next() {
-                        mode = Mode::Replay(p.into());
-                    }
-                }
-                "--mock" => mode = Mode::Mock,
-                "--record" => {
-                    if let Some(p) = args.next() {
-                        record = Some(p.into());
-                    }
-                }
-                "--name" => name = args.next(),
-                _ => {}
-            }
+        let cli = Cli::parse();
+        // Connecting to the live server is the default. `--mock` selects the
+        // offline demo, `--replay` plays back a recorded stream, and `--connect`
+        // overrides the server URL.
+        let mode = if cli.mock {
+            Mode::Mock
+        } else if let Some(path) = cli.replay {
+            Mode::Replay(path)
+        } else {
+            Mode::Connect(
+                cli.connect
+                    .unwrap_or_else(|| DEFAULT_SERVER_URL.to_string()),
+            )
+        };
+        Options {
+            mode,
+            record: cli.record,
+            name: cli.name,
+            enqueue: cli.enqueue,
         }
-        Options { mode, record, name }
     }
 }
 
@@ -116,12 +145,29 @@ async fn async_main(opts: Options) -> Result<(), Box<dyn Error>> {
 
     let (server_rx, intent_tx, connect_mode) = match opts.mode {
         Mode::Connect(url) => {
-            let (rx, tx) = net::connect(&url).await?;
+            let (rx, tx) = net::connect(&url).await.map_err(|e| {
+                format!(
+                    "could not connect to {url}: {e}\n\
+                     Is the server running? Start it with `cargo run -p boiling-point-server`, \
+                     or pass --mock for the offline demo."
+                )
+            })?;
             (rx, Some(tx), true)
         }
         Mode::Replay(path) => (spawn_feeder(replay::load(&path)?), None, false),
         Mode::Mock => (spawn_feeder(fixtures::demo_game()), None, false),
     };
+
+    // Scripted launch: enter the matchmaking queue immediately on connect, so a
+    // launcher can table the player with bots without any menu interaction.
+    if opts.enqueue
+        && let Some(tx) = intent_tx.as_ref()
+    {
+        for intent in app.auto_enqueue() {
+            app.log_outgoing(&intent);
+            let _ = tx.send(intent).await;
+        }
+    }
 
     let record_file = match opts.record {
         Some(p) => Some(File::create(p)?),

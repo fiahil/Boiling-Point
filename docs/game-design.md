@@ -1,8 +1,8 @@
 # Boiling Point — Game Design (Final)
 
 This is the **canonical game design** for Boiling Point. It supersedes the
-brainstorming documents ([v1](brainstorming/game-design-initial.md),
-[v2](brainstorming/game-design-v2.md)), which are retained as a historical
+brainstorming documents ([v1](architecture/game-design-initial.md),
+[v2](architecture/game-design-v2.md)), which are retained as a historical
 record of how these decisions were reached.
 
 Per the [constitution](../CLAUDE.md), every game mechanic, scoring value,
@@ -607,7 +607,7 @@ healthy explosion rate before human playtesting).
 
 ## 14. Rooms, Matchmaking, Reconnection (Reference)
 
-Mostly per prior decisions; see [server-architecture.md](brainstorming/server-architecture.md).
+Mostly per prior decisions; see [server-architecture.md](architecture/server-architecture.md).
 
 - **Rooms:** invite link to group up; **auto-start at exactly 4 players.** No
   host, no settings, always 4 players. 5-minute idle timeout.
@@ -619,7 +619,7 @@ Mostly per prior decisions; see [server-architecture.md](brainstorming/server-ar
   accounts.
 - **Deferred to v2:** player **rating** (FFA needs TrueSkill / Weng-Lin, not
   Elo), **persistent accounts**, and **skill-based matchmaking** that depends on
-  them. See [v2-roadmap.md](v2-roadmap.md).
+  them. See [roadmap.md](roadmap.md).
 - **Reconnection:** 60-second grace; a disconnected player **auto-passes (locked
   out)** each wave; full state snapshot on rejoin (only what they're allowed to
   know).
@@ -632,7 +632,7 @@ Mostly per prior decisions; see [server-architecture.md](brainstorming/server-ar
 dangerous workshop, not a dusty library. Dark brass/iron base; player colors
 (Ruby, Sapphire, Emerald, Amethyst) pop dramatically. Card readability priority:
 **Volatility > Color > Points > Effect.** See
-[v1 art direction](brainstorming/game-design-initial.md#conceptual-art-direction)
+[v1 art direction](architecture/game-design-initial.md#conceptual-art-direction)
 for the full treatment.
 
 **Key update for the final design:** with cues removed, **the cauldron has no
@@ -696,6 +696,6 @@ Conscious "not yet" decisions — out of scope **on purpose**, not by oversight.
 | **Cauldron-modifier expansions** | The 6 modifiers are the launch set. Add more once the stacking system is validated by playtesting. |
 
 Platform/post-launch deferrals (player rating, persistent accounts, skill-based
-matchmaking) live in [v2-roadmap.md](v2-roadmap.md). Free-text chat (§10) and
+matchmaking) live in [roadmap.md](roadmap.md). Free-text chat (§10) and
 3-player support (§2) are noted as out of v1 scope but aren't committed to a
 later version.

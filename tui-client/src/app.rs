@@ -156,6 +156,22 @@ impl App {
         self.name_input = name;
     }
 
+    /// Build the matchmaking-queue entry intent for a scripted (non-interactive)
+    /// launch, advancing past the entry menu exactly as choosing "auto-match"
+    /// would. Uses the pre-filled display name, falling back to a generic label.
+    pub fn auto_enqueue(&mut self) -> Vec<ClientMessage> {
+        let name = match self.name_input.trim() {
+            "" => "Player".to_string(),
+            n => n.to_string(),
+        };
+        self.phase = Phase::Queue;
+        vec![ClientMessage::EnqueueMatch {
+            protocol_version: PROTOCOL_VERSION,
+            display_name: name,
+            session_token: None,
+        }]
+    }
+
     /// The protocol version this client speaks.
     pub fn protocol_version(&self) -> u16 {
         PROTOCOL_VERSION
@@ -328,6 +344,13 @@ impl App {
             self.debug = !self.debug;
             return vec![];
         }
+        // Once the seat is abandoned there is nothing to play; any key returns to
+        // the entry menu (which also clears the connection state) rather than
+        // leaving the player stranded behind the overlay.
+        if matches!(self.conn, Conn::Abandoned) {
+            self.reset_for_new_game();
+            return vec![];
+        }
         // A Recall picker, when open, captures input.
         if self.recall.is_some() {
             return self.key_recall(key.code);
@@ -335,7 +358,8 @@ impl App {
         match self.phase {
             Phase::Entry => self.key_entry(key.code),
             Phase::JoinCode => self.key_joincode(key.code),
-            Phase::Connecting | Phase::Queue | Phase::Lobby => self.key_lobby(key.code),
+            // Lobby/queue/connecting: nothing to do but wait for the table to fill.
+            Phase::Connecting | Phase::Queue | Phase::Lobby => vec![],
             Phase::RoundStart => vec![],
             Phase::Playing => self.key_playing(key.code),
             Phase::Depile => self.key_depile(key.code),
@@ -428,18 +452,6 @@ impl App {
             }
             _ => vec![],
         }
-    }
-
-    fn key_lobby(&mut self, code: KeyCode) -> Vec<ClientMessage> {
-        if code == KeyCode::Char('c')
-            && let Some(rc) = self.vm.room_code.clone()
-        {
-            match crate::clipboard::copy(&rc) {
-                Ok(()) => self.toast("invite code copied"),
-                Err(_) => self.toast("copy unavailable in this terminal"),
-            }
-        }
-        vec![]
     }
 
     fn key_playing(&mut self, code: KeyCode) -> Vec<ClientMessage> {
@@ -587,6 +599,7 @@ impl App {
     fn reset_for_new_game(&mut self) {
         self.vm = ViewModel::default();
         self.phase = Phase::Entry;
+        self.conn = Conn::Connected;
         self.committed = Selection::None;
         self.locked_in = false;
         self.countdown_ms = None;

@@ -19,6 +19,8 @@ path = "src/main.rs"
 [dependencies]
 # The wire protocol — the only contract a bot is allowed to see (D2 secret boundary).
 boiling-point-protocol = { path = "../protocol" }
+# Command-line parsing for the batch-runner CLI.
+clap = { workspace = true }
 # The authoritative engine, consumed only through its in-process game-driver handle
 # (`session::run_game`) and the WebSocket transport — never through its internals.
 boiling-point-server = { path = "../server" }
