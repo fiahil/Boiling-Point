@@ -18,5 +18,6 @@ pub mod game;
 pub mod lobby;
 pub mod observability;
 pub mod persistence;
+pub mod replay;
 pub mod session;
 pub mod transport;

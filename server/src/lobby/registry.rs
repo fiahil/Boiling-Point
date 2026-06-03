@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 
 use boiling_point_protocol::RoomCode;
@@ -95,11 +96,15 @@ impl ContentSelector {
 pub struct RoomRegistry {
     rooms: DashMap<RoomCode, mpsc::Sender<RoomCommand>>,
     content: ArcSwap<Content>,
+    /// Optional persistence pool, threaded into every spawned room for the
+    /// post-game completion write. `None` ⇒ persistence is disabled.
+    pool: Option<PgPool>,
 }
 
 impl RoomRegistry {
     /// Create an empty registry sharing `registry`/`config` with every room it
     /// spawns; the emote palette is derived from the config's enabled emotes.
+    /// Persistence is off by default — attach a pool with [`with_pool`](Self::with_pool).
     pub fn new(registry: Arc<ContentRegistry>, config: Arc<ContentConfig>) -> Self {
         let palette = Arc::new(
             config
@@ -116,7 +121,15 @@ impl RoomRegistry {
                 registry,
                 palette,
             }),
+            pool: None,
         }
+    }
+
+    /// Attach the persistence pool threaded into every room this registry spawns
+    /// for the post-game write. `None` leaves persistence disabled.
+    pub fn with_pool(mut self, pool: Option<PgPool>) -> Self {
+        self.pool = pool;
+        self
     }
 
     /// Create a fresh room with a unique invite code; returns the code and its
@@ -134,6 +147,7 @@ impl RoomRegistry {
                     content.registry.clone(),
                     content.config.clone(),
                     content.palette.clone(),
+                    self.pool.clone(),
                 );
                 self.rooms.insert(code.clone(), handle.tx.clone());
                 crate::observability::metric::room_created();

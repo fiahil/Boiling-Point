@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 
 use boiling_point_protocol::server::{ErrorCode, PlayerPublic};
@@ -76,13 +77,15 @@ struct Seat {
     out: mpsc::Sender<ServerMessage>,
 }
 
-/// Spawn a room task and return a handle to it.
+/// Spawn a room task and return a handle to it. `pool` is the optional
+/// persistence pool, threaded to the game loop for the post-game write.
 pub fn spawn(
     code: RoomCode,
     rooms: Arc<RoomRegistry>,
     registry: Arc<ContentRegistry>,
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
+    pool: Option<PgPool>,
 ) -> RoomHandle {
     let (tx, rx) = mpsc::channel(64);
     tokio::spawn(run(
@@ -92,6 +95,7 @@ pub fn spawn(
         registry,
         config,
         emote_palette,
+        pool,
     ));
     RoomHandle { code, tx }
 }
@@ -129,6 +133,7 @@ async fn start_game(
     registry: &Arc<ContentRegistry>,
     config: &Arc<ContentConfig>,
     emote_palette: &Arc<HashSet<u16>>,
+    pool: Option<&PgPool>,
 ) {
     broadcast(
         seats,
@@ -156,6 +161,7 @@ async fn start_game(
         rx,
         emote_palette.as_ref(),
         seed,
+        pool,
     )
     .await;
 }
@@ -172,6 +178,7 @@ async fn run(
     registry: Arc<ContentRegistry>,
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
+    pool: Option<PgPool>,
 ) {
     let mut seats: Vec<Seat> = Vec::new();
 
@@ -228,7 +235,16 @@ async fn run(
 
                 if seats.len() == TABLE_SIZE {
                     // Drive the whole game over the wire, then end the room.
-                    start_game(&code, &seats, &mut rx, &registry, &config, &emote_palette).await;
+                    start_game(
+                        &code,
+                        &seats,
+                        &mut rx,
+                        &registry,
+                        &config,
+                        &emote_palette,
+                        pool.as_ref(),
+                    )
+                    .await;
                     break;
                 }
             }
@@ -277,7 +293,16 @@ async fn run(
             },
             RoomCommand::ForceStart => {
                 if !seats.is_empty() {
-                    start_game(&code, &seats, &mut rx, &registry, &config, &emote_palette).await;
+                    start_game(
+                        &code,
+                        &seats,
+                        &mut rx,
+                        &registry,
+                        &config,
+                        &emote_palette,
+                        pool.as_ref(),
+                    )
+                    .await;
                     break;
                 }
             }

@@ -44,6 +44,11 @@ struct Cli {
     /// Idle/grace timeout for a player connection, in seconds.
     #[arg(long, value_name = "SECS", default_value_t = 90)]
     conn_timeout_secs: u64,
+    /// PostgreSQL connection URL enabling post-game persistence (results +
+    /// replays). When unset, the server runs normally and persists nothing —
+    /// persistence is optional infrastructure, not a precondition for play.
+    #[arg(long, value_name = "URL", env = "DATABASE_URL")]
+    database_url: Option<String>,
 }
 
 #[tokio::main]
@@ -100,7 +105,37 @@ async fn main() {
     };
     let config = Arc::new(config);
 
-    let rooms = Arc::new(RoomRegistry::new(registry, config));
+    // Optional persistence: when a database URL is configured, connect a pool
+    // and apply pending migrations before accepting connections. Its absence
+    // disables persistence cleanly (logged once here); a configured-but-
+    // unreachable database is an operator error and aborts startup (fail fast,
+    // matching the content-config gate).
+    let pool = match &cli.database_url {
+        Some(url) => {
+            let pool = match boiling_point_server::persistence::connect(url).await {
+                Ok(pool) => pool,
+                Err(e) => {
+                    eprintln!("failed to connect to database: {e}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(e) = boiling_point_server::persistence::run_migrations(&pool).await {
+                eprintln!("failed to run database migrations: {e}");
+                std::process::exit(1);
+            }
+            tracing::info!("persistence enabled; migrations applied before serving");
+            Some(pool)
+        }
+        None => {
+            tracing::info!(
+                "no database configured (set --database-url / DATABASE_URL); \
+                 persistence disabled — games still play normally"
+            );
+            None
+        }
+    };
+
+    let rooms = Arc::new(RoomRegistry::new(registry, config).with_pool(pool.clone()));
     let queue = Arc::new(MatchQueue::new(rooms.clone()));
 
     // Admin surface: served on an isolated port, distinct from the player wire.
@@ -138,6 +173,7 @@ async fn main() {
         rooms,
         queue,
         conn_timeout: Duration::from_secs(cli.conn_timeout_secs),
+        pool,
     };
 
     let addr = cli.ws_addr;
