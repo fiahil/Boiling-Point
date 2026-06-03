@@ -262,4 +262,18 @@ mod tests {
         assert!(ServerMessage::PeekResult { boiling_point: 1 }.is_private_only());
         assert!(!ServerMessage::SomeonePeeked.is_private_only());
     }
+
+    /// The secret-routing rail must be load-bearing: broadcasting a private-only
+    /// message trips the `is_private_only()` debug-assert (debug builds), so a
+    /// future edit that broadcasts a hand/peek/error fails loudly in tests.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "private-only")]
+    fn broadcasting_a_private_message_trips_the_guard() {
+        let _ = ServerMessage::Error {
+            code: ErrorCode::Internal,
+            message: "boom".into(),
+        }
+        .broadcast();
+    }
 }

@@ -12,9 +12,12 @@ bot-harness, tui-client; 2 ignored tests require a live PostgreSQL). Balance
 numbers tagged **[needs playtesting]** match the game design's convention — they
 are hypotheses, not settled values.
 
-> **Re-review status (2026-06-02).** Every finding below still stands; their
-> dispositions are now tracked as OpenSpec changes rather than loose advice:
-> - **F1, F2, F3, F5** → folded into the **`review-remediation`** change.
+> **Re-review status (2026-06-02; updated 2026-06-03).** Findings are tracked as
+> OpenSpec changes rather than loose advice:
+> - **F1, F3, F5 → resolved** by the **`review-remediation`** change (landed
+>   2026-06-03); **F2 → partially addressed** (async-path determinism/stress coverage
+>   added; full loop convergence deferred to a follow-up). See each finding's Status
+>   note below.
 > - **F4 (persistence not wired)** is **superseded** by the **`persistence-and-replays`**
 >   change. That change replaces the "just wire the existing module" remedy with a
 >   reworked design (match results + timeless replays + runtime wiring); do **not**
@@ -241,6 +244,14 @@ routing type with `is_private_only()` and a `broadcast()` debug-assert that
 
 ### F1 — Invalid in-wave actions are silently dropped, not error-replied *(compliance, medium)*
 
+> **Status (resolved 2026-06-03 by `review-remediation`).** `collect_wave` now replies
+> with the existing error codes instead of dropping: `NotYourCard` (a card not in hand),
+> `LockedOut` (a commit/pass/lock-in from a passed/locked-out player), `InvalidEmote`
+> (an off-palette emote — resolving the lobby-vs-wave inconsistency the same way the
+> lobby does), and `WrongPhase` (an entry message mid-game). Each carries only the
+> reason — never pot/volatility/boiling-point — and applies no state change. Unit tests
+> (`session::tests`) assert each code and that game state is unchanged.
+
 Constitution §I: *"Invalid actions receive an error response with no state
 change."* In `collect_wave`, the match arms for `CommitCard`, `CommitPass`,
 `LockIn`, and `Emote` are all guarded; anything that fails a guard — a card not
@@ -264,6 +275,21 @@ is benign there.)
 
 ### F2 — The async loop reimplements orchestration the tested engine already has *(robustness, medium)*
 
+> **Status (partially addressed 2026-06-03 by `review-remediation`).** The shipping
+> (async) `run_game` now carries its own determinism + no-panic stress coverage in
+> `session::tests` (`async_path_is_deterministic_for_a_fixed_seed`,
+> `async_path_completes_across_many_seeds_without_panicking`), giving the path that
+> actually ships parity with the sync runner's determinism/stress guarantees. **Full
+> convergence onto a single orchestration core** (a network-backed `Decider` driving
+> `Game`) is **deferred to the follow-up `converge-game-loops` change** — it is the
+> riskiest edit (it touches the live loop), and the `review-remediation` design's Open
+> Question + Risk plan explicitly sanction shipping the async-path-tests fallback and
+> splitting convergence out. The drift this finding warns about is also now documented
+> concretely (and is task 1.x of the follow-up): the two
+> paths derive RNG seeds differently (`seed` vs `seed ^ 0xBEEF_F00D`; deathmatch
+> `^0xD3A7_4A7C` vs `^0xD3A7`) and the async path doesn't surface Recall'd cards to the
+> client — both to be reconciled when the loops are unified.
+
 There are **two implementations of the round/wave/scoring/deathmatch flow**:
 `game/runner.rs` (`Game::play_out`, synchronous) and `session.rs::run_game`
 (async). They share the low-level pieces (`Round`, `resolve_wave`, `score_safe`,
@@ -281,6 +307,15 @@ shared core (e.g. drive `Game` via a network-backed `Decider`, surfacing the
 broadcasts it needs), or at minimum add engine-level tests over the async path.
 
 ### F3 — The secret-routing safety rail is unused; no end-to-end no-leak assertion *(robustness / coverage, medium)*
+
+> **Status (resolved 2026-06-03 by `review-remediation`).** Every server→client send in
+> `run_game` now routes through a single `dispatch` egress that constructs an
+> `Outbound` via `ServerMessage::broadcast`/`.to(..)`, so the `is_private_only()`
+> debug-assert guards every broadcast (a protocol `#[should_panic]` test confirms it
+> fires). A new end-to-end test (`transport::tests::full_game_broadcasts_never_leak_secrets`)
+> plays a full four-player game and scans every frame each client receives, asserting the
+> boiling point appears only in a private `PeekResult` or an exploded `Depile` — and that
+> a safe-brew `Depile` hides it.
 
 The server sends `ServerMessage` directly down per-connection channels using
 hand-written `broadcast(&players, …)` / `send_to(&players, id, …)` helpers
@@ -319,6 +354,12 @@ also need a `to_game_result`-equivalent (it currently tracks neither
 mistaken for working.
 
 ### F5 — Minor notes *(low)*
+
+> **Status (resolved 2026-06-03 by `review-remediation`).** The four invariant
+> `unwrap()`s are now `expect("invariant: …")` (hand refill, deathmatch shed) or
+> `entry().or_insert(0)` (score accumulation), and the "fixed 7-step order" doc nit in
+> `resolve.rs` now reads "fixed 6-category order". The logging-level sub-item was already
+> resolved (`--log-level`, see the re-review banner above).
 
 - **Production `unwrap()` in the async loop.** `hands.get_mut(id).unwrap()`
   (`session.rs:145`), `*scores.get_mut(player).unwrap()` (`session.rs:304,325`),
@@ -368,7 +409,7 @@ ones, #2 is the most visible functionality gap.
 
 | Principle | Verdict | Evidence | Deviation |
 |---|---|---|---|
-| **I. Server-Authoritative** | Strong | Full state (deck, hands, boiling point) is server-only; `CardId` is opaque and commits are validated against the hand (`session.rs:462-464`); all RNG server-side; secret boundary tested (`protocol/src/lib.rs:204-248`). | **F1**: invalid in-wave actions get no error response (the "no state change" half holds). |
+| **I. Server-Authoritative** | Strong | Full state (deck, hands, boiling point) is server-only; `CardId` is opaque and commits are validated against the hand (`session.rs:462-464`); all RNG server-side; secret boundary tested (`protocol/src/lib.rs:204-248`) and now routed through `Outbound` end-to-end (**F3**). | **F1 closed (2026-06-03):** invalid in-wave actions now receive an error response (`NotYourCard`/`LockedOut`/`InvalidEmote`/`WrongPhase`) with no state change. |
 | **II. Agent-Driven Development** | Strong (with a gap) | Sync engine is fully agent-testable via `Decider`/`DeathmatchDecider` traits (`runner.rs:60-69`, `deathmatch.rs:35-44`), deterministic seeds, 300-game stress test; `protocol` is a clean narrow waist for bots. | **Closed (2026-06-02):** the protocol bot harness (`bot-harness/`) and terminal client (`tui-client/`) are now workspace crates, and the Claude-as-player harness ships in `agent-harness/`. |
 | **III. Start Simple, Scale Later** | Strong | Single binary; anonymous token auth; invite codes + simple 4-player matchmaking; embedded config; one fixed game mode; persistence is post-game-only by design. | Persistence seam built but not connected (**F4**) — start-simple, but record it. |
 | **IV. Playtest-Driven Balance** | Strong (with a gap) | Every tunable is externalised to `content.toml` and tagged **[needs playtesting]** in code (`content/effect.rs:60-62`, `content/modifier.rs:36-41`); `round_explosions_total` tracks the 30–40 % target. | **Closed (2026-06-02):** the `bot-harness/` seeded batch runner now runs thousands of games for at-scale balance validation. |

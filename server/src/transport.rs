@@ -562,6 +562,106 @@ mod tests {
         assert!(ok, "remaining players reached GameOver after one abandoned");
     }
 
+    /// Like `play_loop`, but records every frame the client receives so the whole
+    /// game's stream can be scanned for leaked secrets.
+    async fn play_and_capture(ws: &mut Ws) -> Vec<ServerMessage> {
+        let mut hand: Vec<boiling_point_protocol::CardId> = Vec::new();
+        let mut idx = 0usize;
+        let mut frames = Vec::new();
+        loop {
+            let Some(msg) = recv_opt(ws).await else {
+                return frames;
+            };
+            frames.push(msg.clone());
+            match msg {
+                ServerMessage::YourHand { cards } => {
+                    hand = cards.iter().map(|c| c.id).collect();
+                    idx = 0;
+                }
+                ServerMessage::WaveOpened { .. } => {
+                    if idx < hand.len() {
+                        send(ws, &ClientMessage::CommitCard { card: hand[idx] }).await;
+                        idx += 1;
+                    } else {
+                        send(ws, &ClientMessage::CommitPass).await;
+                    }
+                }
+                ServerMessage::GameOver { .. } => return frames,
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn full_game_broadcasts_never_leak_secrets() {
+        let url = start_server().await;
+
+        // Player 1 creates the room; players 2–4 join; the fourth join starts it.
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
+                break room_code;
+            }
+        };
+        let mut joiners = Vec::new();
+        for i in 2..=4 {
+            let url = url.clone();
+            let code = code.clone();
+            joiners.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(&format!("p{i}"), code)).await;
+                while !matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {}
+                play_and_capture(&mut ws).await
+            }));
+        }
+        let creator = tokio::spawn(async move { play_and_capture(&mut ws1).await });
+
+        let all_frames: Vec<Vec<ServerMessage>> =
+            tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                let mut v = vec![creator.await.unwrap()];
+                for j in joiners {
+                    v.push(j.await.unwrap());
+                }
+                v
+            })
+            .await
+            .expect("game completed before timeout");
+
+        // Scan every frame any client received. The boiling point may appear ONLY
+        // in a private `PeekResult` or an exploded `Depile`; no broadcast carries a
+        // secret. (Opponents' hands and the deck have no wire field at all, so they
+        // cannot be broadcast by construction — see `protocol::server`.)
+        let mut saw_game_over = false;
+        for frames in &all_frames {
+            for msg in frames {
+                match msg {
+                    ServerMessage::PeekResult { .. } => {} // legitimate private disclosure
+                    ServerMessage::Depile {
+                        exploded,
+                        boiling_point,
+                        ..
+                    } => {
+                        assert_eq!(
+                            boiling_point.is_some(),
+                            *exploded,
+                            "boiling point disclosed on a safe brew: {msg:?}"
+                        );
+                    }
+                    ServerMessage::GameOver { .. } => saw_game_over = true,
+                    other => {
+                        let json = codec::encode_json(other).unwrap();
+                        assert!(
+                            !json.contains("boiling_point"),
+                            "a secret leaked in a broadcast frame: {json}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(saw_game_over, "the game reached GameOver");
+    }
+
     #[tokio::test]
     async fn four_clients_play_a_full_game_to_game_over() {
         let url = start_server().await;
