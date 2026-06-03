@@ -1,0 +1,1001 @@
+<!doctype html>
+<!--
+  Boiling Point — UI EXPLORATION SKETCH (not the shipping client)
+  ────────────────────────────────────────────────────────────────────────────
+  A throwaway HTML/SVG mockup to explore a richer "Arcane Punk Alchemy" look for
+  the game client: readable cards, effect/modifier tooltips, and atmosphere that
+  carries NO information (the cauldron is blind by design — game-design.md §4/§15).
+  Open in a browser. Nothing here ships; the real client is the Rust TUI.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Boiling Point — UI exploration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Grenze+Gotisch:wght@400;600;800;900&family=Spectral:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Spectral+SC:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --iron:#15110c; --iron2:#1d1812; --iron3:#27201a; --iron4:#322820;
+  --brass:#c69749; --brass-dim:#8a6a2f; --brass-lt:#ecd39a;
+  --copper:#b66a35; --ember:#ef8b2a; --ember-hot:#ff5a1f;
+  --steam:#8fd4cf; --ink:#0b0907;
+  --ruby:#e24158; --sapphire:#4a86ef; --emerald:#3ccb7f; --amethyst:#bd74e6; --wild:#cfc7ba;
+  --paper:#ece0c8; --muted:#9b8d77; --line:rgba(198,151,73,.22);
+  --shadow:0 18px 40px rgba(0,0,0,.55);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:
+    radial-gradient(120% 80% at 50% 118%, rgba(239,139,42,.20), transparent 55%),
+    radial-gradient(90% 60% at 50% -10%, rgba(143,212,207,.06), transparent 60%),
+    linear-gradient(180deg,#0d0b08,#15110c 40%,#100d09);
+  color:var(--paper);
+  font-family:"Spectral",Georgia,serif;
+  min-height:100%;
+  overflow-x:hidden;
+}
+/* grain overlay */
+body::after{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:999;opacity:.05;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+/* vignette */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:998;
+  box-shadow:inset 0 0 240px 40px rgba(0,0,0,.7);}
+
+h1,h2,h3,.disp{font-family:"Grenze Gotisch",serif;font-weight:800;letter-spacing:.02em;margin:0}
+.sc{font-family:"Spectral SC","Spectral",serif;text-transform:uppercase;letter-spacing:.18em}
+
+/* ── shell ─────────────────────────────────────────────── */
+.wrap{max-width:1180px;margin:0 auto;padding:26px 22px 80px}
+.brandbar{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;
+  border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:18px}
+.brand .title{font-size:40px;line-height:.9;color:var(--brass-lt);
+  text-shadow:0 0 22px rgba(239,139,42,.35),0 2px 0 #000}
+.brand .title b{color:var(--ember)}
+.brand .sub{color:var(--muted);font-style:italic;font-size:14px;margin-top:4px}
+.flask{font-size:13px;color:var(--brass);text-align:right;line-height:1.5}
+.flask .sc{font-size:11px;color:var(--muted)}
+
+/* tabs */
+.tabs{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 24px}
+.tab{appearance:none;cursor:pointer;font-family:"Spectral SC",serif;letter-spacing:.12em;
+  text-transform:uppercase;font-size:12px;color:var(--brass);
+  background:linear-gradient(180deg,var(--iron3),var(--iron2));
+  border:1px solid var(--line);border-radius:8px;padding:9px 14px;transition:.18s}
+.tab:hover{color:var(--brass-lt);border-color:var(--brass-dim);transform:translateY(-1px)}
+.tab.on{color:var(--ink);background:linear-gradient(180deg,var(--brass-lt),var(--brass));
+  border-color:var(--brass-lt);box-shadow:0 0 18px rgba(239,139,42,.35)}
+
+/* scenes */
+.scene{display:none;animation:fade .5s ease both}
+.scene.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+.scene-head{display:flex;align-items:baseline;gap:14px;margin-bottom:16px}
+.scene-head h2{font-size:26px;color:var(--brass-lt)}
+.scene-head p{margin:0;color:var(--muted);font-size:14px;max-width:60ch}
+
+.panel{background:
+   linear-gradient(180deg,rgba(39,32,26,.85),rgba(21,17,12,.9));
+  border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);position:relative}
+.panel::before{content:"";position:absolute;inset:0;border-radius:16px;pointer-events:none;
+  box-shadow:inset 0 1px 0 rgba(236,211,154,.12)}
+.note{font-size:13px;color:var(--muted);font-style:italic}
+.tag{display:inline-block;font-family:"Spectral SC",serif;text-transform:uppercase;letter-spacing:.12em;
+  font-size:10px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--brass)}
+.tag.physics{color:#9fd8ff;border-color:#3a597a}
+.tag.scoring{color:#ffd98a;border-color:#7a652f}
+.tag.wild{color:#e8a6ff;border-color:#7a4f8c}
+
+/* ── CARD ──────────────────────────────────────────────── */
+.card{
+  --c:var(--ruby);
+  position:relative;width:148px;height:208px;flex:0 0 auto;border-radius:14px;
+  background:
+    radial-gradient(120% 70% at 50% 0%, color-mix(in srgb,var(--c) 26%, #1a1510), #15110c 70%),
+    linear-gradient(180deg,#1c1712,#100c08);
+  border:1px solid color-mix(in srgb,var(--c) 45%, #000);
+  box-shadow:
+    0 0 0 1px rgba(0,0,0,.6),
+    inset 0 0 22px rgba(0,0,0,.6),
+    inset 0 0 0 4px color-mix(in srgb,var(--c) 22%, transparent),
+    var(--shadow);
+  padding:10px;cursor:pointer;transition:transform .22s cubic-bezier(.2,.7,.2,1),box-shadow .22s;
+  color:var(--paper);
+}
+.card:hover{transform:translateY(-14px) scale(1.04) rotate(0deg)!important;z-index:40;
+  box-shadow:0 26px 50px rgba(0,0,0,.6),0 0 26px color-mix(in srgb,var(--c) 55%, transparent),
+    inset 0 0 0 4px color-mix(in srgb,var(--c) 40%, transparent)}
+.card .corner{position:absolute;top:8px;left:9px;display:flex;flex-direction:column;align-items:center;gap:1px}
+.card .vol{font-family:"Grenze Gotisch",serif;font-weight:900;font-size:40px;line-height:.8;
+  color:#fff;text-shadow:0 0 14px var(--ember-hot),0 0 3px #000,0 2px 0 #000}
+.card .vol-lab{font-family:"Spectral SC",serif;font-size:8px;letter-spacing:.15em;color:var(--ember);text-transform:uppercase}
+.card .flames{position:absolute;top:8px;right:10px;display:flex;flex-direction:column;gap:2px}
+.card .flames i{font-style:normal;font-size:11px;filter:drop-shadow(0 0 5px var(--ember-hot))}
+.card .gem{position:absolute;top:0;left:50%;transform:translate(-50%,-46%);
+  width:24px;height:24px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%, #fff6, var(--c));
+  border:2px solid color-mix(in srgb,var(--c) 60%,#000);
+  box-shadow:0 0 14px var(--c),inset 0 -3px 6px rgba(0,0,0,.5)}
+.card .art{position:absolute;inset:46px 12px 58px;display:grid;place-items:center;
+  border-radius:10px;border:1px solid color-mix(in srgb,var(--c) 30%, #000);
+  background:
+    radial-gradient(80% 80% at 50% 40%, color-mix(in srgb,var(--c) 18%, transparent), transparent 70%),
+    repeating-linear-gradient(45deg,rgba(0,0,0,.18) 0 6px,transparent 6px 12px),#0e0b08;
+  overflow:hidden}
+.card .art svg{width:66px;height:66px;opacity:.85;filter:drop-shadow(0 0 8px color-mix(in srgb,var(--c) 70%,transparent))}
+.card .art .sigstroke{fill:none;stroke:color-mix(in srgb,var(--c) 85%, #fff 10%);stroke-width:4;stroke-linejoin:round}
+.card .badge{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);
+  width:42px;height:42px;border-radius:50%;display:grid;place-items:center;font-size:20px;
+  background:radial-gradient(circle at 35% 30%,#3a2f23,#120e0a);
+  border:1.5px solid var(--brass-dim);box-shadow:0 0 16px rgba(239,139,42,.35),inset 0 0 8px #000}
+.card .name{position:absolute;left:10px;right:10px;bottom:30px;text-align:center;
+  font-family:"Spectral SC",serif;letter-spacing:.06em;font-size:12px;color:var(--brass-lt);
+  text-shadow:0 1px 0 #000}
+.card .pts{position:absolute;bottom:8px;left:0;right:0;display:flex;justify-content:center;gap:5px}
+.card .pts .coin{width:13px;height:13px;border-radius:50%;
+  background:radial-gradient(circle at 35% 30%,#ffe9a8,#b8841f);
+  border:1px solid #6e4f12;box-shadow:0 0 6px rgba(255,200,90,.4)}
+.card .pts .coin.off{background:#241d15;border-color:#3a2f22;box-shadow:none}
+.card .ptlab{position:absolute;bottom:8px;right:10px;font-family:"Spectral SC",serif;font-size:9px;
+  letter-spacing:.12em;color:var(--muted)}
+.card[data-color="ruby"]{--c:var(--ruby)}
+.card[data-color="sapphire"]{--c:var(--sapphire)}
+.card[data-color="emerald"]{--c:var(--emerald)}
+.card[data-color="amethyst"]{--c:var(--amethyst)}
+.card[data-color="wild"]{--c:var(--wild)}
+.card.new::after{content:"✦ new";position:absolute;top:-9px;right:-6px;font-size:9px;
+  font-family:"Spectral SC",serif;letter-spacing:.1em;color:#1a140c;background:var(--brass-lt);
+  padding:2px 6px;border-radius:6px;box-shadow:0 0 10px rgba(239,139,42,.6)}
+.card.sel{transform:translateY(-10px);box-shadow:0 22px 44px rgba(0,0,0,.6),0 0 0 2px var(--brass-lt),0 0 24px rgba(239,139,42,.5)}
+.card.committed{box-shadow:0 22px 44px rgba(0,0,0,.6),0 0 0 2px var(--emerald),0 0 24px rgba(60,203,127,.5)}
+.card.committed .name::after{content:" · in pot";color:var(--emerald)}
+
+/* tooltip */
+.tip{position:absolute;left:50%;bottom:calc(100% + 14px);transform:translateX(-50%) translateY(8px);
+  width:248px;background:linear-gradient(180deg,#241d15,#15100b);
+  border:1px solid var(--brass-dim);border-radius:12px;padding:13px 14px;z-index:60;
+  box-shadow:0 18px 38px rgba(0,0,0,.6),0 0 0 1px rgba(0,0,0,.6);
+  opacity:0;pointer-events:none;transition:.2s}
+.tip::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);
+  border:8px solid transparent;border-top-color:var(--brass-dim)}
+.card:hover .tip,.chip-eff:hover .tip,.modchip:hover .tip,.codex-item:focus-within .tip,.codex-item:hover .tip{
+  opacity:1;transform:translateX(-50%) translateY(0)}
+.tip h4{font-family:"Grenze Gotisch",serif;font-size:20px;color:var(--brass-lt);display:flex;align-items:center;gap:8px}
+.tip h4 .ic{font-size:18px}
+.tip .stat{display:flex;gap:8px;margin:6px 0 8px}
+.tip .stat span{font-family:"Spectral SC",serif;font-size:10px;letter-spacing:.1em;
+  padding:2px 8px;border-radius:6px;border:1px solid var(--line);color:var(--brass)}
+.tip .stat .v{color:#ffae73;border-color:#7a4a2a}
+.tip p{margin:0;font-size:13px;line-height:1.45;color:#d9cbb0}
+.tip em{color:var(--ember);font-style:normal}
+
+/* anatomy callouts */
+.anatomy{display:flex;gap:48px;align-items:center;flex-wrap:wrap;padding:34px}
+.anatomy .stagecard{position:relative;transform:scale(1.5);margin:30px 60px}
+.callout{position:absolute;font-size:12px;color:var(--brass-lt);white-space:nowrap;font-family:"Spectral SC",serif;letter-spacing:.08em}
+.callout span{display:block;color:var(--muted);font-family:"Spectral",serif;letter-spacing:0;text-transform:none;font-size:11px;font-style:italic}
+.callout::before{content:"";position:absolute;background:var(--brass-dim);height:1px}
+.co-vol{top:6px;left:-118px;text-align:right}.co-vol::before{width:96px;right:-104px;top:8px}
+.co-col{top:-30px;left:50%;transform:translateX(-50%);text-align:center}.co-col::before{width:1px;height:18px;left:50%;top:20px}
+.co-eff{top:46%;right:-120px;transform:translateY(-50%)}.co-eff::before{width:104px;left:-110px;top:9px}
+.co-pts{bottom:-2px;left:-118px;text-align:right}.co-pts::before{width:96px;right:-104px;bottom:8px}
+.legend{max-width:300px}
+.legend h3{color:var(--brass-lt);font-size:24px;margin-bottom:6px}
+.legend ol{margin:10px 0 0;padding-left:18px;color:#d9cbb0;font-size:14px;line-height:1.7}
+.legend ol b{color:var(--paper)}
+.legend .pri{margin-top:14px;font-size:12px;color:var(--muted);font-style:italic}
+
+.hand-demo{display:flex;gap:14px;justify-content:center;padding:40px 20px 30px;flex-wrap:wrap}
+
+/* ── TABLE ─────────────────────────────────────────────── */
+.table{padding:0;overflow:hidden}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:12px 18px;border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg,rgba(39,32,26,.7),transparent)}
+.topbar .left{display:flex;align-items:center;gap:18px;font-size:13px;color:var(--muted)}
+.topbar .left b{color:var(--paper)}
+.topbar .code{font-family:"Spectral SC",serif;letter-spacing:.18em;color:var(--brass-lt);
+  border:1px solid var(--line);border-radius:7px;padding:4px 9px}
+.mods{display:flex;gap:8px}
+.modchip{position:relative;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:16px;
+  background:radial-gradient(circle at 35% 30%,#352a1f,#120e0a);border:1px solid var(--brass-dim);cursor:help}
+.modchip.new{box-shadow:0 0 14px rgba(239,139,42,.7);border-color:var(--brass-lt)}
+.modchip .tip{width:236px}
+
+.felt{position:relative;height:560px;
+  background:
+   radial-gradient(60% 50% at 50% 64%, rgba(239,139,42,.16), transparent 70%),
+   radial-gradient(120% 90% at 50% 120%, rgba(0,0,0,.5), transparent);
+}
+/* seats */
+.seat{position:absolute;width:188px;padding:10px 12px;border-radius:13px;
+  background:linear-gradient(180deg,rgba(39,32,26,.92),rgba(18,14,10,.92));
+  border:1px solid var(--line);box-shadow:var(--shadow)}
+.seat .who{display:flex;align-items:center;gap:9px}
+.seat .medallion{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;
+  border:2px solid color-mix(in srgb,var(--c) 60%,#000);
+  background:radial-gradient(circle at 35% 30%,#fff4,var(--c));box-shadow:0 0 12px var(--c)}
+.seat .medallion svg{width:16px;height:16px}.seat .medallion .sigstroke{fill:none;stroke:#0c0a07;stroke-width:6;stroke-linejoin:round}
+.seat .nm{font-family:"Spectral SC",serif;letter-spacing:.06em;font-size:13px;color:var(--paper)}
+.seat .sub{font-size:11px;color:var(--muted)}
+.seat .score{margin-left:auto;text-align:right}
+.seat .score b{font-family:"Grenze Gotisch",serif;font-size:22px;color:var(--brass-lt)}
+.seat .chips{display:flex;gap:3px;margin-top:8px;align-items:center;min-height:14px}
+.seat .chips i{width:9px;height:13px;border-radius:2px;background:var(--c);
+  box-shadow:0 0 6px color-mix(in srgb,var(--c) 70%,transparent);display:inline-block}
+.seat .chips .lab{font-size:10px;color:var(--muted);margin-left:6px;font-style:italic}
+.seat[data-color="sapphire"]{--c:var(--sapphire)} .seat[data-color="emerald"]{--c:var(--emerald)}
+.seat[data-color="amethyst"]{--c:var(--amethyst)} .seat[data-color="ruby"]{--c:var(--ruby)}
+.seat.s-top{top:14px;left:50%;transform:translateX(-50%)}
+.seat.s-left{top:150px;left:14px}
+.seat.s-right{top:150px;right:14px}
+.seat .emote{position:absolute;top:-14px;right:-10px;font-size:20px;
+  background:#15110c;border:1px solid var(--brass-dim);border-radius:50%;width:34px;height:34px;
+  display:grid;place-items:center;animation:pop 3s ease-in-out infinite}
+@keyframes pop{0%,80%,100%{transform:scale(0);opacity:0}10%,60%{transform:scale(1);opacity:1}}
+.seat .dim{opacity:.45}
+
+/* cauldron */
+.cauldron-wrap{position:absolute;left:50%;top:225px;transform:translateX(-50%);text-align:center;width:340px}
+.steamz{position:absolute;left:50%;top:-10px;transform:translateX(-50%);width:200px;height:120px;pointer-events:none}
+.steam{position:absolute;bottom:0;width:16px;height:16px;border-radius:50%;
+  background:radial-gradient(circle,var(--steam),transparent 70%);opacity:0;filter:blur(3px);
+  animation:steam 4.5s ease-in infinite}
+.steam:nth-child(1){left:30%;animation-delay:0s}
+.steam:nth-child(2){left:46%;animation-delay:1.1s;width:22px;height:22px}
+.steam:nth-child(3){left:60%;animation-delay:2.2s}
+.steam:nth-child(4){left:52%;animation-delay:3.1s;width:13px;height:13px}
+@keyframes steam{0%{transform:translateY(0) scale(.6);opacity:0}
+  20%{opacity:.5}100%{transform:translateY(-110px) scale(2.4);opacity:0}}
+.pot{position:relative;width:300px;height:150px;margin:0 auto}
+.brew{position:absolute;top:8px;left:50%;transform:translateX(-50%);width:230px;height:54px;border-radius:50%;
+  background:
+    radial-gradient(60% 80% at 50% 30%, #ffd27a, var(--ember) 40%, #7a2d12 90%);
+  box-shadow:0 0 40px rgba(239,139,42,.55),inset 0 -10px 20px rgba(0,0,0,.5),inset 0 6px 14px #ffd9a0;
+  overflow:hidden;animation:simmer 6s ease-in-out infinite}
+@keyframes simmer{0%,100%{filter:hue-rotate(0) brightness(1)}50%{filter:hue-rotate(-8deg) brightness(1.08)}}
+.bubble{position:absolute;bottom:6px;border-radius:50%;background:rgba(255,240,200,.85);
+  box-shadow:0 0 6px rgba(255,220,150,.8);animation:bub linear infinite}
+@keyframes bub{0%{transform:translateY(0) scale(.4);opacity:0}
+  20%{opacity:.9}80%{opacity:.7}100%{transform:translateY(-40px) scale(1.1);opacity:0}}
+.body{position:absolute;top:38px;left:50%;transform:translateX(-50%);width:240px;height:108px;
+  border-radius:0 0 120px 120px / 0 0 90px 90px;
+  background:linear-gradient(180deg,#3a3128,#1a140e 70%);
+  border:2px solid #51412c;box-shadow:inset 0 -16px 30px rgba(0,0,0,.7),inset 0 6px 10px rgba(236,211,154,.12),
+    0 24px 50px rgba(0,0,0,.6)}
+.body::before{content:"";position:absolute;top:18px;left:0;right:0;height:1px;background:repeating-linear-gradient(90deg,transparent 0 16px,#6e5836 16px 19px)}
+.rim{position:absolute;top:30px;left:50%;transform:translateX(-50%);width:258px;height:26px;border-radius:50%;
+  background:linear-gradient(180deg,#6e5836,#2a2118);border:2px solid #7a6240;
+  box-shadow:0 0 22px rgba(239,139,42,.3),inset 0 -3px 6px rgba(0,0,0,.6)}
+.glow{position:absolute;bottom:-26px;left:50%;transform:translateX(-50%);width:220px;height:40px;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(255,90,31,.55),transparent);filter:blur(5px);
+  animation:hearth 3.4s ease-in-out infinite}
+@keyframes hearth{0%,100%{opacity:.6;transform:translateX(-50%) scale(1)}50%{opacity:1;transform:translateX(-50%) scale(1.08)}}
+.cauldron-cap{margin-top:6px;font-family:"Spectral SC",serif;letter-spacing:.14em;font-size:12px;color:var(--steam)}
+.cauldron-meta{font-size:13px;color:var(--muted);margin-top:2px}
+.cauldron-meta b{color:var(--paper)}
+.hidden-tag{display:inline-block;margin-top:4px;font-size:11px;color:#caa15c;border:1px dashed var(--brass-dim);
+  border-radius:999px;padding:2px 10px;font-style:italic}
+/* floating contribution chips around the pot */
+.float{position:absolute;width:11px;height:15px;border-radius:2px;opacity:.9}
+.float.r{background:var(--ruby);box-shadow:0 0 8px var(--ruby)}
+.float.s{background:var(--sapphire);box-shadow:0 0 8px var(--sapphire)}
+.float.e{background:var(--emerald);box-shadow:0 0 8px var(--emerald)}
+.float.a{background:var(--amethyst);box-shadow:0 0 8px var(--amethyst)}
+
+/* my dock */
+.dock{position:relative;display:flex;align-items:flex-end;justify-content:space-between;gap:18px;
+  padding:14px 22px 20px;border-top:1px solid var(--line);
+  background:linear-gradient(0deg,rgba(39,32,26,.8),transparent)}
+.me{display:flex;align-items:center;gap:12px}
+.me .medallion{width:42px;height:42px;--c:var(--ruby)}
+.me .medallion svg{width:22px;height:22px}.me .medallion .sigstroke{fill:none;stroke:#0c0a07;stroke-width:6}
+.me .nm{font-family:"Spectral SC",serif;font-size:15px;color:var(--paper)}
+.me .st{font-size:12px;color:var(--muted)}
+.me .st b{color:var(--emerald)}
+.hand{display:flex;justify-content:center;align-items:flex-end;padding-bottom:2px}
+.hand .card{margin:0 -14px;transform-origin:bottom center}
+.hand .card:nth-child(1){transform:rotate(-9deg) translateY(8px)}
+.hand .card:nth-child(2){transform:rotate(-4deg) translateY(2px)}
+.hand .card:nth-child(3){transform:rotate(0deg)}
+.hand .card:nth-child(4){transform:rotate(4deg) translateY(2px)}
+.hand .card:nth-child(5){transform:rotate(9deg) translateY(8px)}
+.controls{display:flex;flex-direction:column;align-items:flex-end;gap:10px}
+.timer{position:relative;width:62px;height:62px}
+.timer svg{transform:rotate(-90deg)}
+.timer .track{fill:none;stroke:rgba(255,255,255,.08);stroke-width:6}
+.timer .run{fill:none;stroke:var(--ember);stroke-width:6;stroke-linecap:round;
+  stroke-dasharray:170;stroke-dashoffset:0;animation:count 10s linear infinite;
+  filter:drop-shadow(0 0 6px var(--ember-hot))}
+@keyframes count{from{stroke-dashoffset:0}to{stroke-dashoffset:170}}
+.timer .num{position:absolute;inset:0;display:grid;place-items:center;
+  font-family:"Grenze Gotisch",serif;font-size:22px;color:var(--brass-lt)}
+.btns{display:flex;gap:8px}
+.btn{font-family:"Spectral SC",serif;letter-spacing:.1em;text-transform:uppercase;font-size:11px;cursor:pointer;
+  padding:9px 14px;border-radius:9px;border:1px solid var(--brass-dim);color:var(--brass-lt);
+  background:linear-gradient(180deg,var(--iron3),var(--iron2));transition:.16s}
+.btn:hover{transform:translateY(-1px);border-color:var(--brass-lt);box-shadow:0 0 14px rgba(239,139,42,.3)}
+.btn.go{color:var(--ink);background:linear-gradient(180deg,var(--brass-lt),var(--brass));border-color:var(--brass-lt)}
+.btn.ghost{color:var(--muted)}
+
+/* ── DEPILE ────────────────────────────────────────────── */
+.depile-stage{padding:26px 22px 34px}
+.vol-rail{position:relative;height:54px;margin:6px 0 26px;border-radius:10px;
+  background:linear-gradient(180deg,#1a140e,#100c08);border:1px solid var(--line);overflow:hidden}
+.vol-fill{position:absolute;left:0;top:0;bottom:0;width:78%;
+  background:linear-gradient(90deg,#7a3d12,var(--ember) 70%,#ffce7a);
+  box-shadow:0 0 24px rgba(239,139,42,.5)}
+.vol-rail .thresh{position:absolute;top:-4px;bottom:-4px;width:2px;left:71%;background:var(--ruby);box-shadow:0 0 10px var(--ruby)}
+.vol-rail .thresh::after{content:"boiling point · 9";position:absolute;top:-2px;left:8px;font-size:11px;
+  font-family:"Spectral SC",serif;letter-spacing:.08em;color:#ffb3bd;white-space:nowrap}
+.vol-rail .val{position:absolute;right:12px;top:50%;transform:translateY(-50%);
+  font-family:"Grenze Gotisch",serif;font-size:26px;color:#fff;text-shadow:0 0 10px var(--ember-hot)}
+.reveal-row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;padding-top:6px}
+.rcard{position:relative;width:128px;perspective:900px}
+.rcard .inner{position:relative;width:100%;height:180px;transform-style:preserve-3d;transform:rotateY(180deg)}
+.depile.run .rcard .inner{animation:flip .6s cubic-bezier(.2,.7,.2,1) forwards;animation-delay:calc(var(--i)*.55s)}
+@keyframes flip{to{transform:rotateY(0)}}
+.rcard .face,.rcard .back{position:absolute;inset:0;backface-visibility:hidden;border-radius:12px}
+.rcard .back{background:
+   repeating-linear-gradient(45deg,#1a140e 0 8px,#221a11 8px 16px);
+  border:1px solid var(--brass-dim);display:grid;place-items:center;color:var(--brass-dim);font-size:30px}
+.rcard .face{transform:rotateY(180deg)}
+.rcard .owner{position:absolute;left:0;right:0;bottom:-22px;text-align:center;font-size:11px;
+  font-family:"Spectral SC",serif;letter-spacing:.06em;color:var(--muted);opacity:0}
+.depile.run .rcard .owner{animation:fade .4s forwards;animation-delay:calc(var(--i)*.55s + .3s)}
+.rcard .run-vol{position:absolute;top:-20px;left:0;right:0;text-align:center;font-size:12px;color:var(--ember);opacity:0}
+.depile.run .rcard .run-vol{animation:fade .4s forwards;animation-delay:calc(var(--i)*.55s + .3s)}
+.rcard.crossed .face{box-shadow:0 0 0 2px var(--ruby),0 0 26px rgba(226,65,88,.6)}
+.rcard.crossed::before{content:"⚡ crossed here";position:absolute;top:-40px;left:50%;transform:translateX(-50%);
+  white-space:nowrap;font-family:"Spectral SC",serif;font-size:11px;color:#ff7d8c;opacity:0}
+.depile.run .rcard.crossed::before{animation:fade .4s forwards;animation-delay:calc(var(--i)*.55s + .3s)}
+.crack{position:absolute;inset:0;pointer-events:none;opacity:0}
+.depile.run .rcard.crossed .crack{animation:fade .3s forwards;animation-delay:calc(var(--i)*.55s + .35s)}
+.traitor{position:absolute;top:6px;right:6px;font-size:14px}
+.depile-foot{margin-top:34px;color:var(--muted);font-size:13px;font-style:italic}
+
+/* ── BOOM ──────────────────────────────────────────────── */
+.boom-stage{position:relative;height:520px;display:grid;place-items:center;overflow:hidden;
+  background:radial-gradient(60% 60% at 50% 50%,rgba(60,20,8,.6),transparent)}
+.boom.run .shaker{animation:shake .6s cubic-bezier(.36,.07,.19,.97)}
+@keyframes shake{10%{transform:translate(-4px,2px) rotate(-.5deg)}20%{transform:translate(5px,-3px)}
+  30%{transform:translate(-6px,1px) rotate(.5deg)}40%{transform:translate(4px,2px)}
+  50%{transform:translate(-3px,-2px)}60%{transform:translate(3px,1px)}70%{transform:translate(-2px,1px)}100%{transform:none}}
+.flash{position:absolute;left:50%;top:50%;width:40px;height:40px;border-radius:50%;transform:translate(-50%,-50%);
+  background:radial-gradient(circle,#fff,#ffd27a 30%,var(--ember-hot) 55%,transparent 70%);opacity:0}
+.boom.run .flash{animation:flash 1.4s ease-out forwards}
+@keyframes flash{0%{opacity:0;width:40px;height:40px}8%{opacity:1}
+  40%{opacity:.8;width:900px;height:900px}100%{opacity:0;width:1200px;height:1200px}}
+.ring{position:absolute;left:50%;top:50%;border-radius:50%;border:3px solid rgba(255,200,120,.6);
+  transform:translate(-50%,-50%);opacity:0}
+.boom.run .ring{animation:ring 1.2s ease-out forwards}
+@keyframes ring{0%{width:20px;height:20px;opacity:.9}100%{width:760px;height:760px;opacity:0}}
+.boom-core{position:relative;text-align:center;z-index:5}
+.boom-core .word{font-family:"Grenze Gotisch",serif;font-weight:900;font-size:120px;line-height:.85;
+  color:#fff;text-shadow:0 0 30px var(--ember-hot),0 0 8px #000;letter-spacing:.04em}
+.boom.run .boom-core .word{animation:thump .6s cubic-bezier(.2,.8,.2,1.2) both}
+@keyframes thump{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+.boom-core .sub{font-size:20px;color:#ffc59a;margin-top:8px;font-style:italic}
+.boom-core .loss{margin-top:18px;display:flex;gap:18px;justify-content:center}
+.boom-core .loss .l{background:rgba(20,15,10,.7);border:1px solid var(--line);border-radius:10px;padding:8px 14px}
+.boom-core .loss .l .nm{font-family:"Spectral SC",serif;font-size:12px;color:var(--paper)}
+.boom-core .loss .l .d{font-family:"Grenze Gotisch",serif;font-size:24px;color:var(--ruby)}
+.spark{position:absolute;width:4px;height:4px;border-radius:50%;background:#ffd27a;opacity:0}
+.boom.run .spark{animation:spark 1s ease-out forwards}
+@keyframes spark{0%{opacity:1;transform:translate(0,0) scale(1)}100%{opacity:0;transform:translate(var(--dx),var(--dy)) scale(.2)}}
+
+/* ── CODEX ─────────────────────────────────────────────── */
+.codex-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;padding:22px}
+.codex-sub{padding:6px 22px 0;color:var(--brass-lt);font-size:20px}
+.codex-item{position:relative;display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;
+  background:linear-gradient(180deg,rgba(39,32,26,.7),rgba(18,14,10,.7));border:1px solid var(--line);cursor:help}
+.codex-item:hover{border-color:var(--brass-dim);transform:translateY(-2px)}
+.codex-item .ic{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:20px;flex:0 0 auto;
+  background:radial-gradient(circle at 35% 30%,#352a1f,#120e0a);border:1px solid var(--brass-dim)}
+.codex-item .nm{font-family:"Spectral SC",serif;font-size:13px;color:var(--paper);letter-spacing:.04em}
+.codex-item .nm small{display:block;color:var(--muted);font-size:11px;letter-spacing:0;text-transform:none;font-style:italic}
+.codex-item .tip{width:250px;bottom:auto;top:calc(100% + 14px)}
+.codex-item .tip::after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:var(--brass-dim)}
+
+.foot{margin-top:30px;color:var(--muted);font-size:12px;text-align:center;font-style:italic;
+  border-top:1px solid var(--line);padding-top:16px}
+.kbd{font-family:"Spectral SC",serif;font-size:10px;border:1px solid var(--line);border-radius:5px;
+  padding:1px 6px;color:var(--brass)}
+
+/* ── PUSHED ANIMATION LAYER (how far DOM goes: rAF particles, SVG haze, glare) ── */
+.ember-layer{position:absolute;inset:0;overflow:hidden;pointer-events:none;z-index:6}
+.ember{position:absolute;top:0;left:0;border-radius:50%;will-change:transform,opacity;
+  background:radial-gradient(circle,#ffe6b0,rgba(239,139,42,0) 70%)}
+.card .glare{position:absolute;inset:0;border-radius:14px;pointer-events:none;z-index:24;opacity:0;
+  transition:opacity .25s;mix-blend-mode:screen;
+  background:radial-gradient(150px 150px at var(--gx,50%) var(--gy,50%),rgba(255,238,200,.4),transparent 60%)}
+.card:hover .glare{opacity:1}
+.brew.heat{filter:url(#heat)}
+@keyframes breathe{0%,100%{transform:scale(1.5)}50%{transform:scale(1.515) translateY(-3px)}}
+.anatomy .stagecard{animation:breathe 5s ease-in-out infinite}
+.ring2{position:absolute;left:50%;top:50%;border-radius:50%;border:2px solid rgba(255,170,100,.55);
+  transform:translate(-50%,-50%);opacity:0}
+.boom.run .ring2{animation:ring 1.4s ease-out forwards}
+.boom.run .ring2.d1{animation-delay:.16s}.boom.run .ring2.d2{animation-delay:.32s}
+.debris{position:absolute;left:50%;top:50%;width:8px;height:11px;border-radius:2px;will-change:transform,opacity;z-index:6}
+.cross-flash{position:absolute;inset:0;pointer-events:none;z-index:7;opacity:0;
+  background:radial-gradient(60% 70% at 71% 30%,rgba(255,120,60,.45),transparent 60%)}
+.cross-flash.go{animation:xflash .8s ease-out}
+@keyframes xflash{0%{opacity:0}14%{opacity:1}100%{opacity:0}}
+</style>
+</head>
+<body>
+<!-- alchemical element sigils, reused as <use> -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="sig-fire"  viewBox="0 0 100 100"><path class="sigstroke" d="M50 14 L86 84 L14 84 Z"/></symbol>
+    <symbol id="sig-water" viewBox="0 0 100 100"><path class="sigstroke" d="M50 86 L86 16 L14 16 Z"/></symbol>
+    <symbol id="sig-air"   viewBox="0 0 100 100"><path class="sigstroke" d="M50 14 L86 84 L14 84 Z"/><path class="sigstroke" d="M30 64 H70"/></symbol>
+    <symbol id="sig-earth" viewBox="0 0 100 100"><path class="sigstroke" d="M50 86 L86 16 L14 16 Z"/><path class="sigstroke" d="M30 40 H70"/></symbol>
+    <symbol id="sig-aether"viewBox="0 0 100 100"><circle class="sigstroke" cx="50" cy="50" r="34"/><circle class="sigstroke" cx="50" cy="50" r="10"/></symbol>
+    <!-- animated heat-haze: fractal noise drives a displacement map over the molten surface -->
+    <filter id="heat" x="-25%" y="-25%" width="150%" height="150%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.012 0.045" numOctaves="2" seed="7" result="noise">
+        <animate attributeName="baseFrequency" dur="7s" values="0.012 0.045;0.02 0.07;0.012 0.045" repeatCount="indefinite"/>
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+</svg>
+
+<div class="wrap">
+  <div class="brandbar">
+    <div class="brand">
+      <div class="title disp">B<b>OILING</b> POINT</div>
+      <div class="sub">an alchemical game of nerve — UI exploration</div>
+    </div>
+    <div class="flask">
+      <div class="sc">Art direction</div>
+      Arcane Punk Alchemy<br>
+      <span class="sc" style="color:var(--brass-dim)">brass · iron · ember · steam</span>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab on" data-scene="s-card">The Card</button>
+    <button class="tab" data-scene="s-table">The Table</button>
+    <button class="tab" data-scene="s-depile">The Depile</button>
+    <button class="tab" data-scene="s-boom">The Boom</button>
+    <button class="tab" data-scene="s-codex">Codex · tooltips</button>
+  </div>
+
+  <!-- ════════════ SCENE: CARD ════════════ -->
+  <section class="scene on" id="s-card">
+    <div class="scene-head">
+      <h2 class="disp">Anatomy of a card</h2>
+      <p>Three independent attributes + an optional effect. Readability priority (design §15): <b>Volatility&nbsp;›&nbsp;Color&nbsp;›&nbsp;Points&nbsp;›&nbsp;Effect</b>. Hover any card below for its effect tooltip.</p>
+    </div>
+
+    <div class="panel anatomy">
+      <div class="stagecard">
+        <div class="card" data-color="sapphire" style="cursor:default">
+          <span class="gem"></span>
+          <div class="corner"><span class="vol">2</span><span class="vol-lab">volatility</span></div>
+          <div class="flames"><i>🔥</i><i>🔥</i></div>
+          <div class="art"><svg><use href="#sig-water"/></svg></div>
+          <div class="badge" title="Peek">👁</div>
+          <div class="name">Peek</div>
+          <div class="pts"><span class="coin"></span><span class="coin off"></span><span class="coin off"></span></div>
+          <div class="ptlab">1 pt</div>
+        </div>
+        <div class="callout co-vol">Volatility<span>biggest, hottest — the risk</span></div>
+        <div class="callout co-col">Color &amp; gem<span>whose win it serves</span></div>
+        <div class="callout co-eff">Effect sigil<span>~1 in 4 cards</span></div>
+        <div class="callout co-pts">Points<span>what the pot is worth</span></div>
+      </div>
+
+      <div class="legend">
+        <h3 class="disp">Why this shape</h3>
+        <ol>
+          <li><b>Volatility</b> is the number that can kill the table, so it's the loudest mark — a big ember numeral, not a buried <code>v2</code>.</li>
+          <li><b>Color</b> reads at a glance from the metal frame + the gem, never from a hue alone (the alchemical sigil doubles the signal for color-blind play).</li>
+          <li><b>Points</b> sit as warm coins along the foot — secondary, countable.</li>
+          <li><b>Effect</b> is a sigil medallion with a name; the full rules live in the hover tooltip so the face stays clean.</li>
+        </ol>
+        <div class="pri">Compare today's TUI token: <span class="kbd">[💙 v2 p1 ◆]</span> — same data, one glyph for "has an effect," no room to explain what.</div>
+      </div>
+    </div>
+
+    <div class="scene-head" style="margin-top:26px">
+      <h2 class="disp">Your hand</h2>
+      <p>Refilled to five each round. <b>✦</b> marks a freshly drawn card. Hover to lift &amp; read; the third card is selected, the Recall is committed.</p>
+    </div>
+    <div class="panel hand-demo">
+      <!-- Ruby treasure -->
+      <div class="card" data-color="ruby">
+        <span class="gem"></span><div class="corner"><span class="vol">1</span><span class="vol-lab">vol</span></div>
+        <div class="flames"><i>🔥</i></div>
+        <div class="art"><svg><use href="#sig-fire"/></svg></div>
+        <div class="name">Ruby</div>
+        <div class="pts"><span class="coin"></span><span class="coin"></span><span class="coin off"></span></div><div class="ptlab">2 pt</div>
+        <div class="tip"><h4><span class="ic">🔻</span> Ruby ingredient</h4><div class="stat"><span class="v">vol 1</span><span>2 pts</span></div>
+          <p>Safe treasure — low risk, high reward. The card everyone wants to land in a brew that <em>doesn't</em> blow.</p></div>
+      </div>
+      <!-- Emerald surge (effect) new -->
+      <div class="card new" data-color="emerald">
+        <span class="gem"></span><div class="corner"><span class="vol">3</span><span class="vol-lab">vol</span></div>
+        <div class="flames"><i>🔥</i><i>🔥</i><i>🔥</i></div>
+        <div class="art"><svg><use href="#sig-earth"/></svg></div>
+        <div class="badge">⚡</div><div class="name">Volatile Surge</div>
+        <div class="pts"><span class="coin off"></span><span class="coin off"></span><span class="coin off"></span></div><div class="ptlab">0 pt</div>
+        <div class="tip"><h4><span class="ic">⚡</span> Volatile Surge</h4><div class="stat"><span class="v">vol 3 (+2)</span><span>0 pts</span></div>
+          <p>A weapon. Adds <em>+2</em> on top of its base 3 — five effective volatility — shoving the pot toward the boom.</p></div>
+      </div>
+      <!-- Recall committed -->
+      <div class="card committed sel" data-color="ruby">
+        <span class="gem"></span><div class="corner"><span class="vol">1</span><span class="vol-lab">vol</span></div>
+        <div class="flames"><i>🔥</i></div>
+        <div class="art"><svg><use href="#sig-fire"/></svg></div>
+        <div class="badge">🪝</div><div class="name">Recall</div>
+        <div class="pts"><span class="coin off"></span><span class="coin off"></span><span class="coin off"></span></div><div class="ptlab">0 pt</div>
+        <div class="tip"><h4><span class="ic">🪝</span> Recall</h4><div class="stat"><span class="v">vol 1</span><span>0 pts</span></div>
+          <p>Pull one of <em>your own</em> earlier cards out of the pot, back to hand. The Recall card itself stays. An undo button.</p></div>
+      </div>
+      <!-- Wild inflator -->
+      <div class="card" data-color="wild">
+        <span class="gem"></span><div class="corner"><span class="vol">1</span><span class="vol-lab">vol</span></div>
+        <div class="flames"><i>🔥</i></div>
+        <div class="art"><svg><use href="#sig-aether"/></svg></div>
+        <div class="name">Wild</div>
+        <div class="pts"><span class="coin"></span><span class="coin"></span><span class="coin"></span></div><div class="ptlab">3 pt</div>
+        <div class="tip"><h4><span class="ic">🦁</span> Wild ingredient</h4><div class="stat"><span class="v">vol 1</span><span>3 pts</span></div>
+          <p>Pot inflator. Fattens the pot for whoever wins it — and the boom for everyone — but helps <em>no</em> color dominate.</p></div>
+      </div>
+      <!-- Amethyst shield -->
+      <div class="card" data-color="amethyst">
+        <span class="gem"></span><div class="corner"><span class="vol">2</span><span class="vol-lab">vol</span></div>
+        <div class="flames"><i>🔥</i><i>🔥</i></div>
+        <div class="art"><svg><use href="#sig-air"/></svg></div>
+        <div class="badge">🛡</div><div class="name">Shield</div>
+        <div class="pts"><span class="coin off"></span><span class="coin off"></span><span class="coin off"></span></div><div class="ptlab">0 pt</div>
+        <div class="tip"><h4><span class="ic">🛡</span> Shield</h4><div class="stat"><span class="v">vol 2</span><span>0 pts</span></div>
+          <p>Take <em>no</em> explosion loss this round — but if the pot resolves safely you forfeit <em>all</em> your scoring. A bet that it blows.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ SCENE: TABLE ════════════ -->
+  <section class="scene" id="s-table">
+    <div class="scene-head">
+      <h2 class="disp">The table — mid-wave</h2>
+      <p>The cauldron is <b>opaque on purpose</b>: it bubbles and steams identically whether it's near-empty or one card from the edge. No gauge, no rumble — tension is <em>not knowing</em> (design §4). All real spectacle is saved for the depile.</p>
+    </div>
+
+    <div class="panel table">
+      <div class="topbar">
+        <div class="left">
+          <span class="code">BREW-7K3F</span>
+          <span>Round <b>4</b>/5</span>
+          <span>Wave <b>3</b></span>
+        </div>
+        <div class="mods">
+          <div class="modchip" tabindex="0">♨
+            <div class="tip"><h4><span class="ic">♨</span> Residue <span class="tag physics">physics</span></h4><p>The cauldron starts hotter — leftover heat from last round.</p></div>
+          </div>
+          <div class="modchip" tabindex="0">🧊
+            <div class="tip"><h4><span class="ic">🧊</span> Thin Ice <span class="tag physics">physics</span></h4><p>Boiling point <em>lower</em> — explosions far likelier. Every card is a dare.</p></div>
+          </div>
+          <div class="modchip new" tabindex="0">🌿
+            <div class="tip"><h4><span class="ic">🌿</span> Bountiful Brew <span class="tag scoring">scoring</span></h4><p>Every card adds to the pot's value (colorless) — fatter pots &amp; bigger booms. Doesn't shift who wins. <em>New this round.</em></p></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="felt">
+        <!-- opponents -->
+        <div class="seat s-top" data-color="sapphire">
+          <span class="emote">😈</span>
+          <div class="who">
+            <span class="medallion"><svg><use href="#sig-water"/></svg></span>
+            <div><div class="nm">Vael</div><div class="sub">leading</div></div>
+            <div class="score"><b>17</b></div>
+          </div>
+          <div class="chips"><i></i><i></i><i></i><span class="lab">3 in pot</span></div>
+        </div>
+
+        <div class="seat s-left" data-color="emerald">
+          <div class="who">
+            <span class="medallion"><svg><use href="#sig-earth"/></svg></span>
+            <div><div class="nm">Moss</div><div class="sub">deciding…</div></div>
+            <div class="score"><b>9</b></div>
+          </div>
+          <div class="chips"><i></i><span class="lab">1 in pot</span></div>
+        </div>
+
+        <div class="seat s-right dim" data-color="amethyst">
+          <div class="who">
+            <span class="medallion"><svg><use href="#sig-air"/></svg></span>
+            <div><div class="nm">Ix</div><div class="sub">passed — locked out</div></div>
+            <div class="score"><b>11</b></div>
+          </div>
+          <div class="chips"><i></i><i></i><span class="lab">2 in pot</span></div>
+        </div>
+
+        <!-- cauldron -->
+        <div class="cauldron-wrap">
+          <div class="steamz"><span class="steam"></span><span class="steam"></span><span class="steam"></span><span class="steam"></span></div>
+          <div class="pot">
+            <div class="rim"></div>
+            <div class="brew" id="brew"></div>
+            <div class="body"></div>
+            <div class="glow"></div>
+            <!-- floating contribution chips -->
+            <span class="float s" style="left:30px;top:60px"></span>
+            <span class="float s" style="left:250px;top:54px"></span>
+            <span class="float e" style="left:60px;top:96px"></span>
+            <span class="float a" style="right:34px;top:104px"></span>
+            <span class="float s" style="left:140px;top:120px"></span>
+            <span class="float a" style="left:200px;top:118px"></span>
+          </div>
+          <div class="cauldron-cap">~ ~ the cauldron ~ ~</div>
+          <div class="cauldron-meta"><b>6</b> cards simmering</div>
+          <div class="hidden-tag">volatility ?? / ?? — hidden</div>
+        </div>
+      </div>
+
+      <!-- my dock -->
+      <div class="dock">
+        <div class="me">
+          <span class="medallion" style="--c:var(--ruby)"><svg><use href="#sig-fire"/></svg></span>
+          <div>
+            <div class="nm">You · Ruby</div>
+            <div class="st">score <b>13</b> · <span style="color:var(--brass-lt)">choose a card or pass</span></div>
+          </div>
+        </div>
+
+        <div class="hand">
+          <div class="card" data-color="ruby"><span class="gem"></span><div class="corner"><span class="vol">2</span></div><div class="flames"><i>🔥</i><i>🔥</i></div><div class="art"><svg><use href="#sig-fire"/></svg></div><div class="name">Ruby</div><div class="pts"><span class="coin"></span><span class="coin off"></span><span class="coin off"></span></div>
+            <div class="tip"><h4><span class="ic">🔻</span> Ruby</h4><div class="stat"><span class="v">vol 2</span><span>1 pt</span></div><p>Your color. Pushes Ruby's claim on the pot.</p></div></div>
+          <div class="card" data-color="sapphire"><span class="gem"></span><div class="corner"><span class="vol">1</span></div><div class="flames"><i>🔥</i></div><div class="art"><svg><use href="#sig-water"/></svg></div><div class="badge">👁</div><div class="name">Peek</div><div class="pts"><span class="coin"></span><span class="coin off"></span><span class="coin off"></span></div>
+            <div class="tip"><h4><span class="ic">👁</span> Peek</h4><div class="stat"><span class="v">vol 2</span><span>1 pt</span></div><p>Privately learn the cauldron's exact boiling point. The table sees only <em>"someone peeked."</em> The one window into the blind pot.</p></div></div>
+          <div class="card sel" data-color="emerald"><span class="gem"></span><div class="corner"><span class="vol">1</span></div><div class="flames"><i>🔥</i></div><div class="art"><svg><use href="#sig-earth"/></svg></div><div class="badge">❄</div><div class="name">Dampen</div><div class="pts"><span class="coin off"></span><span class="coin off"></span><span class="coin off"></span></div>
+            <div class="tip"><h4><span class="ic">❄</span> Dampen</h4><div class="stat"><span class="v">vol 1</span><span>0 pts</span></div><p>Cools the brew: <em>−2</em> total volatility (net −1 after its own). A safety valve when you fear the edge.</p></div></div>
+          <div class="card" data-color="amethyst"><span class="gem"></span><div class="corner"><span class="vol">2</span></div><div class="flames"><i>🔥</i><i>🔥</i></div><div class="art"><svg><use href="#sig-air"/></svg></div><div class="badge">🎲</div><div class="name">Double Down</div><div class="pts"><span class="coin off"></span><span class="coin off"></span><span class="coin off"></span></div>
+            <div class="tip"><h4><span class="ic">🎲</span> Double Down</h4><div class="stat"><span class="v">vol 2</span><span>0 pts</span></div><p>Doubles the pot points of <em>its own color</em> from earlier waves. A massive dominance swing.</p></div></div>
+          <div class="card" data-color="wild"><span class="gem"></span><div class="corner"><span class="vol">1</span></div><div class="flames"><i>🔥</i></div><div class="art"><svg><use href="#sig-aether"/></svg></div><div class="name">Wild</div><div class="pts"><span class="coin"></span><span class="coin"></span><span class="coin"></span></div>
+            <div class="tip"><h4><span class="ic">🦁</span> Wild</h4><div class="stat"><span class="v">vol 1</span><span>3 pts</span></div><p>Fattens the pot for the winner (and the boom for all). Helps no color dominate.</p></div></div>
+        </div>
+
+        <div class="controls">
+          <div class="timer">
+            <svg width="62" height="62"><circle class="track" cx="31" cy="31" r="27"/><circle class="run" cx="31" cy="31" r="27"/></svg>
+            <div class="num">8</div>
+          </div>
+          <div class="btns">
+            <button class="btn go">Commit</button>
+            <button class="btn ghost">Pass</button>
+            <button class="btn">🔒 Lock-in</button>
+            <button class="btn">e&nbsp;Emote</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:12px">Note the discipline: the only honest numbers on screen are <b>your</b> score, the <b>card counts</b> each player put in, and the cards in <b>your</b> hand. The pot itself reveals nothing.</p>
+  </section>
+
+  <!-- ════════════ SCENE: DEPILE ════════════ -->
+  <section class="scene" id="s-depile">
+    <div class="scene-head">
+      <h2 class="disp">The depile — the reveal</h2>
+      <p>Where it finally pays off. Cards flip <b>last-played first</b>; the volatility tally climbs; on a boom the exact boiling point shows and the card that crossed it cracks. <button class="btn" onclick="replay('depile')" style="margin-left:6px">▶ Replay</button></p>
+    </div>
+
+    <div class="panel" style="padding:0">
+      <div class="depile-stage depile run" id="depile">
+        <div class="vol-rail">
+          <div class="vol-fill"></div>
+          <div class="thresh"></div>
+          <div class="val">10</div>
+        </div>
+
+        <div class="reveal-row">
+          <!-- last played first; the 4th crossed -->
+          <div class="rcard" style="--i:0">
+            <div class="run-vol">vol → 10 💥</div>
+            <div class="inner">
+              <div class="back">🜍</div>
+              <div class="face card" data-color="emerald" style="width:100%;height:100%;cursor:default">
+                <span class="gem"></span><div class="corner"><span class="vol">3</span></div><div class="flames"><i>🔥</i><i>🔥</i><i>🔥</i></div>
+                <div class="art"><svg><use href="#sig-earth"/></svg></div><div class="badge">⚡</div><div class="name">Surge</div>
+              </div>
+            </div>
+            <div class="owner">▣ Moss</div>
+          </div>
+
+          <div class="rcard crossed" style="--i:1">
+            <div class="run-vol">vol → 9</div>
+            <div class="crack"></div>
+            <div class="inner">
+              <div class="back">🜍</div>
+              <div class="face card" data-color="ruby" style="width:100%;height:100%;cursor:default">
+                <span class="gem"></span><div class="corner"><span class="vol">2</span></div><div class="flames"><i>🔥</i><i>🔥</i></div>
+                <span class="traitor" title="a Blue player played Red">🎭</span>
+                <div class="art"><svg><use href="#sig-fire"/></svg></div><div class="name">Ruby</div>
+              </div>
+            </div>
+            <div class="owner">◆ Vael <span style="color:#ff7d8c">— but Vael is Blue</span></div>
+          </div>
+
+          <div class="rcard" style="--i:2">
+            <div class="run-vol">vol → 7</div>
+            <div class="inner">
+              <div class="back">🜍</div>
+              <div class="face card" data-color="amethyst" style="width:100%;height:100%;cursor:default">
+                <span class="gem"></span><div class="corner"><span class="vol">2</span></div><div class="flames"><i>🔥</i><i>🔥</i></div>
+                <div class="art"><svg><use href="#sig-air"/></svg></div><div class="name">Amethyst</div>
+              </div>
+            </div>
+            <div class="owner">✦ Ix</div>
+          </div>
+
+          <div class="rcard" style="--i:3">
+            <div class="run-vol">vol → 5</div>
+            <div class="inner">
+              <div class="back">🜍</div>
+              <div class="face card" data-color="sapphire" style="width:100%;height:100%;cursor:default">
+                <span class="gem"></span><div class="corner"><span class="vol">3</span></div><div class="flames"><i>🔥</i><i>🔥</i><i>🔥</i></div>
+                <div class="art"><svg><use href="#sig-water"/></svg></div><div class="name">Sapphire</div>
+              </div>
+            </div>
+            <div class="owner">◆ Vael</div>
+          </div>
+
+          <div class="rcard" style="--i:4">
+            <div class="run-vol">vol → 2</div>
+            <div class="inner">
+              <div class="back">🜍</div>
+              <div class="face card" data-color="ruby" style="width:100%;height:100%;cursor:default">
+                <span class="gem"></span><div class="corner"><span class="vol">2</span></div><div class="flames"><i>🔥</i><i>🔥</i></div>
+                <div class="art"><svg><use href="#sig-fire"/></svg></div><div class="name">Ruby</div>
+              </div>
+            </div>
+            <div class="owner">▶ You</div>
+          </div>
+        </div>
+
+        <div class="depile-foot">You needed <b style="color:#ff7d8c">9</b> — the pot hit <b style="color:#ffce7a">10</b>. Moss's Surge tipped it over. <span style="color:var(--steam)">(On a safe brew the boiling point stays hidden — you only learn you survived.)</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════ SCENE: BOOM ════════════ -->
+  <section class="scene" id="s-boom">
+    <div class="scene-head">
+      <h2 class="disp">The boom</h2>
+      <p>The signature moment. The cauldron erupts and <b>everyone</b> at the table eats the loss — including the player who folded early. <button class="btn" onclick="replay('boom')" style="margin-left:6px">▶ Replay</button></p>
+    </div>
+
+    <div class="panel">
+      <div class="boom-stage boom run" id="boom">
+        <div class="flash"></div>
+        <div class="ring"></div>
+        <div class="shaker">
+          <div class="boom-core">
+            <div class="word disp">BOOM</div>
+            <div class="sub">the cauldron erupts — the pot was worth 14</div>
+            <div class="loss">
+              <div class="l"><div class="nm">You</div><div class="d">−14</div></div>
+              <div class="l"><div class="nm">Vael</div><div class="d">−14</div></div>
+              <div class="l"><div class="nm">Moss</div><div class="d">−14</div></div>
+              <div class="l"><div class="nm">Ix · 🛡 shielded</div><div class="d" style="color:var(--steam)">0</div></div>
+            </div>
+          </div>
+        </div>
+        <!-- sparks -->
+        <span class="spark" style="left:50%;top:50%;--dx:-220px;--dy:-120px"></span>
+        <span class="spark" style="left:50%;top:50%;--dx:200px;--dy:-160px"></span>
+        <span class="spark" style="left:50%;top:50%;--dx:-160px;--dy:140px"></span>
+        <span class="spark" style="left:50%;top:50%;--dx:240px;--dy:120px"></span>
+        <span class="spark" style="left:50%;top:50%;--dx:-260px;--dy:20px"></span>
+        <span class="spark" style="left:50%;top:50%;--dx:260px;--dy:-30px"></span>
+      </div>
+    </div>
+    <p class="note" style="margin-top:12px">Ix shielded — paid for it by forfeiting this round's scoring on the bet the pot would blow. It blew. The bet paid.</p>
+  </section>
+
+  <!-- ════════════ SCENE: CODEX ════════════ -->
+  <section class="scene" id="s-codex">
+    <div class="scene-head">
+      <h2 class="disp">Codex — hover anything</h2>
+      <p>The reference the current TUI can't really give you: every effect and modifier explained on hover. Effects show their volatility/points cost; modifiers state direction only (exact magnitudes are server-side balance, never shown — matching the client today).</p>
+    </div>
+
+    <div class="panel" style="padding-bottom:18px">
+      <div class="codex-sub disp">Special effects · ~1 in 4 cards</div>
+      <div class="codex-grid">
+        <div class="codex-item" tabindex="0"><div class="ic">👁</div><div class="nm">Peek<small>the only window</small></div>
+          <div class="tip"><h4><span class="ic">👁</span> Peek</h4><div class="stat"><span class="v">vol 2</span><span>1 pt</span></div><p>Privately learn the exact boiling point. Others see only <em>"someone peeked."</em></p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">❄</div><div class="nm">Dampen<small>safety play</small></div>
+          <div class="tip"><h4><span class="ic">❄</span> Dampen</h4><div class="stat"><span class="v">vol 1</span><span>0 pts</span></div><p>Cools the brew: <em>−2</em> total volatility (net −1 after its own).</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">⚡</div><div class="nm">Volatile Surge<small>a weapon</small></div>
+          <div class="tip"><h4><span class="ic">⚡</span> Volatile Surge</h4><div class="stat"><span class="v">vol 3 (+2)</span><span>0 pts</span></div><p>Adds <em>+2</em> over its base 3 — 5 effective — shoving the pot toward the boom.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🛡</div><div class="nm">Shield<small>a bet on the boom</small></div>
+          <div class="tip"><h4><span class="ic">🛡</span> Shield</h4><div class="stat"><span class="v">vol 2</span><span>0 pts</span></div><p>No explosion loss this round — but if it resolves safely you forfeit <em>all</em> your scoring. Rare.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🏮</div><div class="nm">Expose<small>info warfare</small></div>
+          <div class="tip"><h4><span class="ic">🏮</span> Expose</h4><div class="stat"><span class="v">vol 1</span><span>0 pts</span></div><p>Flip one random face-down pot card face-up for the whole table.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🪞</div><div class="nm">Copycat<small>bandwagon</small></div>
+          <div class="tip"><h4><span class="ic">🪞</span> Copycat</h4><div class="stat"><span class="v">vol 1</span><span>1 pt</span></div><p>Becomes the highest-point color already in the pot (Wild if empty).</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🪝</div><div class="nm">Recall<small>an undo</small></div>
+          <div class="tip"><h4><span class="ic">🪝</span> Recall</h4><div class="stat"><span class="v">vol 1</span><span>0 pts</span></div><p>Pull one of your own earlier cards back to hand. The Recall card itself stays.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🎲</div><div class="nm">Double Down<small>huge swing</small></div>
+          <div class="tip"><h4><span class="ic">🎲</span> Double Down</h4><div class="stat"><span class="v">vol 2</span><span>0 pts</span></div><p>Doubles the pot points of its own color from earlier waves.</p></div></div>
+      </div>
+
+      <div class="codex-sub disp">Cauldron modifiers · stack each round</div>
+      <div class="codex-grid">
+        <div class="codex-item" tabindex="0"><div class="ic">♨</div><div class="nm">Residue<small><span class="tag physics">physics</span></small></div>
+          <div class="tip"><h4><span class="ic">♨</span> Residue</h4><p>The cauldron starts hotter — leftover heat from last round.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🧊</div><div class="nm">Thin Ice<small><span class="tag physics">physics</span></small></div>
+          <div class="tip"><h4><span class="ic">🧊</span> Thin Ice</h4><p>Boiling point <em>lower</em> — explosions far likelier.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🕳️</div><div class="nm">Deep Cauldron<small><span class="tag physics">physics</span></small></div>
+          <div class="tip"><h4><span class="ic">🕳️</span> Deep Cauldron</h4><p>Boiling point <em>higher</em> — explosions rare.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🌿</div><div class="nm">Bountiful Brew<small><span class="tag scoring">scoring</span></small></div>
+          <div class="tip"><h4><span class="ic">🌿</span> Bountiful Brew</h4><p>Every card adds to the pot's value (colorless). Fatter pots &amp; bigger booms; doesn't shift who wins.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">✖️</div><div class="nm">Double Stakes<small><span class="tag scoring">scoring</span></small></div>
+          <div class="tip"><h4><span class="ic">✖️</span> Double Stakes</h4><p>All pot points doubled — the win <em>and</em> the loss.</p></div></div>
+        <div class="codex-item" tabindex="0"><div class="ic">🔄</div><div class="nm">Reversal<small><span class="tag wild">wild</span></small></div>
+          <div class="tip"><h4><span class="ic">🔄</span> Reversal</h4><p>The <em>lowest</em> color present in the pot wins instead of the highest. The chaos agent.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    Exploration sketch only — not the shipping client. The real client is the Rust/ratatui TUI in <span class="kbd">tui-client/</span>.<br>
+    Switch scenes with the tabs above · hover cards &amp; chips for tooltips.
+  </div>
+</div>
+
+<script>
+  // scene switching
+  const tabs = document.querySelectorAll('.tab');
+  const scenes = document.querySelectorAll('.scene');
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(x => x.classList.remove('on'));
+    scenes.forEach(s => s.classList.remove('on'));
+    t.classList.add('on');
+    document.getElementById(t.dataset.scene).classList.add('on');
+  }));
+
+  // re-trigger a CSS animation by reflow
+  function replay(id){
+    const el = document.getElementById(id);
+    el.classList.remove('run');
+    void el.offsetWidth;
+    el.classList.add('run');
+  }
+  window.replay = replay;
+
+  // spawn cauldron bubbles (ambient — carries NO information by design)
+  const brew = document.getElementById('brew');
+  if (brew){
+    for (let i=0;i<14;i++){
+      const b = document.createElement('span');
+      b.className='bubble';
+      const sz = 3 + Math.random()*6;
+      b.style.width = b.style.height = sz+'px';
+      b.style.left = (12 + Math.random()*76)+'%';
+      b.style.animationDuration = (1.6 + Math.random()*2.4)+'s';
+      b.style.animationDelay = (Math.random()*3)+'s';
+      brew.appendChild(b);
+    }
+  }
+
+  // ════ PUSHED ANIMATION: rAF particle systems + pointer interactions ════
+  // (this is roughly where the DOM ceiling sits — real per-frame particles cost
+  //  one DOM node + transform each; fine in the dozens, not the thousands.)
+
+  // molten heat-haze
+  if (brew) brew.classList.add('heat');
+
+  // a glare that follows the cursor across every card
+  document.querySelectorAll('.card').forEach(card => {
+    const g = document.createElement('div'); g.className = 'glare'; card.appendChild(g);
+    card.addEventListener('pointermove', ev => {
+      const r = card.getBoundingClientRect();
+      card.style.setProperty('--gx', ((ev.clientX - r.left) / r.width * 100) + '%');
+      card.style.setProperty('--gy', ((ev.clientY - r.top) / r.height * 100) + '%');
+    });
+  });
+
+  const sceneOn = id => document.getElementById(id)?.classList.contains('on');
+  const feltEl = document.querySelector('#s-table .felt');
+  const emberLayer = document.createElement('div');
+  if (feltEl){ emberLayer.className = 'ember-layer'; feltEl.appendChild(emberLayer); }
+
+  const embers = [], debris = [], ePool = [];
+  function spawnEmber(){
+    if (!feltEl) return;
+    let e = ePool.pop(); if (!e){ e = document.createElement('span'); e.className = 'ember'; }
+    const sz = 3 + Math.random()*5; e.style.width = e.style.height = sz+'px'; e.style.opacity = 0;
+    emberLayer.appendChild(e);
+    const fw = feltEl.clientWidth || 940;
+    embers.push({ e, x: fw/2 + (Math.random()*150-75), y: 250, vx:(Math.random()-.5)*16, vy:-22-Math.random()*30, life:0, max:1.3+Math.random()*1.4 });
+  }
+
+  // boom debris burst + count-up of the losses
+  const boomStage = document.getElementById('boom');
+  if (boomStage){ ['ring2','ring2 d1','ring2 d2'].forEach(c => { const r = document.createElement('div'); r.className = c; boomStage.insertBefore(r, boomStage.querySelector('.shaker')); }); }
+  function boomFX(){
+    if (!boomStage) return;
+    const cols = ['#e24158','#4a86ef','#bd74e6','#ffce8a'];
+    for (let i=0;i<28;i++){ const d = document.createElement('span'); d.className='debris'; d.style.background = cols[i%4];
+      boomStage.appendChild(d);
+      const a = Math.random()*Math.PI*2, v = 200+Math.random()*480;
+      debris.push({ e:d, x:0, y:0, vx:Math.cos(a)*v, vy:Math.sin(a)*v-90, rot:Math.random()*360, vr:(Math.random()-.5)*900, life:0, max:1.0+Math.random()*0.8 }); }
+    boomStage.querySelectorAll('.loss .d').forEach(el => {
+      const txt = el.textContent.trim(), neg = txt.startsWith('−'), target = parseInt(txt.replace('−','')) || 0;
+      if (!target) return; const t0 = performance.now();
+      (function c(now){ const u = Math.min(1,(now-t0)/700); el.textContent = (neg?'−':'') + Math.round(target*u); if (u<1) requestAnimationFrame(c); })(performance.now());
+    });
+  }
+
+  // depile: count the boiling-point tally up + a threshold-cross flash
+  const depileStage = document.getElementById('depile');
+  let xflash;
+  if (depileStage){ xflash = document.createElement('div'); xflash.className = 'cross-flash'; depileStage.appendChild(xflash); }
+  function depileFX(){
+    if (!depileStage) return;
+    // JS-driven 2D squash-flip (robust across renderers; the CSS 3D rotateY +
+    // backface-visibility can misrender under headless/older GPUs).
+    depileStage.querySelectorAll('.rcard').forEach((rc,i) => {
+      const inner = rc.querySelector('.inner'), back = rc.querySelector('.back'), face = rc.querySelector('.face');
+      if (!inner) return;
+      inner.style.animation = 'none';
+      if (face) face.style.transform = 'none';     // cancel the mirrored rotateY
+      inner.style.transform = 'scaleX(1)';
+      if (back) back.style.opacity = '1';
+      if (face) face.style.opacity = '0';
+      const t0 = performance.now() + i*550, dur = 520;
+      (function step(now){
+        if (now < t0){ requestAnimationFrame(step); return; }
+        const u = Math.min(1, (now - t0)/dur);
+        inner.style.transform = `scaleX(${Math.max(0.02, u<0.5 ? 1-u*2 : (u-0.5)*2)})`;
+        if (back) back.style.opacity = u<0.5 ? '1' : '0';
+        if (face) face.style.opacity = u<0.5 ? '0' : '1';
+        if (u<1) requestAnimationFrame(step);
+      })(performance.now());
+    });
+    const val = depileStage.querySelector('.val'); const target = parseInt(val?.textContent) || 10;
+    const tv = performance.now();
+    if (val) (function c(now){ const u = Math.min(1,(now-tv)/2600); val.textContent = Math.round(target*u); if (u<1) requestAnimationFrame(c); })(performance.now());
+    if (xflash){ xflash.classList.remove('go'); void xflash.offsetWidth; setTimeout(()=>xflash.classList.add('go'), 1750); }
+  }
+
+  let last = performance.now(), eAcc = 0;
+  function loop(now){
+    const dt = Math.min(.05,(now-last)/1000); last = now;
+    if (sceneOn('s-table')){ eAcc += dt; if (eAcc > 0.07){ eAcc = 0; spawnEmber(); } }
+    for (let i=embers.length-1;i>=0;i--){ const p = embers[i]; p.life += dt; const u = p.life/p.max;
+      if (u>=1){ p.e.remove(); ePool.push(p.e); embers.splice(i,1); continue; }
+      p.x += p.vx*dt; p.y += p.vy*dt; p.vy -= 4*dt;
+      p.e.style.transform = `translate(${p.x}px,${p.y}px)`; p.e.style.opacity = (u<.2 ? u*4 : (1-u))*0.85; }
+    for (let i=debris.length-1;i>=0;i--){ const p = debris[i]; p.life += dt; const u = p.life/p.max;
+      if (u>=1){ p.e.remove(); debris.splice(i,1); continue; }
+      p.vy += 900*dt; p.x += p.vx*dt; p.y += p.vy*dt; p.rot += p.vr*dt;
+      p.e.style.transform = `translate(calc(-50% + ${p.x}px),calc(-50% + ${p.y}px)) rotate(${p.rot}deg)`; p.e.style.opacity = 1-u; }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // re-fire the rich FX (and re-run the CSS reveal) when a scene is entered/replayed
+  const _replay = window.replay;
+  window.replay = function(id){ _replay(id); if (id==='boom') boomFX(); if (id==='depile') depileFX(); };
+  // defer two frames so the scene has switched to display:block and laid out,
+  // otherwise the remove/re-add of `.run` won't actually restart the animation.
+  const replaySoon = id => requestAnimationFrame(() => requestAnimationFrame(() => window.replay(id)));
+  tabs.forEach(t => t.addEventListener('click', () => {
+    if (t.dataset.scene === 's-boom') replaySoon('boom');
+    if (t.dataset.scene === 's-depile') replaySoon('depile');
+  }));
+</script>
+</body>
+</html>
