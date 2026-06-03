@@ -17,8 +17,14 @@
 #                         (default: rotate through all four for variety)
 #   --name NAME           Your display name in the client (default "You")
 #   --url WS              Server WebSocket URL (default ws://127.0.0.1:8080/ws)
+#   --admin-token TOKEN   Elevated admin/observability bearer token: reveal + control (default "toto")
+#   --observer-token TOK  Read-only observability bearer token (default "toto-observer")
 #   --no-build            Skip `cargo build` (use existing target/debug binaries)
 #   -h, --help            Show this help
+#
+# While playing, point the admin web app or curl at the operator API on the
+# isolated port http://127.0.0.1:8081/admin/ and authenticate with one of the
+# tokens above to watch live rooms, the hidden-state reveal, and the balance feed.
 #
 # The server and agents log to .playtest/ ; they are torn down when the client exits.
 set -euo pipefail
@@ -33,9 +39,13 @@ BRAIN=claude
 PERSONA=""
 NAME="You"
 URL="ws://127.0.0.1:8080/ws"
+ADMIN_TOKEN="toto"
+OBSERVER_TOKEN="toto-observer"
 BUILD=1
 
-usage() { sed -n '2,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+# Print the leading comment block (everything from the line after the shebang up
+# to the first non-comment line), stripping the "# " prefix.
+usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next} {exit}' "${BASH_SOURCE[0]}"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +55,8 @@ while [[ $# -gt 0 ]]; do
     --persona)    PERSONA="$2"; shift 2 ;;
     --name)       NAME="$2"; shift 2 ;;
     --url)        URL="$2"; shift 2 ;;
+    --admin-token)    ADMIN_TOKEN="$2"; shift 2 ;;
+    --observer-token) OBSERVER_TOKEN="$2"; shift 2 ;;
     --no-build)   BUILD=0; shift ;;
     -h|--help)    usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -94,8 +106,16 @@ if [[ "$BRAIN" == "claude" ]]; then
 fi
 
 # ---- server -----------------------------------------------------------------
+# Operator tokens for the admin/observability API are passed through the
+# environment (OperatorAuth::from_env); the elevated token grants reveal +
+# control, the observer token is read-only. Distinct values so both roles
+# resolve — the server's token map would otherwise let an identical observer
+# token shadow the elevated one.
 echo "starting server (logs: $LOG_DIR/server.log)…"
-"$SERVER_BIN" >"$LOG_DIR/server.log" 2>&1 &
+echo "  admin/observability API: http://127.0.0.1:8081/admin/"
+echo "  tokens: \"$ADMIN_TOKEN\" (elevated) · \"$OBSERVER_TOKEN\" (observer)"
+BP_ADMIN_TOKEN="$ADMIN_TOKEN" BP_ADMIN_OBSERVER_TOKEN="$OBSERVER_TOKEN" \
+  "$SERVER_BIN" >"$LOG_DIR/server.log" 2>&1 &
 PIDS+=("$!")
 
 # Wait for the WebSocket port to accept connections.
