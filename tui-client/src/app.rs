@@ -296,7 +296,16 @@ impl App {
                 self.return_to_menu();
                 self.toast("left the group");
             }
-            ServerMessage::ScoreUpdate { .. }
+            ServerMessage::GroupSearching { needed } => {
+                if *needed > 0 {
+                    self.toast(format!("🔎 looking for {needed} more…"));
+                } else {
+                    self.toast("search stopped");
+                }
+            }
+            // Standings are folded into the view model and rendered; no toast.
+            ServerMessage::StandingsUpdate { .. }
+            | ServerMessage::ScoreUpdate { .. }
             | ServerMessage::PlayerConnectionChanged { .. }
             | ServerMessage::Heartbeat => {}
         }
@@ -599,10 +608,21 @@ impl App {
         vec![]
     }
 
-    /// In a group lobby (waiting for the table), `Esc`/`q` leaves the group and
+    /// In a group lobby (waiting for the table): `f` toggles matchmaking fill
+    /// ("look for a 4th…" / cancel the search), and `Esc`/`q` leaves the group and
     /// returns to the main menu on the same connection.
     fn key_lobby(&mut self, code: KeyCode) -> Vec<ClientMessage> {
         match code {
+            KeyCode::Char('f') => {
+                if self.vm.searching_needed.is_some() {
+                    vec![ClientMessage::CancelFill]
+                } else if self.vm.players.len() < 4 {
+                    vec![ClientMessage::FillGroup]
+                } else {
+                    self.toast("table is already full");
+                    vec![]
+                }
+            }
             KeyCode::Esc | KeyCode::Char('q') => vec![ClientMessage::LeaveGroup],
             _ => vec![],
         }
@@ -761,6 +781,8 @@ fn server_tag(m: &ServerMessage) -> &'static str {
         ServerMessage::StateSnapshot { .. } => "StateSnapshot",
         ServerMessage::DeathmatchStarted { .. } => "DeathmatchStarted",
         ServerMessage::LeftGroup => "LeftGroup",
+        ServerMessage::GroupSearching { .. } => "GroupSearching",
+        ServerMessage::StandingsUpdate { .. } => "StandingsUpdate",
         ServerMessage::Heartbeat => "Heartbeat",
     }
 }
@@ -776,6 +798,8 @@ fn client_tag(m: &ClientMessage) -> &'static str {
         ClientMessage::LockIn => "LockIn",
         ClientMessage::Emote { .. } => "Emote",
         ClientMessage::PlayAgain => "PlayAgain",
+        ClientMessage::FillGroup => "FillGroup",
+        ClientMessage::CancelFill => "CancelFill",
         ClientMessage::LeaveGroup => "LeaveGroup",
         ClientMessage::Heartbeat => "Heartbeat",
     }

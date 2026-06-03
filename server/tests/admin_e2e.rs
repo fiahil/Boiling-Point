@@ -110,6 +110,7 @@ async fn admin_surface_reflects_a_live_game_and_closes_the_control_loop() {
             player,
             name: format!("bot{i}"),
             session_token: String::new(),
+            guest: false,
             out: otx,
         })
         .await

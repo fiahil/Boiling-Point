@@ -344,6 +344,8 @@ async fn version_ok(version: u16, out: &mpsc::Sender<ServerMessage>) -> bool {
 }
 
 /// Send a `Join` (carrying the session token) to a group and return its channel.
+/// A direct create/join entry always joins as a **member** (`guest: false`); guests
+/// are only ever placed by the matchmaking fill queue.
 async fn send_join(
     out: &mpsc::Sender<ServerMessage>,
     group_tx: mpsc::Sender<GroupCommand>,
@@ -355,6 +357,7 @@ async fn send_join(
             player: session.player,
             name,
             session_token: session.token.clone(),
+            guest: false,
             out: out.clone(),
         })
         .await
@@ -377,6 +380,8 @@ fn message_kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::LockIn => "LockIn",
         ClientMessage::Emote { .. } => "Emote",
         ClientMessage::PlayAgain => "PlayAgain",
+        ClientMessage::FillGroup => "FillGroup",
+        ClientMessage::CancelFill => "CancelFill",
         ClientMessage::LeaveGroup => "LeaveGroup",
         ClientMessage::Heartbeat => "Heartbeat",
     }
@@ -414,6 +419,7 @@ mod tests {
         let config = Arc::new(config);
         let groups = Arc::new(GroupRegistry::new(registry, config));
         let queue = Arc::new(MatchQueue::new(groups.clone()));
+        groups.set_queue(&queue);
         let state = AppState {
             sessions: Arc::new(SessionStore::new()),
             groups,
@@ -890,6 +896,112 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(20), body)
             .await
             .expect("the leave/rejoin flow completed before timeout");
+    }
+
+    /// A partial group (3 members) fills with one matchmaking guest, plays a game,
+    /// and returns to 3 members — the guest is dropped (group-fill-and-standings
+    /// tasks.md 7.2). Verified end-to-end over the wire.
+    #[tokio::test]
+    async fn partial_group_fills_with_a_guest_then_drops_it() {
+        let url = start_server().await;
+        // Three friends form the group.
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("a", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
+            }
+        };
+        // The friends return their socket after the game so they stay connected as
+        // members (a dropped socket would leave the group, skewing the second fill).
+        let mut friends = Vec::new();
+        for n in ["b", "c"] {
+            let url = url.clone();
+            let code = code.clone();
+            friends.push(tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &join(n, code)).await;
+                while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
+                let ok = play_loop(&mut ws).await;
+                (ok, ws)
+            }));
+        }
+
+        // Wait until both friends have actually joined (the host sees each connect)
+        // before requesting fill, so the group is at 3 members.
+        let mut connected = 0;
+        while connected < 2 {
+            if let ServerMessage::PlayerConnectionChanged {
+                connected: true, ..
+            } = recv(&mut ws1).await
+            {
+                connected += 1;
+            }
+        }
+
+        // A member requests fill → the group announces it is searching for 1 more.
+        send(&mut ws1, &ClientMessage::FillGroup).await;
+        let needed = loop {
+            match recv(&mut ws1).await {
+                ServerMessage::GroupSearching { needed } => break needed,
+                _ => continue,
+            }
+        };
+        assert_eq!(needed, 1, "a 3-member group searches for exactly one guest");
+
+        // A solo quick-matcher backfills the seat as a guest; the game starts with a
+        // table of 4 that includes exactly one guest.
+        let guest = {
+            let url = url.clone();
+            tokio::spawn(async move {
+                let (mut ws, _) = connect_async(url).await.unwrap();
+                send(&mut ws, &enqueue("guest")).await;
+                play_loop(&mut ws).await
+            })
+        };
+        let started = loop {
+            match recv(&mut ws1).await {
+                ServerMessage::GameStarting { players, .. } => break players,
+                _ => continue,
+            }
+        };
+        assert_eq!(started.len(), 4, "the table filled to four");
+        assert_eq!(
+            started.iter().filter(|p| p.guest).count(),
+            1,
+            "exactly one seat is a matchmaking guest"
+        );
+
+        // Everyone plays to the end.
+        assert!(play_loop(&mut ws1).await, "the host reached GameOver");
+        // Hold the friends' sockets open so they remain members.
+        let mut held = Vec::new();
+        for f in friends {
+            let (ok, ws) = f.await.unwrap();
+            assert!(ok);
+            held.push(ws);
+        }
+        assert!(guest.await.unwrap());
+
+        // Back in the lobby the group is down to its 3 members: a fresh fill again
+        // needs exactly one (the guest was dropped, the members persisted).
+        send(&mut ws1, &ClientMessage::FillGroup).await;
+        let again = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match recv_opt(&mut ws1).await {
+                    Some(ServerMessage::GroupSearching { needed }) => break Some(needed),
+                    Some(_) => continue,
+                    None => break None,
+                }
+            }
+        })
+        .await
+        .expect("got a searching response");
+        assert_eq!(
+            again,
+            Some(1),
+            "after the game the group is back to 3 members (guest dropped)"
+        );
     }
 
     #[tokio::test]

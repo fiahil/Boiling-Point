@@ -50,6 +50,8 @@ pub(crate) struct PlayerView {
     pub(crate) color: Color,
     /// Whether currently connected.
     pub(crate) connected: bool,
+    /// Whether this player is a matchmaking guest (not a group member).
+    pub(crate) guest: bool,
     /// Cumulative score (authoritative via `ScoreUpdate`).
     pub(crate) score: i32,
     /// Cards contributed to the current pot (public political signal).
@@ -63,10 +65,33 @@ impl PlayerView {
             name: p.display_name.clone(),
             color: p.color,
             connected: p.connected,
+            guest: p.guest,
             score: 0,
             contributed: 0,
         }
     }
+}
+
+/// One member's line in the group's live standings (as the client renders it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct StandingView {
+    /// The member.
+    pub(crate) player: PlayerId,
+    /// Games played in the group.
+    pub(crate) games_played: u32,
+    /// Games won.
+    pub(crate) wins: u32,
+}
+
+/// The group's standings as the client holds them: per-member rows + guest aggregate.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct StandingsView {
+    /// Per-member rows.
+    pub(crate) members: Vec<StandingView>,
+    /// Games that included a guest.
+    pub(crate) guest_games: u32,
+    /// Games won by a guest.
+    pub(crate) guest_wins: u32,
 }
 
 /// A captured depile for the reveal screen.
@@ -115,6 +140,11 @@ pub(crate) struct ViewModel {
     pub(crate) my_color: Option<Color>,
     /// The group's invite code.
     pub(crate) group_code: Option<String>,
+    /// When the group is matchmaking for fill, how many more players it needs
+    /// ("looking for a 4th…"); `None` when not searching.
+    pub(crate) searching_needed: Option<u8>,
+    /// The group's live standings, if received.
+    pub(crate) standings: Option<StandingsView>,
     /// Everyone at the table.
     pub(crate) players: Vec<PlayerView>,
     /// Total rounds in the game.
@@ -336,6 +366,28 @@ impl ViewModel {
                 self.deathmatch = true;
                 self.dm_participants = participants.clone();
             }
+            ServerMessage::GroupSearching { needed } => {
+                // 0 signals the search stopped (cancelled or filled).
+                self.searching_needed = (*needed > 0).then_some(*needed);
+            }
+            ServerMessage::StandingsUpdate {
+                members,
+                guest_games,
+                guest_wins,
+            } => {
+                self.standings = Some(StandingsView {
+                    members: members
+                        .iter()
+                        .map(|m| StandingView {
+                            player: m.player,
+                            games_played: m.games_played,
+                            wins: m.wins,
+                        })
+                        .collect(),
+                    guest_games: *guest_games,
+                    guest_wins: *guest_wins,
+                });
+            }
             // Surfaced by the App as transient toasts/modals, or handled as pure
             // phase/connection transitions — nothing to fold into the view model.
             ServerMessage::SomeonePeeked
@@ -368,6 +420,8 @@ impl ViewModel {
         self.game_over = false;
         self.winners.clear();
         self.final_scores.clear();
+        // The fill search ended when the game started; standings persist across games.
+        self.searching_needed = None;
         for p in &mut self.players {
             p.contributed = 0;
         }

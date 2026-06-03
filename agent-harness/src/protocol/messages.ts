@@ -7,7 +7,7 @@
 // feature-gated `ts-rs` derive on the Rust crate feeding `npm run gen:protocol`; that
 // remains a documented follow-up (the crate does not derive ts-rs today).
 
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 export type PlayerId = string; // PlayerId(Uuid) — transparent uuid string
 export type CardId = number; //   CardId(u32)
@@ -61,6 +61,13 @@ export interface PlayerPublic {
   display_name: string;
   color: Color;
   connected: boolean;
+  guest: boolean; // a matchmaking guest (not a group member)
+}
+
+export interface MemberStanding {
+  player: PlayerId;
+  games_played: number;
+  wins: number;
 }
 
 export interface PlayerScore {
@@ -96,6 +103,8 @@ export type ClientMessage =
   | { type: "LockIn" }
   | { type: "Emote"; emote: EmoteId }
   | { type: "PlayAgain" }
+  | { type: "FillGroup" }
+  | { type: "CancelFill" }
   | { type: "LeaveGroup" }
   | { type: "Heartbeat" };
 
@@ -124,6 +133,8 @@ export type ServerMessage =
   | { type: "Error"; code: ErrorCode; message: string }
   | { type: "PlayerConnectionChanged"; player: PlayerId; connected: boolean }
   | { type: "LeftGroup" }
+  | { type: "GroupSearching"; needed: number }
+  | { type: "StandingsUpdate"; members: MemberStanding[]; guest_games: number; guest_wins: number }
   | {
       type: "StateSnapshot";
       group_code: GroupCode;

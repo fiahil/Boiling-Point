@@ -19,8 +19,8 @@ function withHistory() {
       your_player_id: "me",
       your_color: "Ruby",
       players: [
-        { id: "me", display_name: "Me", color: "Ruby", connected: true },
-        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true },
+        { id: "me", display_name: "Me", color: "Ruby", connected: true, guest: false },
+        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true, guest: false },
       ],
     },
     { type: "YourHand", cards: [{ id: 1, view: MY_CARD }] },

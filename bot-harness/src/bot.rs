@@ -303,8 +303,11 @@ pub async fn run_bot<C: BotConnection>(
             ServerMessage::DeckReshuffled | ServerMessage::EmoteBroadcast { .. } => {}
             ServerMessage::Heartbeat => {}
             // The bot plays a single game per connection and never leaves a group
-            // itself, so a `LeftGroup` ack is a no-op here.
-            ServerMessage::LeftGroup => {}
+            // itself, so a `LeftGroup` ack is a no-op here. Fill/standings are
+            // lobby-level signals the bot does not act on.
+            ServerMessage::LeftGroup
+            | ServerMessage::GroupSearching { .. }
+            | ServerMessage::StandingsUpdate { .. } => {}
             ServerMessage::Error { .. } => {} // a rejected action is a no-op for the bot
         }
     }

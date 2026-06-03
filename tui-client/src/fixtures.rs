@@ -26,6 +26,8 @@ pub fn players() -> Vec<PlayerPublic> {
             display_name: names[i].into(),
             color: *c,
             connected: true,
+            // The 4th seat is a matchmaking guest, to exercise guest rendering.
+            guest: i == 3,
         })
         .collect()
 }

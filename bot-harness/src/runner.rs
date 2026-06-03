@@ -152,6 +152,7 @@ async fn run_in_process(
                 id: player,
                 name: format!("seat{seat}"),
                 color,
+                guest: false,
                 out: out_tx,
             });
             conns.push(InProcess::new(player, cmd_tx.clone(), out_rx));

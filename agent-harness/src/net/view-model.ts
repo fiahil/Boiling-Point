@@ -243,6 +243,8 @@ export function applyServerMessage(vm: ViewModel, msg: ServerMessage): ViewModel
     }
     case "Error":
     case "LeftGroup":
+    case "GroupSearching":
+    case "StandingsUpdate":
     case "Heartbeat": {
       break;
     }

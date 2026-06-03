@@ -22,6 +22,20 @@ pub struct PlayerPublic {
     pub color: Color,
     /// Whether the player is currently connected.
     pub connected: bool,
+    /// Whether this player is a **guest** — placed by matchmaking fill for one
+    /// game, not a member of the group (members are `false`).
+    pub guest: bool,
+}
+
+/// One member's line in a group's live standings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MemberStanding {
+    /// The member.
+    pub player: PlayerId,
+    /// Games this member has played in the group.
+    pub games_played: u32,
+    /// Games this member has won (co-champions each count).
+    pub wins: u32,
 }
 
 /// A single (player, score) pair — used instead of a map for stable wire order.
@@ -259,6 +273,22 @@ pub enum ServerMessage {
     /// Acknowledges a `LeaveGroup`: the seat is freed and the connection is now in
     /// the unbound menu state, ready for another entry message. (private)
     LeftGroup,
+    /// The group is searching matchmaking for more players to fill the table
+    /// ("looking for a 4th…"). (broadcast)
+    GroupSearching {
+        /// How many more players the group needs to reach a full table.
+        needed: u8,
+    },
+    /// The group's live standings: per-member games/wins, plus the aggregate guest
+    /// line so guest results don't vanish. Conveyed to members. (broadcast)
+    StandingsUpdate {
+        /// One line per current member.
+        members: Vec<MemberStanding>,
+        /// Games this group has played that included a guest.
+        guest_games: u32,
+        /// Games won by the group's guest (across all guests).
+        guest_wins: u32,
+    },
     /// Liveness acknowledgement. (private)
     Heartbeat,
 }

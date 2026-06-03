@@ -102,6 +102,8 @@ async fn main() {
 
     let groups = Arc::new(GroupRegistry::new(registry, config));
     let queue = Arc::new(MatchQueue::new(groups.clone()));
+    // Wire the queue back into the registry so groups can request matchmaking fill.
+    groups.set_queue(&queue);
 
     // Admin surface: served on an isolated port, distinct from the player wire.
     // Operators authenticate with bearer tokens from the environment, never the

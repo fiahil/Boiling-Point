@@ -63,6 +63,8 @@ mod tests {
             ClientMessage::LockIn,
             ClientMessage::Emote { emote: EmoteId(3) },
             ClientMessage::PlayAgain,
+            ClientMessage::FillGroup,
+            ClientMessage::CancelFill,
             ClientMessage::LeaveGroup,
             ClientMessage::Heartbeat,
         ];
@@ -88,9 +90,20 @@ mod tests {
                     display_name: "alice".into(),
                     color: Color::Sapphire,
                     connected: true,
+                    guest: false,
                 }],
             },
             ServerMessage::LeftGroup,
+            ServerMessage::GroupSearching { needed: 1 },
+            ServerMessage::StandingsUpdate {
+                members: vec![MemberStanding {
+                    player: p,
+                    games_played: 3,
+                    wins: 2,
+                }],
+                guest_games: 1,
+                guest_wins: 0,
+            },
             ServerMessage::YourHand {
                 cards: vec![HandCard {
                     id: CardId(1),

@@ -164,10 +164,14 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
     .areas(area);
 
     let code = app.vm.group_code.clone().unwrap_or_else(|| "…".into());
-    let status = match app.phase {
-        Phase::Queue => "assembling a table…".to_string(),
-        Phase::Connecting => "connecting…".to_string(),
-        _ => format!("waiting for players  ({}/4)", app.vm.players.len()),
+    let status = if let Some(n) = app.vm.searching_needed {
+        format!("🔎 looking for {n} more…  (f to cancel)")
+    } else {
+        match app.phase {
+            Phase::Queue => "assembling a table…".to_string(),
+            Phase::Connecting => "connecting…".to_string(),
+            _ => format!("waiting for players  ({}/4)", app.vm.players.len()),
+        }
     };
     let head_lines = vec![
         Line::from(Span::styled(
@@ -191,12 +195,14 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
             None => ("—".to_string(), false),
         };
         let dot = if occupied { "●" } else { "◌" };
+        let is_guest = seat.map(|p| p.guest).unwrap_or(false);
+        let label = format!("{name}{}", if is_guest { " (guest)" } else { "" });
         lines.push(Line::from(vec![
             Span::styled(
                 format!(" {} {:<9}", palette::glyph(*color), palette::name(*color)),
                 Style::default().fg(palette::style(*color)),
             ),
-            Span::raw(format!("{name:<22}")),
+            Span::raw(format!("{label:<22}")),
             Span::styled(
                 format!("{dot} {}", if occupied { "ready" } else { "waiting" }),
                 Style::default().fg(if occupied {
@@ -209,11 +215,41 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
     }
     lines.push(Line::raw(""));
     lines.push(Line::from(Span::styled(
-        "Starts automatically at 4 players. No host, no settings.",
+        "Starts automatically at 4 players. f: fill from matchmaking · q: leave.",
         Style::default().fg(Color::DarkGray),
     )));
+    // Live group standings (per member + guest aggregate), if any games have run.
+    if let Some(st) = &app.vm.standings {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "Standings (wins / games)",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        for m in &st.members {
+            let name = app
+                .vm
+                .player(m.player)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "—".into());
+            lines.push(Line::raw(format!(
+                "   {name:<20} {} / {}",
+                m.wins, m.games_played
+            )));
+        }
+        if st.guest_games > 0 {
+            lines.push(Line::from(Span::styled(
+                format!("   {:<20} {} / {}", "guests", st.guest_wins, st.guest_games),
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+    }
     frame.render_widget(Paragraph::new(lines).block(bordered("Seats")), body);
-    hint(frame, foot, "Ctrl-C quit");
+    let foot_hint = if app.phase == Phase::Lobby {
+        "f fill · q leave · Ctrl-C quit"
+    } else {
+        "Ctrl-C quit"
+    };
+    hint(frame, foot, foot_hint);
 }
 
 // ---- round screens -------------------------------------------------------

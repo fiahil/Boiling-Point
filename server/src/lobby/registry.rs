@@ -13,7 +13,7 @@
 //! the player wire. Each emits an `admin.command` audit span.
 
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
@@ -27,6 +27,7 @@ use crate::content::ContentRegistry;
 
 use super::codes::generate_code;
 use super::group::{GroupCommand, spawn};
+use super::matchmaking::MatchQueue;
 
 /// The active content snapshot groups run against: the validated config, its derived
 /// registry, and the enabled-emote palette. Swapped atomically as a unit.
@@ -95,6 +96,11 @@ impl ContentSelector {
 pub struct GroupRegistry {
     groups: DashMap<GroupCode, mpsc::Sender<GroupCommand>>,
     content: ArcSwap<Content>,
+    /// The auto-match queue, for group fill. A `Weak` to avoid a reference cycle
+    /// (the queue holds an `Arc<GroupRegistry>`); set once after both are built via
+    /// [`set_queue`](GroupRegistry::set_queue). Unset in tests that don't matchmake,
+    /// so fill is a no-op there.
+    queue: OnceLock<Weak<MatchQueue>>,
 }
 
 impl GroupRegistry {
@@ -116,6 +122,28 @@ impl GroupRegistry {
                 registry,
                 palette,
             }),
+            queue: OnceLock::new(),
+        }
+    }
+
+    /// Wire the auto-match queue (for group fill) after both are constructed. Held
+    /// as a `Weak` to avoid a registry⇄queue reference cycle.
+    pub fn set_queue(&self, queue: &Arc<MatchQueue>) {
+        let _ = self.queue.set(Arc::downgrade(queue));
+    }
+
+    /// Open `code` for matchmaking fill, needing `needed` more players. A no-op if
+    /// no queue is wired (e.g. in unit tests).
+    pub async fn open_fill(&self, code: GroupCode, tx: mpsc::Sender<GroupCommand>, needed: usize) {
+        if let Some(queue) = self.queue.get().and_then(Weak::upgrade) {
+            queue.open_fill(code, tx, needed).await;
+        }
+    }
+
+    /// Stop filling `code` (game started or search cancelled). A no-op without a queue.
+    pub fn close_fill(&self, code: &GroupCode) {
+        if let Some(queue) = self.queue.get().and_then(Weak::upgrade) {
+            queue.close_fill(code);
         }
     }
 
@@ -409,6 +437,7 @@ mod tests {
             player: PlayerId(Uuid::new_v4()),
             name: "solo".into(),
             session_token: String::new(),
+            guest: false,
             out: out_tx,
         })
         .await
@@ -444,6 +473,7 @@ mod tests {
             player,
             name: "solo".into(),
             session_token: String::new(),
+            guest: false,
             out: out_tx,
         })
         .await

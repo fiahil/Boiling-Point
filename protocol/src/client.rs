@@ -16,7 +16,10 @@ pub type ProtocolVersion = u16;
 /// v2: room→group rename, plus the persistent session connection (`LeaveGroup` /
 /// [`crate::server::ServerMessage::LeftGroup`], re-entry on one socket) and the
 /// `PlayAgain` post-game opt-in.
-pub const PROTOCOL_VERSION: ProtocolVersion = 2;
+/// v3: group matchmaking fill (`FillGroup`/`CancelFill`, `GroupSearching`), the
+/// member/guest distinction (`PlayerPublic.guest`), and group standings
+/// (`StandingsUpdate`).
+pub const PROTOCOL_VERSION: ProtocolVersion = 3;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays
 /// human-readable for debugging.
@@ -69,6 +72,12 @@ pub enum ClientMessage {
     /// Opt in to play another game with the same group after `GameOver` (the
     /// post-game "ready" signal; a fresh game starts once 4 seats opt in).
     PlayAgain,
+    /// Request matchmaking **fill**: top the group up to a full table with guests
+    /// from the queue. Only meaningful from a partial group (fewer than 4 present);
+    /// the server announces the search via [`crate::server::ServerMessage::GroupSearching`].
+    FillGroup,
+    /// Cancel an in-progress fill search and return to the idle group lobby.
+    CancelFill,
     /// Leave the current group and return the connection to the unbound menu
     /// state, without closing the socket. The server frees the seat and replies
     /// with [`crate::server::ServerMessage::LeftGroup`].

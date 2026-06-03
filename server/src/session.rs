@@ -50,6 +50,8 @@ pub struct SeatInfo {
     pub name: String,
     /// Assigned colour.
     pub color: Color,
+    /// Whether this seat is a matchmaking guest (not a group member).
+    pub guest: bool,
     /// Outbound channel to this player's connection.
     pub out: mpsc::Sender<ServerMessage>,
 }
@@ -64,6 +66,9 @@ pub struct GameEnd {
     /// Players who disconnected (or left) and did not reconnect before the game
     /// ended; the group drops their seats when it returns to the lobby.
     pub gone: HashSet<PlayerId>,
+    /// The game's winner(s) — more than one only for Deathmatch co-champions. The
+    /// group folds these into its standings.
+    pub winners: Vec<PlayerId>,
 }
 
 /// What one wave's collection yielded.
@@ -102,6 +107,7 @@ fn public_players(players: &[SeatInfo], gone: &HashSet<PlayerId>) -> Vec<PlayerP
             display_name: s.name.clone(),
             color: s.color,
             connected: !gone.contains(&s.id),
+            guest: s.guest,
         })
         .collect()
 }
@@ -569,15 +575,19 @@ pub async fn run_game(
         &players,
         ServerMessage::GameOver {
             final_scores: scores_vec(&scores, &ids),
-            winners,
+            winners: winners.clone(),
         },
     )
     .await;
 
-    // Hand the final seats (with reconnections' refreshed channels) and the
-    // still-absent players back to the persistent group, which returns the
-    // survivors to its lobby.
-    GameEnd { players, gone }
+    // Hand the final seats (with reconnections' refreshed channels), the
+    // still-absent players, and the winners back to the persistent group, which
+    // returns the survivors to its lobby and folds the result into standings.
+    GameEnd {
+        players,
+        gone,
+        winners,
+    }
 }
 
 /// Per-player contributed-card counts in the current pot (the public signal).

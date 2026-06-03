@@ -144,11 +144,13 @@ pub mod metric {
     /// A game began.
     pub fn game_started() {
         metrics::counter!("games_started_total").increment(1);
+        metrics::gauge!("games_active").increment(1.0);
     }
 
     /// A game completed.
     pub fn game_completed() {
         metrics::counter!("games_completed_total").increment(1);
+        metrics::gauge!("games_active").decrement(1.0);
     }
 
     /// A round resolved; `exploded` feeds the explosion-rate (~30–40% target).
