@@ -1,6 +1,6 @@
 //! The within-wave effect resolver: applies a wave's cards and effects against a
-//! frozen pre-wave snapshot, in the fixed 7-step order, then performs the single
-//! explosion check.
+//! frozen pre-wave snapshot, in the fixed 6-category order (the `EffectCategory`
+//! variants), then performs the single explosion check.
 //!
 //! Snapshot semantics: Copycat/Double Down read the pot as it stood *before* this
 //! wave, so same-wave cards don't see each other and duplicate effects sum
@@ -156,7 +156,7 @@ pub fn resolve_wave(
         }
     }
 
-    // 3. Order effects by category (the fixed 7-step order).
+    // 3. Order effects by category (the fixed 6-category order).
     effects.sort_by_key(|(_, _, kind)| {
         registry
             .effect(*kind)

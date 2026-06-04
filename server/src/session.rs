@@ -25,7 +25,8 @@ use uuid::Uuid;
 use crate::observability::span_schema::SPAN_SCHEMA_VERSION;
 
 use boiling_point_protocol::server::{
-    Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome,
+    Audience, Contribution, DepileEntry, ErrorCode, Outbound, PlayerPublic, PlayerScore,
+    ScoringOutcome,
 };
 use boiling_point_protocol::vocab::{Color, ModifierKind};
 use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
@@ -112,16 +113,35 @@ fn public_players(players: &[SeatInfo], gone: &HashSet<PlayerId>) -> Vec<PlayerP
         .collect()
 }
 
-async fn broadcast(players: &[SeatInfo], msg: ServerMessage) {
-    for p in players {
-        let _ = p.out.send(msg.clone()).await;
+/// The single server→client egress point: deliver an already-routed [`Outbound`]
+/// to its audience. Routing all sends through here makes the secret boundary
+/// load-bearing — the `is_private_only()` debug-assert in
+/// [`ServerMessage::broadcast`] fires if a private-only message is ever broadcast.
+async fn dispatch(players: &[SeatInfo], out: Outbound) {
+    match out.audience {
+        Audience::Broadcast => {
+            for p in players {
+                let _ = p.out.send(out.message.clone()).await;
+            }
+        }
+        Audience::Private(id) => {
+            if let Some(p) = players.iter().find(|s| s.id == id) {
+                let _ = p.out.send(out.message).await;
+            }
+        }
     }
 }
 
+/// Broadcast a public message to every seat. Constructs the [`Outbound`] via
+/// [`ServerMessage::broadcast`], so broadcasting a private-only message trips the
+/// debug-assert instead of leaking.
+async fn broadcast(players: &[SeatInfo], msg: ServerMessage) {
+    dispatch(players, msg.broadcast()).await;
+}
+
+/// Send a message privately to one seat, routed through [`Outbound`].
 async fn send_to(players: &[SeatInfo], id: PlayerId, msg: ServerMessage) {
-    if let Some(p) = players.iter().find(|s| s.id == id) {
-        let _ = p.out.send(msg).await;
-    }
+    dispatch(players, msg.to(id)).await;
 }
 
 fn scores_vec(scores: &HashMap<PlayerId, i32>, order: &[PlayerId]) -> Vec<PlayerScore> {
@@ -196,19 +216,24 @@ pub async fn run_game(
         for id in &ids {
             let len = hands[id].len();
             let (drawn, reshuffled) = deck.refill(len);
-            hands.get_mut(id).unwrap().add(drawn);
+            hands
+                .get_mut(id)
+                .expect("invariant: every seated player has a hand")
+                .add(drawn);
             if reshuffled {
                 crate::observability::metric::deck_reshuffled();
                 broadcast(&players, ServerMessage::DeckReshuffled).await;
             }
         }
-        for p in &players {
-            let _ = p
-                .out
-                .send(ServerMessage::YourHand {
-                    cards: hands[&p.id].views(),
-                })
-                .await;
+        for id in &ids {
+            send_to(
+                &players,
+                *id,
+                ServerMessage::YourHand {
+                    cards: hands[id].views(),
+                },
+            )
+            .await;
         }
 
         let base = rng.gen_range(config.boiling_point.min..=config.boiling_point.max);
@@ -451,7 +476,7 @@ pub async fn run_game(
             // An explosion has no scoring colour winner.
             score_span.record("dominant_color", "none");
             for (player, delta) in &result.deltas {
-                *scores.get_mut(player).unwrap() += delta;
+                *scores.entry(*player).or_insert(0) += delta;
             }
             broadcast(
                 &players,
@@ -472,7 +497,7 @@ pub async fn run_game(
         } else {
             let result = score_safe(round.pot(), &ctx);
             for (player, delta) in &result.awards {
-                *scores.get_mut(player).unwrap() += delta;
+                *scores.entry(*player).or_insert(0) += delta;
             }
             let outcome = if result.winners.len() == 1 {
                 ScoringOutcome::Domination {
@@ -549,7 +574,7 @@ pub async fn run_game(
             hand.views()
                 .iter()
                 .min_by_key(|c| c.view.volatility)
-                .unwrap()
+                .expect("invariant: deathmatch sheds only from a non-empty hand")
                 .id
         };
         match run_deathmatch(
@@ -640,17 +665,46 @@ async fn collect_wave(
                     Some(GroupCommand::Action { player, msg }) => {
                         let active = acting.contains(&player) && !gone.contains(&player);
                         match msg {
-                            ClientMessage::CommitCard { card }
-                                if active
-                                    && hands.get(&player).is_some_and(|h| h.contains(card)) =>
-                            {
-                                choice.insert(player, WaveChoice::Play(card));
+                            ClientMessage::CommitCard { card } if active => {
+                                // §I: a card the player doesn't hold is an invalid
+                                // action, not a silent drop. The reply carries only the
+                                // reason — never pot/volatility/boiling-point state — so
+                                // it cannot weaken blind volatility.
+                                if hands.get(&player).is_some_and(|h| h.contains(card)) {
+                                    choice.insert(player, WaveChoice::Play(card));
+                                } else {
+                                    send_to(
+                                        players,
+                                        player,
+                                        ServerMessage::Error {
+                                            code: ErrorCode::NotYourCard,
+                                            message: "that card is not in your hand".into(),
+                                        },
+                                    )
+                                    .await;
+                                }
                             }
                             ClientMessage::CommitPass if active => {
                                 choice.insert(player, WaveChoice::Pass);
                             }
                             ClientMessage::LockIn if active => {
                                 locked.insert(player);
+                            }
+                            // A commit/pass/lock-in from a player who has already passed,
+                            // timed out, or is otherwise not acting this round: reply
+                            // LockedOut rather than drop it (§I). No state changes.
+                            ClientMessage::CommitCard { .. }
+                            | ClientMessage::CommitPass
+                            | ClientMessage::LockIn => {
+                                send_to(
+                                    players,
+                                    player,
+                                    ServerMessage::Error {
+                                        code: ErrorCode::LockedOut,
+                                        message: "you are locked out of this round".into(),
+                                    },
+                                )
+                                .await;
                             }
                             ClientMessage::Heartbeat => {
                                 send_to(players, player, ServerMessage::Heartbeat).await;
@@ -662,7 +716,34 @@ async fn collect_wave(
                                 )
                                 .await;
                             }
-                            _ => {}
+                            // An off-palette emote is rejected exactly as in the lobby,
+                            // resolving the lobby-vs-wave inconsistency (F1/§I).
+                            ClientMessage::Emote { .. } => {
+                                send_to(
+                                    players,
+                                    player,
+                                    ServerMessage::Error {
+                                        code: ErrorCode::InvalidEmote,
+                                        message: "unknown emote".into(),
+                                    },
+                                )
+                                .await;
+                            }
+                            // Entry messages (create/join/enqueue) are never valid
+                            // mid-game: reply WrongPhase, never silently drop.
+                            ClientMessage::CreateRoom { .. }
+                            | ClientMessage::JoinRoom { .. }
+                            | ClientMessage::EnqueueMatch { .. } => {
+                                send_to(
+                                    players,
+                                    player,
+                                    ServerMessage::Error {
+                                        code: ErrorCode::WrongPhase,
+                                        message: "not a valid action during a wave".into(),
+                                    },
+                                )
+                                .await;
+                            }
                         }
                     }
                     Some(GroupCommand::Leave { player }) => {
@@ -679,9 +760,12 @@ async fn collect_wave(
                             seat.out = out;
                             reconnected.push(player);
                         } else {
+                            // An unseated joiner mid-game: a private Error sent direct
+                            // to their channel (they are not in `players`, so this
+                            // can't route through `send_to`).
                             let _ = out
                                 .send(ServerMessage::Error {
-                                    code: boiling_point_protocol::server::ErrorCode::WrongPhase,
+                                    code: ErrorCode::WrongPhase,
                                     message: "game already in progress".into(),
                                 })
                                 .await;
@@ -720,5 +804,347 @@ async fn collect_wave(
         emptied,
         reconnected,
         timed_out,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ContentConfig;
+    use crate::game::card::Card;
+    use boiling_point_protocol::server::PlayerScore;
+    use boiling_point_protocol::{CardId, EmoteId};
+
+    /// A seated player wired to a fresh outbound channel; the returned receiver
+    /// collects what the loop sends them.
+    fn seat(n: u128, color: Color) -> (SeatInfo, mpsc::Receiver<ServerMessage>) {
+        let (tx, rx) = mpsc::channel(64);
+        (
+            SeatInfo {
+                id: PlayerId(Uuid::from_u128(n)),
+                name: format!("p{n}"),
+                color,
+                out: tx,
+            },
+            rx,
+        )
+    }
+
+    fn card(id: u32, color: Color, vol: u8, pts: u8) -> Card {
+        Card {
+            id: CardId(id),
+            color,
+            volatility: vol,
+            points: pts,
+            effect: None,
+        }
+    }
+
+    fn drain(rx: &mut mpsc::Receiver<ServerMessage>) -> Vec<ServerMessage> {
+        let mut out = Vec::new();
+        while let Ok(m) = rx.try_recv() {
+            out.push(m);
+        }
+        out
+    }
+
+    // ---- F1: invalid in-wave actions get an error, never a silent drop (§I) ----
+
+    #[tokio::test]
+    async fn bad_commit_card_replies_not_your_card_and_changes_no_state() {
+        let (s1, mut rx1) = seat(1, Color::Ruby);
+        let id1 = s1.id;
+        let mut players = vec![s1];
+        let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
+        let mut h = Hand::new();
+        h.add([card(10, Color::Ruby, 2, 1)]);
+        hands.insert(id1, h);
+        let mut gone = HashSet::new();
+        let palette: HashSet<u16> = HashSet::new();
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        cmd_tx
+            .send(RoomCommand::Action {
+                player: id1,
+                msg: ClientMessage::CommitCard { card: CardId(99) },
+            })
+            .await
+            .unwrap();
+        drop(cmd_tx); // wave closes once the queued action is drained
+
+        let collection = collect_wave(
+            &mut cmd_rx,
+            &mut players,
+            &[id1],
+            &mut hands,
+            &mut gone,
+            &palette,
+            5_000,
+        )
+        .await;
+
+        // No state change: nothing committed, the player falls through to a pass,
+        // and the real card stays in hand.
+        assert!(collection.committed.is_empty());
+        assert_eq!(collection.passers, vec![id1]);
+        assert!(hands[&id1].contains(CardId(10)));
+        assert_eq!(hands[&id1].len(), 1);
+
+        // The only reply is the NotYourCard error (reason only — no hidden state).
+        let msgs = drain(&mut rx1);
+        assert!(
+            matches!(
+                msgs.as_slice(),
+                [ServerMessage::Error {
+                    code: ErrorCode::NotYourCard,
+                    ..
+                }]
+            ),
+            "expected one NotYourCard error, got {msgs:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn action_from_locked_out_player_replies_locked_out_and_changes_no_state() {
+        let (s1, _rx1) = seat(1, Color::Ruby);
+        let (s2, mut rx2) = seat(2, Color::Sapphire);
+        let id1 = s1.id;
+        let id2 = s2.id;
+        let mut players = vec![s1, s2];
+        let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
+        hands.insert(id1, Hand::new());
+        let mut h2 = Hand::new();
+        h2.add([card(20, Color::Sapphire, 1, 1)]);
+        hands.insert(id2, h2);
+        let mut gone = HashSet::new();
+        let palette: HashSet<u16> = HashSet::new();
+
+        // id2 is NOT in the acting set (already passed / locked out this round).
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        cmd_tx
+            .send(RoomCommand::Action {
+                player: id2,
+                msg: ClientMessage::CommitPass,
+            })
+            .await
+            .unwrap();
+        drop(cmd_tx);
+
+        let collection = collect_wave(
+            &mut cmd_rx,
+            &mut players,
+            &[id1],
+            &mut hands,
+            &mut gone,
+            &palette,
+            5_000,
+        )
+        .await;
+
+        // id2 takes no part in this wave's bookkeeping; its hand is untouched.
+        assert!(collection.committed.iter().all(|(p, _)| *p != id2));
+        assert!(!collection.passers.contains(&id2));
+        assert!(hands[&id2].contains(CardId(20)));
+
+        let msgs = drain(&mut rx2);
+        assert!(
+            matches!(
+                msgs.as_slice(),
+                [ServerMessage::Error {
+                    code: ErrorCode::LockedOut,
+                    ..
+                }]
+            ),
+            "expected one LockedOut error, got {msgs:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn off_palette_emote_replies_invalid_emote_in_wave() {
+        let (s1, mut rx1) = seat(1, Color::Ruby);
+        let id1 = s1.id;
+        let mut players = vec![s1];
+        let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
+        hands.insert(id1, Hand::new());
+        let mut gone = HashSet::new();
+        let palette: HashSet<u16> = HashSet::from([1u16]);
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        // A palette emote is broadcast; an off-palette one is rejected — matching
+        // the lobby, resolving the lobby-vs-wave inconsistency.
+        cmd_tx
+            .send(RoomCommand::Action {
+                player: id1,
+                msg: ClientMessage::Emote { emote: EmoteId(1) },
+            })
+            .await
+            .unwrap();
+        cmd_tx
+            .send(RoomCommand::Action {
+                player: id1,
+                msg: ClientMessage::Emote {
+                    emote: EmoteId(999),
+                },
+            })
+            .await
+            .unwrap();
+        drop(cmd_tx);
+
+        let _ = collect_wave(
+            &mut cmd_rx,
+            &mut players,
+            &[id1],
+            &mut hands,
+            &mut gone,
+            &palette,
+            5_000,
+        )
+        .await;
+
+        let msgs = drain(&mut rx1);
+        assert!(
+            matches!(
+                msgs.as_slice(),
+                [
+                    ServerMessage::EmoteBroadcast {
+                        emote: EmoteId(1),
+                        ..
+                    },
+                    ServerMessage::Error {
+                        code: ErrorCode::InvalidEmote,
+                        ..
+                    }
+                ]
+            ),
+            "expected a valid broadcast then an InvalidEmote error, got {msgs:?}"
+        );
+    }
+
+    // ---- F2: give the shipping (async) path determinism + stress coverage ----
+    //
+    // Full convergence onto the sync engine core (a network-backed `Decider`) is
+    // deferred to a follow-up (see the proposal/design risk plan); these tests give
+    // the async `run_game` the same determinism + no-panic stress guarantees the
+    // sync runner is tested for (`runner.rs`).
+
+    /// A scripted in-process client: plays its hand in order, one card per wave,
+    /// locking in so waves close as soon as every acting player has. Returns the
+    /// final scores it observed at `GameOver`.
+    async fn client_loop(
+        id: PlayerId,
+        mut rx: mpsc::Receiver<ServerMessage>,
+        cmd_tx: mpsc::Sender<RoomCommand>,
+    ) -> Option<Vec<PlayerScore>> {
+        let mut hand: Vec<CardId> = Vec::new();
+        let mut idx = 0usize;
+        while let Some(msg) = rx.recv().await {
+            match msg {
+                ServerMessage::YourHand { cards } => {
+                    hand = cards.iter().map(|c| c.id).collect();
+                    idx = 0;
+                }
+                ServerMessage::WaveOpened { .. } => {
+                    let action = if idx < hand.len() {
+                        let c = hand[idx];
+                        idx += 1;
+                        ClientMessage::CommitCard { card: c }
+                    } else {
+                        ClientMessage::CommitPass
+                    };
+                    let _ = cmd_tx
+                        .send(RoomCommand::Action {
+                            player: id,
+                            msg: action,
+                        })
+                        .await;
+                    let _ = cmd_tx
+                        .send(RoomCommand::Action {
+                            player: id,
+                            msg: ClientMessage::LockIn,
+                        })
+                        .await;
+                }
+                ServerMessage::GameOver { final_scores, .. } => return Some(final_scores),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Drive a full four-player game through the real async `run_game`, returning
+    /// the agreed-upon final scores.
+    async fn play_async_game(seed: u64, wave_ms: u32) -> Vec<PlayerScore> {
+        let mut cfg = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
+        cfg.timing.wave1_ms = wave_ms;
+        cfg.timing.wave_ms = wave_ms;
+        let registry = cfg.build_registry().unwrap();
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<RoomCommand>(512);
+        let mut seats = Vec::new();
+        let mut clients = Vec::new();
+        for (i, color) in Color::PLAYER_COLORS.into_iter().enumerate() {
+            let (out_tx, out_rx) = mpsc::channel::<ServerMessage>(512);
+            let id = PlayerId(Uuid::from_u128(i as u128 + 1));
+            seats.push(SeatInfo {
+                id,
+                name: format!("p{i}"),
+                color,
+                out: out_tx,
+            });
+            clients.push(client_loop(id, out_rx, cmd_tx.clone()));
+        }
+        drop(cmd_tx); // once every client returns at GameOver, run_game's rx closes
+        let palette: HashSet<u16> = HashSet::new();
+
+        let mut it = clients.into_iter();
+        let (c0, c1, c2, c3) = (
+            it.next().unwrap(),
+            it.next().unwrap(),
+            it.next().unwrap(),
+            it.next().unwrap(),
+        );
+        let game = run_game(
+            &registry,
+            &cfg,
+            RoomCode("BREW-TEST".into()),
+            seats,
+            &mut cmd_rx,
+            &palette,
+            seed,
+        );
+        let (_g, r0, r1, r2, r3) = tokio::join!(game, c0, c1, c2, c3);
+
+        let results = [r0, r1, r2, r3];
+        let scores: Vec<&Vec<PlayerScore>> = results.iter().flatten().collect();
+        assert_eq!(scores.len(), 4, "every client observed GameOver");
+        for s in &scores[1..] {
+            assert_eq!(*s, scores[0], "clients disagree on the final scores");
+        }
+        scores[0].clone()
+    }
+
+    #[tokio::test]
+    async fn async_path_is_deterministic_for_a_fixed_seed() {
+        // The shipping loop must be reproducible under a fixed seed, matching the
+        // determinism guarantee the sync runner is tested for.
+        let a = tokio::time::timeout(Duration::from_secs(20), play_async_game(0xA11CE, 1_000))
+            .await
+            .expect("async game completed");
+        let b = tokio::time::timeout(Duration::from_secs(20), play_async_game(0xA11CE, 1_000))
+            .await
+            .expect("async game completed");
+        assert_eq!(a, b);
+    }
+
+    #[tokio::test]
+    async fn async_path_completes_across_many_seeds_without_panicking() {
+        // Parity with the sync runner's stress test: the async path reaches GameOver
+        // for many seeds without tripping an invariant.
+        for seed in 0..12u64 {
+            let scores = tokio::time::timeout(Duration::from_secs(20), play_async_game(seed, 120))
+                .await
+                .unwrap_or_else(|_| panic!("seed {seed} did not complete"));
+            assert_eq!(scores.len(), 4, "seed {seed} produced four final scores");
+        }
     }
 }
