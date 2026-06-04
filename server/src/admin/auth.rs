@@ -17,11 +17,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperatorRole {
-    /// Read-only: fleet overview, room list, the hidden-state reveal, replay, and
+    /// Read-only: fleet overview, group list, the hidden-state reveal, replay, and
     /// the balance dashboard.
     Observer,
     /// Everything an observer may do, plus the control commands (reload, toggle,
-    /// room lifecycle).
+    /// group lifecycle).
     Elevated,
 }
 

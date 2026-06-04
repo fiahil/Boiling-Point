@@ -33,7 +33,7 @@ fn assert_lacks(s: &str, needle: &str) {
 #[test]
 fn lobby_shows_seats_and_code() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     let s = screen(&app);
     assert_has(&s, "Lobby");
     assert_has(&s, "BREW-7K3F");
@@ -45,7 +45,7 @@ fn lobby_shows_seats_and_code() {
 #[test]
 fn round_start_shows_modifier_and_refill() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::game_starting());
     app.on_server(&fixtures::modifier_thin_ice());
     app.on_server(&fixtures::your_hand());
@@ -136,7 +136,7 @@ fn final_wave_indicator_shows() {
 #[test]
 fn deathmatch_announced_on_game_over() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::deathmatch_started());
     app.on_server(&fixtures::game_over());
     let s = screen(&app);
@@ -147,7 +147,7 @@ fn deathmatch_announced_on_game_over() {
 #[test]
 fn game_over_shows_standings_and_winner() {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::game_over());
     let s = screen(&app);
     assert_has(&s, "FINAL STANDINGS");
@@ -225,10 +225,89 @@ fn replay_round_trips() {
     std::fs::remove_file(&path).ok();
 }
 
+#[test]
+fn card_face_shows_effect_name_and_pips() {
+    // Cards now name their effect (not a bare ◆) and show points as pips.
+    let app = reach_playing();
+    let s = screen(&app);
+    assert_has(&s, "Peek"); // effect name on the Wild-Peek card face (hand idx 2)
+    assert_has(&s, "Recall"); // effect name on the Amethyst-Recall card (hand idx 4)
+    assert_has(&s, "●"); // points pips
+}
+
+#[test]
+fn inspector_explains_selected_effect() {
+    let mut app = reach_playing();
+    app.set_cursor(2); // the Wild Peek card
+    let s = screen(&app);
+    assert_has(&s, "inspect");
+    assert_has(&s, "Peek");
+    assert_has(&s, "threshold"); // Peek described in value-free terms
+    // Secret boundary holds: the playing screen still never prints "boiling".
+    assert_lacks(&s, "boiling");
+}
+
+#[test]
+fn inspector_explains_pass() {
+    let mut app = reach_playing();
+    app.set_cursor(99); // past the hand → the Pass slot
+    let s = screen(&app);
+    assert_has(&s, "inspect");
+    assert_has(&s, "locked out");
+    assert_has(&s, "lose the pot");
+}
+
+#[test]
+fn inspector_follows_cursor() {
+    let mut app = reach_playing();
+    app.set_cursor(0); // Ruby ingredient
+    let a = screen(&app);
+    assert_has(&a, "Ruby");
+    app.set_cursor(4); // Amethyst Recall
+    let b = screen(&app);
+    assert_has(&b, "Recall");
+    assert_ne!(a, b, "the inspector must change as the cursor moves");
+}
+
+#[test]
+fn codex_lists_effects_and_modifiers() {
+    let mut app = reach_playing();
+    app.open_codex();
+    let s = screen(&app);
+    assert_has(&s, "Codex");
+    assert_has(&s, "Peek");
+    assert_has(&s, "Double Down");
+    assert_has(&s, "Reversal");
+    assert_has(&s, "Residue");
+    // Modifiers show DIRECTION only — never the server-side magnitude.
+    assert_has(&s, "boiling point lower"); // Thin Ice's qualitative effect
+    assert_lacks(&s, "-4"); // not the magnitude
+    assert_lacks(&s, "+4");
+    assert_lacks(&s, "+3"); // Residue's hidden +3
+}
+
+#[test]
+fn ambient_animation_is_deterministic_and_blind() {
+    // The cauldron animates, but its motion carries no information and a render at
+    // a fixed animation phase is stable (so the snapshot layer stays deterministic).
+    let app = reach_playing();
+    let a = screen(&app); // anim_ms == 0
+    let app2 = reach_playing();
+    let a2 = screen(&app2);
+    assert_eq!(a, a2, "rendering at animation phase 0 must be identical");
+
+    let mut app3 = reach_playing();
+    app3.on_tick(300); // advance the ambient clock
+    let b = screen(&app3);
+    // The public, state-bearing content is unchanged by the animation.
+    assert_has(&b, "cards in the pot");
+    assert_has(&b, "?? / ??");
+}
+
 /// Drive the app to an open wave 1 of round 1.
 fn reach_playing() -> App {
     let mut app = App::new();
-    app.on_server(&fixtures::room_joined());
+    app.on_server(&fixtures::group_joined());
     app.on_server(&fixtures::game_starting());
     app.on_server(&fixtures::your_hand());
     app.on_server(&fixtures::wave_open(1, 1, 30_000));

@@ -4,7 +4,7 @@
 
 use boiling_point_protocol::{
     PlayerId,
-    ids::{CardId, EmoteId, RoomCode},
+    ids::{CardId, EmoteId, GroupCode},
     server::{Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome, ServerMessage},
     vocab::{CardView, Color, EffectKind, HandCard, ModifierKind},
 };
@@ -26,6 +26,8 @@ pub fn players() -> Vec<PlayerPublic> {
             display_name: names[i].into(),
             color: *c,
             connected: true,
+            // The 4th seat is a matchmaking guest, to exercise guest rendering.
+            guest: i == 3,
         })
         .collect()
 }
@@ -65,12 +67,13 @@ pub fn hand() -> Vec<HandCard> {
     ]
 }
 
-/// The `RoomJoined` message for this fixture table (seat 0's perspective).
-pub fn room_joined() -> ServerMessage {
-    ServerMessage::RoomJoined {
-        room_code: RoomCode("BREW-7K3F".into()),
+/// The `GroupJoined` message for this fixture table (seat 0's perspective).
+pub fn group_joined() -> ServerMessage {
+    ServerMessage::GroupJoined {
+        group_code: GroupCode("BREW-7K3F".into()),
         your_player_id: pid(0),
         your_color: Color::Ruby,
+        session_token: "demo-session-token".into(),
         players: players(),
     }
 }
@@ -219,7 +222,7 @@ pub fn game_over() -> ServerMessage {
 /// A reconnection `StateSnapshot` mid-round-2 (scoped to seat 0's knowledge).
 pub fn state_snapshot() -> ServerMessage {
     ServerMessage::StateSnapshot {
-        room_code: RoomCode("BREW-7K3F".into()),
+        group_code: GroupCode("BREW-7K3F".into()),
         your_player_id: pid(0),
         round_number: 2,
         players: players(),
@@ -243,7 +246,7 @@ pub fn demo_game() -> Vec<ServerMessage> {
     let ps = players();
     let p = |i: u8| pid(i);
     vec![
-        room_joined(),
+        group_joined(),
         ServerMessage::GameStarting {
             players: ps.clone(),
             round_count: 5,

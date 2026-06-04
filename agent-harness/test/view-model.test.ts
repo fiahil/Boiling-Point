@@ -19,13 +19,14 @@ function feed(msgs: ServerMessage[]) {
 test("builds self + opponents and tracks scores, contribution, lockout, pot", () => {
   const vm = feed([
     {
-      type: "RoomJoined",
-      room_code: "BREW-7K3F",
+      type: "GroupJoined",
+      session_token: "test-session",
+      group_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
       players: [
-        { id: "me", display_name: "Me", color: "Ruby", connected: true },
-        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true },
+        { id: "me", display_name: "Me", color: "Ruby", connected: true, guest: false },
+        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true, guest: false },
       ],
     },
     { type: "YourHand", cards: [{ id: 1, view: RUBY }] },
@@ -50,11 +51,12 @@ test("builds self + opponents and tracks scores, contribution, lockout, pot", ()
 test("never holds a boiling point on a safe brew", () => {
   const vm = feed([
     {
-      type: "RoomJoined",
-      room_code: "BREW-7K3F",
+      type: "GroupJoined",
+      session_token: "test-session",
+      group_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
-      players: [{ id: "me", display_name: "Me", color: "Ruby", connected: true }],
+      players: [{ id: "me", display_name: "Me", color: "Ruby", connected: true, guest: false }],
     },
     { type: "WaveOpened", round_number: 1, wave_number: 1, timer_ms: 30000, final_wave: false },
     { type: "WaveResolved", played: ["me"], passed: [], cauldron_card_count: 1, contributions: [{ player: "me", count: 1 }] },

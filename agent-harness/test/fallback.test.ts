@@ -11,7 +11,7 @@ const card = (id: number, volatility: number, points: number, color = "Ruby" as 
 });
 
 const player = (id: string): PlayerView => ({
-  info: { id, display_name: id, color: "Ruby", connected: true },
+  info: { id, display_name: id, color: "Ruby", connected: true, guest: false },
   score: 0,
   contribution: 0,
   committedLastWave: false,

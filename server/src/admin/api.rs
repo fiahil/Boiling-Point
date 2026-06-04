@@ -1,6 +1,6 @@
-//! The admin HTTP API: read endpoints over the projection (fleet, rooms, reveal,
+//! The admin HTTP API: read endpoints over the projection (fleet, groups, reveal,
 //! replay, plus an SSE live feed) and the elevated command endpoints (reload,
-//! toggle, room lifecycle). Everything is served under `/admin/*` on a listener
+//! toggle, group lifecycle). Everything is served under `/admin/*` on a listener
 //! separate from the player WebSocket; the read path never mutates state and the
 //! command path goes through the server's authoritative primitives (which emit
 //! their own `admin.command` audit spans).
@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::broadcast;
 
-use boiling_point_protocol::RoomCode;
+use boiling_point_protocol::GroupCode;
 use boiling_point_protocol::vocab::{EffectKind, ModifierKind};
 
 use crate::lobby::registry::ContentSelector;
@@ -38,23 +38,23 @@ pub fn router(state: AdminState) -> Router {
         // Read surfaces (any authenticated operator — observer or elevated).
         .route("/admin/me", get(me))
         .route("/admin/fleet", get(fleet))
-        .route("/admin/rooms", get(rooms))
-        .route("/admin/rooms/{code}", get(room_detail))
+        .route("/admin/groups", get(groups))
+        .route("/admin/groups/{code}", get(group_detail))
         .route("/admin/balance", get(balance))
         .route("/admin/replay", get(replay_list))
         .route("/admin/replay/{game_id}", get(replay_get))
         .route("/admin/live", get(live))
         // Hidden-state reveal — a read, served only over the admin channel.
-        .route("/admin/rooms/{code}/reveal", get(reveal))
+        .route("/admin/groups/{code}/reveal", get(reveal))
         // Command plane (elevated only).
         .route("/admin/commands/reload", post(cmd_reload))
         .route("/admin/commands/toggle", post(cmd_toggle))
-        .route("/admin/commands/rooms/seed", post(cmd_seed))
+        .route("/admin/commands/groups/seed", post(cmd_seed))
         .route(
-            "/admin/commands/rooms/{code}/force-start",
+            "/admin/commands/groups/{code}/force-start",
             post(cmd_force_start),
         )
-        .route("/admin/commands/rooms/{code}/kill", post(cmd_kill))
+        .route("/admin/commands/groups/{code}/kill", post(cmd_kill))
         .with_state(state)
 }
 
@@ -93,20 +93,20 @@ async fn fleet(_op: Operator, State(s): State<AdminState>) -> Response {
     Json(s.projection.fleet()).into_response()
 }
 
-async fn rooms(_op: Operator, State(s): State<AdminState>) -> Response {
-    Json(s.projection.rooms()).into_response()
+async fn groups(_op: Operator, State(s): State<AdminState>) -> Response {
+    Json(s.projection.groups()).into_response()
 }
 
-async fn room_detail(
+async fn group_detail(
     _op: Operator,
     State(s): State<AdminState>,
     Path(code): Path<String>,
 ) -> Response {
-    match s.projection.room(&code) {
+    match s.projection.group(&code) {
         Some(view) => Json(view).into_response(),
         None => (
             StatusCode::NOT_FOUND,
-            Json(json!({ "error": "no such live room" })),
+            Json(json!({ "error": "no such live group" })),
         )
             .into_response(),
     }
@@ -164,7 +164,7 @@ async fn live(
 
 async fn reveal(_op: Operator, State(s): State<AdminState>, Path(code): Path<String>) -> Response {
     let outcome = s.projection.reveal(&code);
-    if matches!(outcome, RevealOutcome::NoSuchRoom) {
+    if matches!(outcome, RevealOutcome::NoSuchGroup) {
         return (StatusCode::NOT_FOUND, Json(outcome)).into_response();
     }
     Json(outcome).into_response()
@@ -198,7 +198,7 @@ struct ToggleReq {
 }
 
 async fn cmd_reload(Elevated(op): Elevated, State(s): State<AdminState>, body: String) -> Response {
-    match s.rooms.reload(&body, &op.name) {
+    match s.groups.reload(&body, &op.name) {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -214,7 +214,7 @@ async fn cmd_toggle(
     Json(req): Json<ToggleReq>,
 ) -> Response {
     match s
-        .rooms
+        .groups
         .toggle_item(req.selector.into(), req.enabled, &op.name)
     {
         Ok(()) => Json(json!({ "ok": true })).into_response(),
@@ -227,8 +227,8 @@ async fn cmd_toggle(
 }
 
 async fn cmd_seed(Elevated(op): Elevated, State(s): State<AdminState>) -> Response {
-    let code = s.rooms.seed_room(&op.name);
-    Json(json!({ "room_code": code.0 })).into_response()
+    let code = s.groups.seed_group(&op.name);
+    Json(json!({ "group_code": code.0 })).into_response()
 }
 
 async fn cmd_force_start(
@@ -236,7 +236,10 @@ async fn cmd_force_start(
     State(s): State<AdminState>,
     Path(code): Path<String>,
 ) -> Response {
-    delivered_response(s.rooms.force_start(&RoomCode(code.clone()), &op.name), code)
+    delivered_response(
+        s.groups.force_start(&GroupCode(code.clone()), &op.name),
+        code,
+    )
 }
 
 async fn cmd_kill(
@@ -244,18 +247,21 @@ async fn cmd_kill(
     State(s): State<AdminState>,
     Path(code): Path<String>,
 ) -> Response {
-    delivered_response(s.rooms.kill_room(&RoomCode(code.clone()), &op.name), code)
+    delivered_response(
+        s.groups.kill_group(&GroupCode(code.clone()), &op.name),
+        code,
+    )
 }
 
-/// Shape a room-lifecycle command's delivery result. The authoritative effect is
-/// confirmed by telemetry (the room leaving the live registry), not this ack.
+/// Shape a group-lifecycle command's delivery result. The authoritative effect is
+/// confirmed by telemetry (the group leaving the live registry), not this ack.
 fn delivered_response(delivered: bool, code: String) -> Response {
     if delivered {
-        Json(json!({ "delivered": true, "room_code": code })).into_response()
+        Json(json!({ "delivered": true, "group_code": code })).into_response()
     } else {
         (
             StatusCode::NOT_FOUND,
-            Json(json!({ "delivered": false, "error": "no such room" })),
+            Json(json!({ "delivered": false, "error": "no such group" })),
         )
             .into_response()
     }
@@ -273,7 +279,7 @@ mod tests {
 
     use crate::admin::{AdminProjection, AdminState, OperatorAuth, OperatorRole};
     use crate::config::ContentConfig;
-    use crate::lobby::RoomRegistry;
+    use crate::lobby::GroupRegistry;
 
     const ELEVATED: &str = "elev-token";
     const OBSERVER: &str = "obs-token";
@@ -281,14 +287,14 @@ mod tests {
     fn test_state() -> AdminState {
         let config = ContentConfig::from_toml(include_str!("../../content.toml")).unwrap();
         let registry = Arc::new(config.build_registry().unwrap());
-        let rooms = Arc::new(RoomRegistry::new(registry, Arc::new(config)));
+        let groups = Arc::new(GroupRegistry::new(registry, Arc::new(config)));
         let auth = OperatorAuth::new()
             .with_token(ELEVATED, "root", OperatorRole::Elevated)
             .with_token(OBSERVER, "watcher", OperatorRole::Observer);
         AdminState {
             projection: Arc::new(AdminProjection::new()),
             auth: Arc::new(auth),
-            rooms,
+            groups,
         }
     }
 
@@ -335,15 +341,15 @@ mod tests {
 
     #[tokio::test]
     async fn observer_may_reveal_but_is_denied_control() {
-        // The reveal is a read: an observer is authorized (404 = no such live room,
+        // The reveal is a read: an observer is authorized (404 = no such live group,
         // but auth/role passed — not 403).
         assert_eq!(
-            status_of(get("/admin/rooms/ABCD/reveal", Some(OBSERVER))).await,
+            status_of(get("/admin/groups/ABCD/reveal", Some(OBSERVER))).await,
             StatusCode::NOT_FOUND
         );
         // Control still requires elevation.
         assert_eq!(
-            status_of(post("/admin/commands/rooms/seed", Some(OBSERVER), "")).await,
+            status_of(post("/admin/commands/groups/seed", Some(OBSERVER), "")).await,
             StatusCode::FORBIDDEN
         );
         assert_eq!(
@@ -362,17 +368,17 @@ mod tests {
 
         let config = ContentConfig::from_toml(include_str!("../../content.toml")).unwrap();
         let registry = Arc::new(config.build_registry().unwrap());
-        let rooms = Arc::new(RoomRegistry::new(registry, Arc::new(config)));
-        let queue = Arc::new(MatchQueue::new(rooms.clone()));
+        let groups = Arc::new(GroupRegistry::new(registry, Arc::new(config)));
+        let queue = Arc::new(MatchQueue::new(groups.clone()));
         let state = AppState {
             sessions: Arc::new(SessionStore::new()),
-            rooms,
+            groups,
             queue,
             conn_timeout: std::time::Duration::from_secs(90),
             pool: None,
         };
         let resp = player_app(state)
-            .oneshot(get("/admin/rooms/ABCD/reveal", Some(ELEVATED)))
+            .oneshot(get("/admin/groups/ABCD/reveal", Some(ELEVATED)))
             .await
             .unwrap();
         assert_eq!(
@@ -389,7 +395,7 @@ mod tests {
             StatusCode::OK
         );
         assert_eq!(
-            status_of(get("/admin/rooms", Some(OBSERVER))).await,
+            status_of(get("/admin/groups", Some(OBSERVER))).await,
             StatusCode::OK
         );
         assert_eq!(
@@ -401,9 +407,9 @@ mod tests {
     #[tokio::test]
     async fn elevated_reaches_control() {
         // The only thing elevation adds over an observer is the command plane:
-        // seeding a room is authorized and succeeds.
+        // seeding a group is authorized and succeeds.
         assert_eq!(
-            status_of(post("/admin/commands/rooms/seed", Some(ELEVATED), "")).await,
+            status_of(post("/admin/commands/groups/seed", Some(ELEVATED), "")).await,
             StatusCode::OK
         );
     }
@@ -425,7 +431,7 @@ mod tests {
     #[tokio::test]
     async fn elevated_reload_validates_and_applies() {
         let state = test_state();
-        let before = state.rooms.len();
+        let before = state.groups.len();
         // A valid reload (the same content) is accepted.
         let resp = super::router(state.clone())
             .oneshot(post(
@@ -436,7 +442,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        // An invalid reload is rejected with 400 and does not change room count.
+        // An invalid reload is rejected with 400 and does not change group count.
         let resp = super::router(state.clone())
             .oneshot(post(
                 "/admin/commands/reload",
@@ -446,17 +452,17 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(state.rooms.len(), before);
+        assert_eq!(state.groups.len(), before);
     }
 
     /// 8.3: reading the projection over the API mutates no game or config state.
     #[tokio::test]
     async fn read_endpoints_do_not_mutate_state() {
         let state = test_state();
-        let rooms_before = state.rooms.len();
+        let groups_before = state.groups.len();
         for uri in [
             "/admin/fleet",
-            "/admin/rooms",
+            "/admin/groups",
             "/admin/balance",
             "/admin/replay",
         ] {
@@ -467,9 +473,9 @@ mod tests {
             assert_eq!(resp.status(), StatusCode::OK, "GET {uri}");
         }
         assert_eq!(
-            state.rooms.len(),
-            rooms_before,
-            "reads must not create/destroy rooms"
+            state.groups.len(),
+            groups_before,
+            "reads must not create/destroy groups"
         );
     }
 }

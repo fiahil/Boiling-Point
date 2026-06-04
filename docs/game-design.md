@@ -605,18 +605,40 @@ healthy explosion rate before human playtesting).
 
 ---
 
-## 14. Rooms, Matchmaking, Reconnection (Reference)
+## 14. Groups, Matchmaking, Reconnection (Reference)
 
 Mostly per prior decisions; see [server-architecture.md](architecture/server-architecture.md).
 
-- **Rooms:** invite link to group up; **auto-start at exactly 4 players.** No
-  host, no settings, always 4 players. 5-minute idle timeout.
+- **Groups:** players **join a group** (by invite link) and then go on **games**
+  together; **auto-start at exactly 4 ready players.** No host, no settings,
+  always 4 players. A group **persists across games** — after a game it returns to
+  its lobby and the same table can **play again** (each seat opts in) without
+  re-queuing; it is reclaimed after a 5-minute idle timeout once empty/idle.
+- **Members vs guests.** A group holds at most 4 **members** (joined by invite, or
+  the founding players of a quick-match table) — they persist and carry the group's
+  standings. A **guest** is a player placed by matchmaking **fill** to complete a
+  short table for **one game**; the guest is dropped when the group returns to its
+  lobby, leaving the members intact.
+- **Group fill.** A partial group (1–3 present members) can ask matchmaking to
+  **fill** its empty seats — a visible "looking for a 4th…" state until guests
+  arrive and the game starts, or a member cancels. The engine is fixed at 4, so a
+  short group waits for a guest rather than starting under-strength.
+- **Group standings.** Each group keeps a **live, in-memory** tally: per member,
+  games played and wins (win-rate derived); plus an aggregate **guest** line so a
+  guest's win is recorded against "guests" rather than vanishing. Standings live
+  only as long as the group does — they are **not persisted** (durable career stats
+  need accounts → roadmap).
+- **Session connection:** a client connects once and keeps that connection across
+  games and groups — it can join a group, leave back to a menu, and join another
+  on the **same socket** (it is not torn down when a game or group ends).
 - **Matchmaking — in v1.** A queue that assembles 4-player tables by simple
-  fill (next open table / FIFO), **not skill-based.** This works fine on
-  anonymous sessions — no rating needed. Invite-link rooms and the matchmaking
+  fill (next open table / FIFO), **not skill-based** — it both forms fresh tables
+  from solo players and **backfills partial groups** with guests. This works fine on
+  anonymous sessions — no rating needed. Invite-link groups and the matchmaking
   queue both ship at launch.
 - **Auth (v1):** anonymous session tokens (per the server doc) — no persistent
-  accounts.
+  accounts. The client persists its token and replays it so identity (and a held
+  seat) survives a socket drop.
 - **Deferred to v2:** player **rating** (FFA needs TrueSkill / Weng-Lin, not
   Elo), **persistent accounts**, and **skill-based matchmaking** that depends on
   them. See [roadmap.md](roadmap.md).

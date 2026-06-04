@@ -18,7 +18,7 @@
 
     <nav class="tabs">
       <button class="tab active" data-tab="fleet">Fleet</button>
-      <button class="tab" data-tab="rooms">Rooms</button>
+      <button class="tab" data-tab="groups">Groups</button>
       <button class="tab" data-tab="activity">Activity</button>
       <button class="tab" data-tab="replay">Replay</button>
       <button class="tab" data-tab="control">Control</button>
@@ -31,17 +31,17 @@
         <div id="fleet-cards" class="cards"></div>
       </section>
 
-      <section id="rooms" class="panel">
-        <h2>Live rooms <span id="rooms-count" class="muted"></span></h2>
+      <section id="groups" class="panel">
+        <h2>Live groups <span id="groups-count" class="muted"></span></h2>
         <div class="split">
-          <table id="rooms-table">
+          <table id="groups-table">
             <thead>
-              <tr><th>Room</th><th>Phase</th><th>Round</th><th>Wave</th><th>Players</th><th>Age</th><th></th></tr>
+              <tr><th>Group</th><th>Phase</th><th>Round</th><th>Wave</th><th>Players</th><th>Age</th><th></th></tr>
             </thead>
             <tbody></tbody>
           </table>
-          <aside id="room-detail" class="detail">
-            <p class="muted">Select a room to inspect.</p>
+          <aside id="group-detail" class="detail">
+            <p class="muted">Select a group to inspect.</p>
           </aside>
         </div>
       </section>
@@ -63,10 +63,10 @@
         <h2>Control plane <span class="pill warn">elevated</span></h2>
         <div class="control-grid">
           <div class="card">
-            <h3>Rooms</h3>
-            <button data-cmd="seed">Seed room</button>
+            <h3>Groups</h3>
+            <button data-cmd="seed">Seed group</button>
             <div class="row">
-              <input id="room-target" placeholder="room code" />
+              <input id="group-target" placeholder="group code" />
               <button data-cmd="force-start">Force start</button>
               <button data-cmd="kill" class="danger">Kill</button>
             </div>

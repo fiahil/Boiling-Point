@@ -51,7 +51,7 @@ impl PlayerView {
     /// A fresh view for a bot that knows its own identity and seat colour.
     ///
     /// In-process the harness assigns these (a player always knows their own
-    /// seat); over WebSocket they are confirmed by [`ServerMessage::RoomJoined`].
+    /// seat); over WebSocket they are confirmed by [`ServerMessage::GroupJoined`].
     pub fn new(me: PlayerId, my_color: Color) -> Self {
         PlayerView {
             me,

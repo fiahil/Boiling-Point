@@ -1,6 +1,6 @@
 // WebSocket client that connects exactly like a real client (spec: Claude-Driven
-// Protocol Client). It sends an entry message (CreateRoom/JoinRoom/EnqueueMatch) carrying
-// the protocol_version and awaits RoomJoined, surfacing an incompatible-version Error
+// Protocol Client). It sends an entry message (CreateGroup/JoinGroup/EnqueueMatch) carrying
+// the protocol_version and awaits GroupJoined, surfacing an incompatible-version Error
 // instead of crashing through. The server accepts ONLY binary MessagePack frames.
 // EDGE MODULE: depends on `ws` + the wire codec.
 
@@ -11,7 +11,7 @@ import {
   type Color,
   type PlayerId,
   type PlayerPublic,
-  type RoomCode,
+  type GroupCode,
   type ServerMessage,
 } from "../protocol/messages.ts";
 import { decodeServer, encodeClient, type WireMode } from "../protocol/codec.ts";
@@ -21,12 +21,12 @@ export type EntryKind = "join" | "create" | "enqueue";
 export interface EntryConfig {
   kind: EntryKind;
   displayName: string;
-  roomCode?: RoomCode; // required for "join"
+  groupCode?: GroupCode; // required for "join"
   sessionToken?: string | null;
 }
 
 export interface JoinResult {
-  roomCode: RoomCode;
+  groupCode: GroupCode;
   yourPlayerId: PlayerId;
   yourColor: Color;
   players: PlayerPublic[];
@@ -40,10 +40,10 @@ function entryMessage(cfg: EntryConfig): ClientMessage {
   const session_token = cfg.sessionToken ?? null;
   switch (cfg.kind) {
     case "join":
-      if (!cfg.roomCode) throw new Error("join entry requires a room code");
-      return { type: "JoinRoom", protocol_version: PROTOCOL_VERSION, display_name: cfg.displayName, session_token, room_code: cfg.roomCode };
+      if (!cfg.groupCode) throw new Error("join entry requires a group code");
+      return { type: "JoinGroup", protocol_version: PROTOCOL_VERSION, display_name: cfg.displayName, session_token, group_code: cfg.groupCode };
     case "create":
-      return { type: "CreateRoom", protocol_version: PROTOCOL_VERSION, display_name: cfg.displayName, session_token };
+      return { type: "CreateGroup", protocol_version: PROTOCOL_VERSION, display_name: cfg.displayName, session_token };
     case "enqueue":
       return { type: "EnqueueMatch", protocol_version: PROTOCOL_VERSION, display_name: cfg.displayName, session_token };
   }
@@ -70,7 +70,7 @@ export class Connection {
     this.handlers.push(handler);
   }
 
-  /** Open the socket, send the entry message, and await RoomJoined. */
+  /** Open the socket, send the entry message, and await GroupJoined. */
   connectAndEnter(cfg: EntryConfig): Promise<JoinResult> {
     return new Promise<JoinResult>((resolve, reject) => {
       const ws = new WebSocket(this.url);
@@ -91,15 +91,15 @@ export class Connection {
         }
 
         if (!joined) {
-          if (msg.type === "RoomJoined") {
+          if (msg.type === "GroupJoined") {
             joined = true;
             resolve({
-              roomCode: msg.room_code,
+              groupCode: msg.group_code,
               yourPlayerId: msg.your_player_id,
               yourColor: msg.your_color,
               players: msg.players,
             });
-            // fall through so RoomJoined also reaches handlers
+            // fall through so GroupJoined also reaches handlers
           } else if (msg.type === "Error") {
             reject(
               msg.code === "VersionMismatch"

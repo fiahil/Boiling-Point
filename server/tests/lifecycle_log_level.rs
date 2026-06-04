@@ -36,14 +36,14 @@ fn lifecycle_hook_sees_info_spans_even_when_rust_log_is_warn() {
 
     // An `info`-level span (every game span is `info_span!`); dropping closes it.
     {
-        let _s = tracing::info_span!("room.lifetime", room.code = "ZZZZ").entered();
+        let _s = tracing::info_span!("group.lifetime", group.code = "ZZZZ").entered();
     }
 
     // The drain thread is asynchronous — spin briefly for delivery.
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut seen = false;
     while Instant::now() < deadline {
-        if cap.0.lock().unwrap().iter().any(|n| n == "room.lifetime") {
+        if cap.0.lock().unwrap().iter().any(|n| n == "group.lifetime") {
             seen = true;
             break;
         }

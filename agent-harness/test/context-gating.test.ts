@@ -13,13 +13,14 @@ function withHistory() {
   const vm = createViewModel();
   const msgs: ServerMessage[] = [
     {
-      type: "RoomJoined",
-      room_code: "BREW-7K3F",
+      type: "GroupJoined",
+      session_token: "test-session",
+      group_code: "BREW-7K3F",
       your_player_id: "me",
       your_color: "Ruby",
       players: [
-        { id: "me", display_name: "Me", color: "Ruby", connected: true },
-        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true },
+        { id: "me", display_name: "Me", color: "Ruby", connected: true, guest: false },
+        { id: "opp", display_name: "Opp", color: "Sapphire", connected: true, guest: false },
       ],
     },
     { type: "YourHand", cards: [{ id: 1, view: MY_CARD }] },

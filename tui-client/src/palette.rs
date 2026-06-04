@@ -23,6 +23,20 @@ pub(crate) fn glyph(c: Wire) -> &'static str {
     }
 }
 
+/// A single-width geometric **shape sigil** for a colour, mirroring the emoji
+/// [`glyph`] shapes (triangle / heart / circle / square / star-for-lion) but in
+/// one cell, so a card face stays grid-aligned and colour reads by *shape* as
+/// well as hue even on low-colour terminals.
+pub(crate) fn sigil(c: Wire) -> &'static str {
+    match c {
+        Wire::Ruby => "▲",
+        Wire::Sapphire => "♥",
+        Wire::Emerald => "●",
+        Wire::Amethyst => "■",
+        Wire::Wild => "★",
+    }
+}
+
 /// The human-readable name of a colour.
 pub(crate) fn name(c: Wire) -> &'static str {
     match c {

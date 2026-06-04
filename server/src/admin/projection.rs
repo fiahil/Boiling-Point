@@ -2,8 +2,8 @@
 //! consuming the server's span lifecycle (`admin-span-projection`).
 //!
 //! It maintains three things, all derived from spans and nothing else:
-//! - a **live open-span registry** (current rooms/games/rounds/waves + the queue),
-//!   the source for the room inspector and the privileged reveal;
+//! - a **live open-span registry** (current groups/games/rounds/waves + the queue),
+//!   the source for the group inspector and the privileged reveal;
 //! - **unsampled rolling aggregates** folded from completed spans (the balance
 //!   figures), computed upstream of any export sampling so they reflect 100% of
 //!   completed rounds/games;
@@ -29,7 +29,7 @@ use crate::observability::span_schema::{self, SPAN_SCHEMA_VERSION, attr, span};
 const REPLAY_CAPACITY: usize = 64;
 /// Capacity of the live activity broadcast channel (SSE feed).
 const LIVE_CHANNEL_CAPACITY: usize = 512;
-/// Default margin a wave may exceed its timer budget before a room is flagged
+/// Default margin a wave may exceed its timer budget before a group is flagged
 /// stuck. **Needs playtesting** against real wave-timer budgets (design Open Q).
 const DEFAULT_STUCK_WAVE_MARGIN_MS: u64 = 15_000;
 
@@ -38,8 +38,8 @@ struct OpenSpan {
     name: &'static str,
     attributes: BTreeMap<String, String>,
     started: Instant,
-    /// The enclosing `room.lifetime` span id (itself, if this *is* the room).
-    room_id: Option<u64>,
+    /// The enclosing `group.lifetime` span id (itself, if this *is* the group).
+    group_id: Option<u64>,
     /// The enclosing `game` span id (itself, if this *is* the game).
     game_id: Option<u64>,
 }
@@ -61,7 +61,7 @@ pub struct CompletedSpan {
 
 /// Per-game accumulation of completed child spans, kept until the game span ends.
 struct GameAccumulator {
-    room_code: Option<String>,
+    group_code: Option<String>,
     spans: Vec<CompletedSpan>,
 }
 
@@ -70,8 +70,8 @@ struct GameAccumulator {
 pub struct ReplayGame {
     /// The game's id (from the `game.id` attribute).
     pub game_id: String,
-    /// The room the game ran in, if known.
-    pub room_code: Option<String>,
+    /// The group the game ran in, if known.
+    pub group_code: Option<String>,
     /// Total game duration in milliseconds.
     pub duration_ms: u64,
     /// The game's descendant spans in completion order (rounds → waves → commits
@@ -84,8 +84,8 @@ pub struct ReplayGame {
 pub struct ReplaySummary {
     /// The game's id.
     pub game_id: String,
-    /// The room the game ran in, if known.
-    pub room_code: Option<String>,
+    /// The group the game ran in, if known.
+    pub group_code: Option<String>,
     /// Total game duration in milliseconds.
     pub duration_ms: u64,
     /// Number of retained spans (a rough size signal).
@@ -138,25 +138,25 @@ pub struct BalanceFigures {
 /// A live fleet summary.
 #[derive(Clone, Serialize)]
 pub struct FleetSummary {
-    /// Live rooms (open `room.lifetime` spans).
-    pub rooms: usize,
+    /// Live groups (open `group.lifetime` spans).
+    pub groups: usize,
     /// In-flight games (open `game` spans).
     pub games: usize,
     /// Players waiting in the auto-match queue (open `lobby.wait` spans).
     pub queue_depth: usize,
-    /// Rooms currently flagged stuck/anomalous.
-    pub stuck_rooms: usize,
+    /// Groups currently flagged stuck/anomalous.
+    pub stuck_groups: usize,
     /// The current balance figures.
     pub balance: BalanceFigures,
 }
 
-/// A live room as the inspector shows it, derived from the room's open spans.
+/// A live group as the inspector shows it, derived from the group's open spans.
 #[derive(Clone, Serialize)]
-pub struct RoomView {
-    /// Registry key (the room's `room.lifetime` span id).
-    pub room_id: u64,
+pub struct GroupView {
+    /// Registry key (the group's `group.lifetime` span id).
+    pub group_id: u64,
     /// Invite code, if the span carried one.
-    pub room_code: Option<String>,
+    pub group_code: Option<String>,
     /// Current phase: `lobby`, `game`, `round`, or `wave` (deepest open child).
     pub phase: String,
     /// Current round number, if a round is open.
@@ -167,11 +167,11 @@ pub struct RoomView {
     pub wave_number: Option<u64>,
     /// Seated players, if a game is open.
     pub players: Option<u64>,
-    /// Room age in milliseconds.
+    /// Group age in milliseconds.
     pub age_ms: u64,
     /// Age of the currently-open wave, if any.
     pub last_wave_age_ms: Option<u64>,
-    /// Whether the room is flagged stuck/anomalous.
+    /// Whether the group is flagged stuck/anomalous.
     pub stuck: bool,
     /// Why it is flagged, if it is.
     pub stuck_reason: Option<String>,
@@ -196,11 +196,11 @@ pub struct CommitReveal {
     pub card: String,
 }
 
-/// The privileged hidden-state reveal for a live room, from its open spans.
+/// The privileged hidden-state reveal for a live group, from its open spans.
 #[derive(Clone, Serialize)]
 pub struct Reveal {
-    /// The room's invite code.
-    pub room_code: String,
+    /// The group's invite code.
+    pub group_code: String,
     /// The open round's number.
     pub round_number: Option<u64>,
     /// The open wave's number.
@@ -221,12 +221,12 @@ pub struct Reveal {
 #[derive(Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RevealOutcome {
-    /// No live room with that code.
-    NoSuchRoom,
-    /// The room is live but between rounds (no open `round` span).
+    /// No live group with that code.
+    NoSuchGroup,
+    /// The group is live but between rounds (no open `round` span).
     NoRoundInProgress {
-        /// The room's code.
-        room_code: String,
+        /// The group's code.
+        group_code: String,
     },
     /// Hidden state revealed.
     Revealed(Reveal),
@@ -241,8 +241,8 @@ pub struct LiveEvent {
     pub kind: &'static str,
     /// The span name.
     pub span: String,
-    /// The room this event belongs to, if any.
-    pub room_code: Option<String>,
+    /// The group this event belongs to, if any.
+    pub group_code: Option<String>,
     /// The span's attributes.
     pub attributes: BTreeMap<String, String>,
 }
@@ -285,7 +285,7 @@ impl AdminProjection {
         }
     }
 
-    /// Override the stuck-room wave margin (tests use a tiny margin).
+    /// Override the stuck-group wave margin (tests use a tiny margin).
     pub fn with_stuck_wave_margin_ms(mut self, margin_ms: u64) -> Self {
         self.stuck_wave_margin_ms = margin_ms;
         self
@@ -302,28 +302,28 @@ impl AdminProjection {
         if !span_schema::is_known_span(ev.name) {
             return; // schema tolerance: ignore unrecognized spans
         }
-        let room_code = {
+        let group_code = {
             let mut st = self.state.write().expect("projection lock");
-            let (mut room_id, mut game_id) = match ev.parent_id.and_then(|p| st.open.get(&p)) {
-                Some(parent) => (parent.room_id, parent.game_id),
+            let (mut group_id, mut game_id) = match ev.parent_id.and_then(|p| st.open.get(&p)) {
+                Some(parent) => (parent.group_id, parent.game_id),
                 None => (None, None),
             };
-            if ev.name == span::ROOM_LIFETIME {
-                room_id = Some(ev.id);
+            if ev.name == span::GROUP_LIFETIME {
+                group_id = Some(ev.id);
             }
             if ev.name == span::GAME {
                 game_id = Some(ev.id);
             }
-            let room_code = if ev.name == span::ROOM_LIFETIME {
-                ev.attributes.get(attr::ROOM_CODE).cloned()
+            let group_code = if ev.name == span::GROUP_LIFETIME {
+                ev.attributes.get(attr::GROUP_CODE).cloned()
             } else {
-                room_code_of(&st, room_id)
+                group_code_of(&st, group_id)
             };
             if ev.name == span::GAME {
                 st.games.insert(
                     ev.id,
                     GameAccumulator {
-                        room_code: room_code.clone(),
+                        group_code: group_code.clone(),
                         spans: Vec::new(),
                     },
                 );
@@ -334,39 +334,39 @@ impl AdminProjection {
                     name: ev.name,
                     attributes: ev.attributes.clone(),
                     started: Instant::now(),
-                    room_id,
+                    group_id,
                     game_id,
                 },
             );
-            room_code
+            group_code
         };
-        self.broadcast_live("start", &ev, room_code);
+        self.broadcast_live("start", &ev, group_code);
     }
 
     fn on_update(&self, ev: SpanEvent) {
-        let room_code = {
+        let group_code = {
             let mut st = self.state.write().expect("projection lock");
-            let room_id = match st.open.get_mut(&ev.id) {
+            let group_id = match st.open.get_mut(&ev.id) {
                 Some(open) => {
                     open.attributes = ev.attributes.clone();
-                    open.room_id
+                    open.group_id
                 }
                 None => return,
             };
-            room_code_of(&st, room_id)
+            group_code_of(&st, group_id)
         };
-        self.broadcast_live("update", &ev, room_code);
+        self.broadcast_live("update", &ev, group_code);
     }
 
     fn on_end(&self, ev: SpanEvent) {
-        let room_code = {
+        let group_code = {
             let mut st = self.state.write().expect("projection lock");
             let Some(open) = st.open.remove(&ev.id) else {
                 return;
             };
             let dur_ms = open.started.elapsed().as_millis() as u64;
-            let room_code =
-                room_code_of(&st, open.room_id).or(open.attributes.get(attr::ROOM_CODE).cloned());
+            let group_code = group_code_of(&st, open.group_id)
+                .or(open.attributes.get(attr::GROUP_CODE).cloned());
             fold_aggregates(&mut st.agg, ev.name, &ev.attributes, dur_ms);
 
             // Accumulate completed children for the game's replay record.
@@ -393,7 +393,7 @@ impl AdminProjection {
                         .get(attr::GAME_ID)
                         .cloned()
                         .unwrap_or_else(|| ev.id.to_string()),
-                    room_code: acc.room_code,
+                    group_code: acc.group_code,
                     duration_ms: dur_ms,
                     spans: acc.spans,
                 };
@@ -402,18 +402,18 @@ impl AdminProjection {
                 }
                 st.replay.push_back(replay);
             }
-            room_code
+            group_code
         };
-        self.broadcast_live("end", &ev, room_code);
+        self.broadcast_live("end", &ev, group_code);
     }
 
-    fn broadcast_live(&self, kind: &'static str, ev: &SpanEvent, room_code: Option<String>) {
+    fn broadcast_live(&self, kind: &'static str, ev: &SpanEvent, group_code: Option<String>) {
         // The feed is served only over the authenticated admin channel, so it may
         // carry the span's attributes as-is (no player connection ever sees it).
         let _ = self.live.send(LiveEvent {
             kind,
             span: ev.name.to_string(),
-            room_code,
+            group_code,
             attributes: ev.attributes.clone(),
         });
     }
@@ -429,28 +429,28 @@ impl AdminProjection {
     /// A fleet summary: live counts + the balance figures.
     pub fn fleet(&self) -> FleetSummary {
         let st = self.state.read().expect("projection lock");
-        let rooms = self.room_views_locked(&st);
+        let groups = self.group_views_locked(&st);
         FleetSummary {
-            rooms: count_open(&st, span::ROOM_LIFETIME),
+            groups: count_open(&st, span::GROUP_LIFETIME),
             games: count_open(&st, span::GAME),
             queue_depth: count_open(&st, span::LOBBY_WAIT),
-            stuck_rooms: rooms.iter().filter(|r| r.stuck).count(),
+            stuck_groups: groups.iter().filter(|r| r.stuck).count(),
             balance: balance_from(&st.agg),
         }
     }
 
-    /// The live room list, derived from the open-span registry.
-    pub fn rooms(&self) -> Vec<RoomView> {
+    /// The live group list, derived from the open-span registry.
+    pub fn groups(&self) -> Vec<GroupView> {
         let st = self.state.read().expect("projection lock");
-        self.room_views_locked(&st)
+        self.group_views_locked(&st)
     }
 
-    /// One room's live view by invite code.
-    pub fn room(&self, code: &str) -> Option<RoomView> {
+    /// One group's live view by invite code.
+    pub fn group(&self, code: &str) -> Option<GroupView> {
         let st = self.state.read().expect("projection lock");
-        self.room_views_locked(&st)
+        self.group_views_locked(&st)
             .into_iter()
-            .find(|r| r.room_code.as_deref() == Some(code))
+            .find(|r| r.group_code.as_deref() == Some(code))
     }
 
     /// The current auto-match queue depth.
@@ -459,31 +459,31 @@ impl AdminProjection {
         count_open(&st, span::LOBBY_WAIT)
     }
 
-    /// The privileged hidden-state reveal for a live room, from its open spans.
+    /// The privileged hidden-state reveal for a live group, from its open spans.
     pub fn reveal(&self, code: &str) -> RevealOutcome {
         let st = self.state.read().expect("projection lock");
-        let Some(room_id) = st
+        let Some(group_id) = st
             .open
             .iter()
             .find(|(_, s)| {
-                s.name == span::ROOM_LIFETIME
-                    && s.attributes.get(attr::ROOM_CODE).map(String::as_str) == Some(code)
+                s.name == span::GROUP_LIFETIME
+                    && s.attributes.get(attr::GROUP_CODE).map(String::as_str) == Some(code)
             })
             .map(|(id, _)| *id)
         else {
-            return RevealOutcome::NoSuchRoom;
+            return RevealOutcome::NoSuchGroup;
         };
 
         let descendants: Vec<&OpenSpan> = st
             .open
             .values()
-            .filter(|s| s.room_id == Some(room_id))
+            .filter(|s| s.group_id == Some(group_id))
             .collect();
 
         let round = descendants.iter().find(|s| s.name == span::ROUND);
         let Some(round) = round else {
             return RevealOutcome::NoRoundInProgress {
-                room_code: code.to_string(),
+                group_code: code.to_string(),
             };
         };
         let wave = descendants.iter().find(|s| s.name == span::WAVE);
@@ -518,7 +518,7 @@ impl AdminProjection {
             .collect();
 
         RevealOutcome::Revealed(Reveal {
-            room_code: code.to_string(),
+            group_code: code.to_string(),
             round_number: round
                 .attributes
                 .get(attr::ROUND_NUMBER)
@@ -543,7 +543,7 @@ impl AdminProjection {
             .iter()
             .map(|g| ReplaySummary {
                 game_id: g.game_id.clone(),
-                room_code: g.room_code.clone(),
+                group_code: g.group_code.clone(),
                 duration_ms: g.duration_ms,
                 span_count: g.spans.len(),
             })
@@ -565,7 +565,7 @@ impl AdminProjection {
     /// span open longer than `max_age` is dropped (and its game accumulator with
     /// it), bounding registry memory if an `End` event is ever lost. Returns the
     /// number reaped. `max_age` should be generous — larger than any legitimate
-    /// span lifetime — and is tied to the stuck-room age check by the caller.
+    /// span lifetime — and is tied to the stuck-group age check by the caller.
     pub fn reap_stale(&self, max_age: Duration) -> usize {
         let mut st = self.state.write().expect("projection lock");
         let stale: Vec<u64> = st
@@ -583,15 +583,15 @@ impl AdminProjection {
 
     // ---- helpers ----
 
-    fn room_views_locked(&self, st: &State) -> Vec<RoomView> {
+    fn group_views_locked(&self, st: &State) -> Vec<GroupView> {
         st.open
             .iter()
-            .filter(|(_, s)| s.name == span::ROOM_LIFETIME)
-            .map(|(id, room)| {
+            .filter(|(_, s)| s.name == span::GROUP_LIFETIME)
+            .map(|(id, group)| {
                 let descendants: Vec<&OpenSpan> = st
                     .open
                     .values()
-                    .filter(|s| s.room_id == Some(*id) && s.name != span::ROOM_LIFETIME)
+                    .filter(|s| s.group_id == Some(*id) && s.name != span::GROUP_LIFETIME)
                     .collect();
                 let game = descendants.iter().find(|s| s.name == span::GAME);
                 let round = descendants.iter().find(|s| s.name == span::ROUND);
@@ -609,9 +609,9 @@ impl AdminProjection {
                 let last_wave_age_ms = wave.map(|w| w.started.elapsed().as_millis() as u64);
                 let (stuck, stuck_reason) = self.stuck_check(wave, last_wave_age_ms);
 
-                RoomView {
-                    room_id: *id,
-                    room_code: room.attributes.get(attr::ROOM_CODE).cloned(),
+                GroupView {
+                    group_id: *id,
+                    group_code: group.attributes.get(attr::GROUP_CODE).cloned(),
                     phase: phase.to_string(),
                     round_number: round.and_then(|r| {
                         r.attributes
@@ -629,7 +629,7 @@ impl AdminProjection {
                             .get(attr::PLAYERS_COUNT)
                             .and_then(|v| v.parse().ok())
                     }),
-                    age_ms: room.started.elapsed().as_millis() as u64,
+                    age_ms: group.started.elapsed().as_millis() as u64,
                     last_wave_age_ms,
                     stuck,
                     stuck_reason,
@@ -638,7 +638,7 @@ impl AdminProjection {
             .collect()
     }
 
-    /// A room is stuck if its open wave has outlived its timer budget by the margin.
+    /// A group is stuck if its open wave has outlived its timer budget by the margin.
     fn stuck_check(
         &self,
         wave: Option<&&OpenSpan>,
@@ -681,11 +681,11 @@ fn count_open(st: &State, name: &str) -> usize {
     st.open.values().filter(|s| s.name == name).count()
 }
 
-/// Resolve a room's invite code from its open `room.lifetime` span.
-fn room_code_of(st: &State, room_id: Option<u64>) -> Option<String> {
-    room_id
+/// Resolve a group's invite code from its open `group.lifetime` span.
+fn group_code_of(st: &State, group_id: Option<u64>) -> Option<String> {
+    group_id
         .and_then(|id| st.open.get(&id))
-        .and_then(|r| r.attributes.get(attr::ROOM_CODE).cloned())
+        .and_then(|r| r.attributes.get(attr::GROUP_CODE).cloned())
 }
 
 /// Fold one completed span into the rolling aggregates.
@@ -789,18 +789,18 @@ mod tests {
     }
 
     #[test]
-    fn live_registry_adds_and_removes_rooms() {
+    fn live_registry_adds_and_removes_groups() {
         let p = AdminProjection::new();
         start(
             &p,
             1,
-            span::ROOM_LIFETIME,
+            span::GROUP_LIFETIME,
             None,
-            &[(attr::ROOM_CODE, "ABCD")],
+            &[(attr::GROUP_CODE, "ABCD")],
         );
-        assert_eq!(p.rooms().len(), 1);
-        assert_eq!(p.rooms()[0].room_code.as_deref(), Some("ABCD"));
-        assert_eq!(p.rooms()[0].phase, "lobby");
+        assert_eq!(p.groups().len(), 1);
+        assert_eq!(p.groups()[0].group_code.as_deref(), Some("ABCD"));
+        assert_eq!(p.groups()[0].phase, "lobby");
 
         // A game → round → wave nests; phase follows the deepest open child.
         start(
@@ -818,23 +818,26 @@ mod tests {
             Some(3),
             &[(attr::WAVE_NUMBER, "1"), (attr::WAVE_TIMER_MS, "30000")],
         );
-        let view = &p.rooms()[0];
+        let view = &p.groups()[0];
         assert_eq!(view.phase, "wave");
         assert_eq!(view.round_number, Some(2));
         assert_eq!(view.wave_number, Some(1));
         assert_eq!(view.players, Some(4));
 
         end(&p, 4, span::WAVE, Some(3), &[(attr::WAVE_NUMBER, "1")]);
-        assert_eq!(p.rooms()[0].phase, "round");
+        assert_eq!(p.groups()[0].phase, "round");
 
         end(
             &p,
             1,
-            span::ROOM_LIFETIME,
+            span::GROUP_LIFETIME,
             None,
-            &[(attr::ROOM_CODE, "ABCD")],
+            &[(attr::GROUP_CODE, "ABCD")],
         );
-        assert!(p.rooms().is_empty(), "a finished room leaves the live view");
+        assert!(
+            p.groups().is_empty(),
+            "a finished group leaves the live view"
+        );
     }
 
     #[test]
@@ -886,9 +889,9 @@ mod tests {
         start(
             &p,
             1,
-            span::ROOM_LIFETIME,
+            span::GROUP_LIFETIME,
             None,
-            &[(attr::ROOM_CODE, "WXYZ")],
+            &[(attr::GROUP_CODE, "WXYZ")],
         );
         start(&p, 2, span::GAME, Some(1), &[(attr::GAME_ID, "gg")]);
         start(&p, 3, span::ROUND, Some(2), &[(attr::ROUND_NUMBER, "1")]);
@@ -904,7 +907,7 @@ mod tests {
         end(&p, 2, span::GAME, Some(1), &[(attr::GAME_ID, "gg")]);
 
         let game = p.replay("gg").expect("game retained");
-        assert_eq!(game.room_code.as_deref(), Some("WXYZ"));
+        assert_eq!(game.group_code.as_deref(), Some("WXYZ"));
         assert!(game.spans.iter().any(|s| s.name == "wave"));
         assert!(game.spans.iter().any(|s| s.name == "round"));
     }
@@ -915,14 +918,14 @@ mod tests {
         start(
             &p,
             1,
-            span::ROOM_LIFETIME,
+            span::GROUP_LIFETIME,
             None,
-            &[(attr::ROOM_CODE, "RVL1")],
+            &[(attr::GROUP_CODE, "RVL1")],
         );
         start(&p, 2, span::GAME, Some(1), &[(attr::GAME_ID, "g")]);
         // No round yet → "no round in progress".
         match p.reveal("RVL1") {
-            RevealOutcome::NoRoundInProgress { room_code } => assert_eq!(room_code, "RVL1"),
+            RevealOutcome::NoRoundInProgress { group_code } => assert_eq!(group_code, "RVL1"),
             other => panic!(
                 "expected NoRoundInProgress, got {:?}",
                 serde_json::to_string(&other)
@@ -970,7 +973,7 @@ mod tests {
             }
             _ => panic!("expected a reveal"),
         }
-        assert!(matches!(p.reveal("NOPE"), RevealOutcome::NoSuchRoom));
+        assert!(matches!(p.reveal("NOPE"), RevealOutcome::NoSuchGroup));
     }
 
     #[test]
@@ -979,19 +982,25 @@ mod tests {
         start(&p, 1, "totally.unknown.span", None, &[("x", "y")]);
         assert_eq!(p.open_span_count(), 0, "unknown spans are not tracked");
         // And it does not break subsequent known spans.
-        start(&p, 2, span::ROOM_LIFETIME, None, &[(attr::ROOM_CODE, "OK")]);
-        assert_eq!(p.rooms().len(), 1);
+        start(
+            &p,
+            2,
+            span::GROUP_LIFETIME,
+            None,
+            &[(attr::GROUP_CODE, "OK")],
+        );
+        assert_eq!(p.groups().len(), 1);
     }
 
     #[test]
-    fn stuck_room_flagged_when_wave_overruns() {
+    fn stuck_group_flagged_when_wave_overruns() {
         let p = AdminProjection::new().with_stuck_wave_margin_ms(0);
         start(
             &p,
             1,
-            span::ROOM_LIFETIME,
+            span::GROUP_LIFETIME,
             None,
-            &[(attr::ROOM_CODE, "STK1")],
+            &[(attr::GROUP_CODE, "STK1")],
         );
         start(&p, 2, span::GAME, Some(1), &[(attr::GAME_ID, "g")]);
         start(&p, 3, span::ROUND, Some(2), &[(attr::ROUND_NUMBER, "1")]);
@@ -1003,8 +1012,11 @@ mod tests {
             &[(attr::WAVE_NUMBER, "1"), (attr::WAVE_TIMER_MS, "0")],
         );
         std::thread::sleep(std::time::Duration::from_millis(5));
-        let view = &p.rooms()[0];
-        assert!(view.stuck, "an over-age wave should flag the room as stuck");
+        let view = &p.groups()[0];
+        assert!(
+            view.stuck,
+            "an over-age wave should flag the group as stuck"
+        );
         assert!(view.stuck_reason.is_some());
     }
 
@@ -1014,16 +1026,16 @@ mod tests {
         start(
             &p,
             1,
-            span::ROOM_LIFETIME,
+            span::GROUP_LIFETIME,
             None,
-            &[(attr::ROOM_CODE, "LEAK")],
+            &[(attr::GROUP_CODE, "LEAK")],
         );
         assert_eq!(p.open_span_count(), 1);
         std::thread::sleep(Duration::from_millis(10));
         // A short max-age reaps the leaked span (its End was never delivered).
         assert_eq!(p.reap_stale(Duration::from_millis(5)), 1);
         assert!(
-            p.rooms().is_empty(),
+            p.groups().is_empty(),
             "a span whose end was missed is reaped"
         );
     }
