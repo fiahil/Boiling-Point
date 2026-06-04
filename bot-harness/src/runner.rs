@@ -178,6 +178,7 @@ async fn run_in_process(
             &mut cmd_rx,
             &palette_set,
             seeds.server,
+            None,
         );
         let b0 = run_bot(
             c0,
@@ -400,6 +401,7 @@ async fn spawn_embedded_server(config: &ContentConfig) -> Result<String, Harness
         groups,
         queue,
         conn_timeout: Duration::from_secs(60),
+        pool: None,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

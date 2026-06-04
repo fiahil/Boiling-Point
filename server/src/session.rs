@@ -16,6 +16,8 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use chrono::Utc;
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -31,9 +33,11 @@ use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::game::round::WaveChoice;
-use crate::game::runner::{Game, RoundScoring};
+use crate::game::runner::{Game, RoundLog, RoundScoring, build_game_result};
 use crate::game::state::{Hand, Player};
 use crate::lobby::group::GroupCommand;
+use crate::persistence::persist_game;
+use crate::replay::encode_replay;
 
 /// A seated player as the game loop needs them: identity, colour, and the
 /// outbound channel to reach them.
@@ -150,7 +154,9 @@ fn scores_vec(scores: &HashMap<PlayerId, i32>, order: &[PlayerId]) -> Vec<Player
 }
 
 /// Run one full game to completion for the given seats. Owns the group's command
-/// receiver for the duration so it can collect commits within wave timers.
+/// receiver for the duration so it can collect commits within wave timers. When
+/// `pool` is `Some`, the completed game and its replay are persisted at `GameOver`.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_game(
     registry: &ContentRegistry,
     config: &ContentConfig,
@@ -159,6 +165,7 @@ pub async fn run_game(
     rx: &mut mpsc::Receiver<GroupCommand>,
     palette: &HashSet<u16>,
     seed: u64,
+    pool: Option<&PgPool>,
 ) -> GameEnd {
     let ids: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
     let mut gone: HashSet<PlayerId> = HashSet::new();
@@ -167,9 +174,10 @@ pub async fn run_game(
     // drives a `Game` — the same engine `Game::play_out` is tested against — through
     // its `begin_round` / `resolve_wave` / `settle_round` / `break_tie` steps, adding
     // only the wire I/O (collect commits within a timer, broadcast the public outcome)
-    // and the observability spans. The hands, deck, scores, modifiers, RNG, and round
-    // bookkeeping all live in `Game`, so the shipping path cannot drift from the tested
-    // one (F2).
+    // and the observability spans. The hands, deck, scores, modifiers, RNG, round
+    // bookkeeping, per-player/per-round analytics, and the replay action log all live
+    // in `Game`, so the shipping path cannot drift from the tested one (F2) and the
+    // post-game write feeds straight off the engine.
     let game_players: Vec<Player> = players
         .iter()
         .map(|s| Player {
@@ -182,6 +190,7 @@ pub async fn run_game(
 
     crate::observability::metric::game_started();
     let game_start = std::time::Instant::now();
+    let started_at = Utc::now();
     tracing::info!(players = players.len(), "game started");
 
     // `game` span (span_schema::span::GAME) — child of the caller's group.lifetime
@@ -325,7 +334,8 @@ pub async fn run_game(
 
             // `resolve` span — child of the wave; pot.card_count is public. The engine
             // validates choices against hands, removes the committed cards, applies the
-            // wave, and returns recalled cards to their owners.
+            // wave, returns recalled cards to their owners, and records the per-wave
+            // action log (the deterministic replay input) on the shared `Game`.
             let resolve_span = wave_span.in_scope(|| {
                 tracing::info_span!("resolve", pot.card_count = tracing::field::Empty)
             });
@@ -543,6 +553,23 @@ pub async fn run_game(
     )
     .await;
 
+    // Post-game completion write: the game result and its timeless replay payload,
+    // in one write, fed straight off the engine's analytics + action log. Skipped
+    // cleanly when no database is configured.
+    persist_completed_game(
+        pool,
+        config,
+        game_id,
+        started_at,
+        &players,
+        game.scores(),
+        game.cards_played(),
+        game.round_logs(),
+        game.action_log(),
+        seed,
+    )
+    .await;
+
     // Hand the final seats (with reconnections' refreshed channels), the
     // still-absent players, and the winners back to the persistent group, which
     // returns the survivors to its lobby and folds the result into standings.
@@ -559,6 +586,57 @@ fn to_contributions(counts: Vec<(PlayerId, u8)>) -> Vec<Contribution> {
         .into_iter()
         .map(|(player, count)| Contribution { player, count })
         .collect()
+}
+
+/// The post-game completion write (the only DB write the server performs).
+/// Builds the [`GameResult`](crate::persistence::GameResult) and the timeless
+/// replay payload, then persists both in [`persist_game`]'s single transaction
+/// (the `db.write` span). With no database configured this is a clean no-op —
+/// persistence is optional infrastructure, never a precondition for play.
+#[allow(clippy::too_many_arguments)]
+async fn persist_completed_game(
+    pool: Option<&PgPool>,
+    config: &ContentConfig,
+    game_id: Uuid,
+    started_at: chrono::DateTime<Utc>,
+    players: &[SeatInfo],
+    scores: &HashMap<PlayerId, i32>,
+    cards_played: &HashMap<PlayerId, u32>,
+    rounds: &[RoundLog],
+    action_log: &[WaveChoice],
+    seed: u64,
+) {
+    let Some(pool) = pool else {
+        tracing::trace!(game.id = %game_id, "no database configured; completion write skipped");
+        return;
+    };
+    let result = build_game_result(
+        players.iter().map(|p| (p.id, p.name.clone())),
+        scores,
+        cards_played,
+        rounds,
+        game_id,
+        started_at,
+        Utc::now(),
+    );
+    // Encode the timeless replay payload; on an (unexpected) encode failure,
+    // still persist the results so the match record is not lost.
+    let replay = match encode_replay(
+        game_id,
+        seed,
+        config,
+        players.iter().map(|p| (p.id, p.color, p.name.clone())),
+        action_log,
+    ) {
+        Ok(replay) => Some(replay),
+        Err(e) => {
+            tracing::error!(game.id = %game_id, error = %e, "failed to encode replay; persisting results only");
+            None
+        }
+    };
+    if let Err(e) = persist_game(pool, &result, replay.as_ref()).await {
+        tracing::error!(game.id = %game_id, error = %e, "failed to persist completed game");
+    }
 }
 
 /// Collect one wave's hidden commits until the timer expires or every active
@@ -660,8 +738,9 @@ async fn collect_wave(
                                 )
                                 .await;
                             }
-                            // Entry / lobby-only messages are never valid mid-game:
-                            // reply WrongPhase, never silently drop.
+                            // Entry and group-lobby messages (create/join/enqueue,
+                            // play-again, fill, leave) are never valid mid-game:
+                            // reply WrongPhase, never silently drop (§I/F1).
                             ClientMessage::CreateGroup { .. }
                             | ClientMessage::JoinGroup { .. }
                             | ClientMessage::EnqueueMatch { .. }
@@ -1032,6 +1111,7 @@ mod tests {
             &mut cmd_rx,
             &palette,
             seed,
+            None,
         );
         let (_g, r0, r1, r2, r3) = tokio::join!(game, c0, c1, c2, c3);
 

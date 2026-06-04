@@ -17,6 +17,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use futures_util::stream::SplitStream;
 use futures_util::{SinkExt, StreamExt};
+use sqlx::PgPool;
 use tokio::sync::{mpsc, oneshot};
 
 use boiling_point_protocol::client::PROTOCOL_VERSION;
@@ -41,6 +42,10 @@ pub struct AppState {
     /// Max silence on a connection before it's treated as disconnected (clients
     /// keep it alive with heartbeats).
     pub conn_timeout: Duration,
+    /// Optional persistence pool. `None` ⇒ persistence is disabled (the server
+    /// plays games normally and skips the post-game write). The groups receive
+    /// it via [`GroupRegistry::with_pool`].
+    pub pool: Option<PgPool>,
 }
 
 /// Build the Axum router for the WebSocket endpoint.
@@ -425,6 +430,7 @@ mod tests {
             groups,
             queue,
             conn_timeout,
+            pool: None,
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

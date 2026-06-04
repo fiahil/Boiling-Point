@@ -17,6 +17,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use arc_swap::ArcSwap;
 use dashmap::DashMap;
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 
 use boiling_point_protocol::GroupCode;
@@ -96,6 +97,9 @@ impl ContentSelector {
 pub struct GroupRegistry {
     groups: DashMap<GroupCode, mpsc::Sender<GroupCommand>>,
     content: ArcSwap<Content>,
+    /// Optional persistence pool, threaded into every spawned group for the
+    /// post-game completion write. `None` ⇒ persistence is disabled.
+    pool: Option<PgPool>,
     /// The auto-match queue, for group fill. A `Weak` to avoid a reference cycle
     /// (the queue holds an `Arc<GroupRegistry>`); set once after both are built via
     /// [`set_queue`](GroupRegistry::set_queue). Unset in tests that don't matchmake,
@@ -106,6 +110,7 @@ pub struct GroupRegistry {
 impl GroupRegistry {
     /// Create an empty registry sharing `registry`/`config` with every group it
     /// spawns; the emote palette is derived from the config's enabled emotes.
+    /// Persistence is off by default — attach a pool with [`with_pool`](Self::with_pool).
     pub fn new(registry: Arc<ContentRegistry>, config: Arc<ContentConfig>) -> Self {
         let palette = Arc::new(
             config
@@ -122,8 +127,16 @@ impl GroupRegistry {
                 registry,
                 palette,
             }),
+            pool: None,
             queue: OnceLock::new(),
         }
+    }
+
+    /// Attach the persistence pool threaded into every group this registry spawns
+    /// for the post-game write. `None` leaves persistence disabled.
+    pub fn with_pool(mut self, pool: Option<PgPool>) -> Self {
+        self.pool = pool;
+        self
     }
 
     /// Wire the auto-match queue (for group fill) after both are constructed. Held
@@ -162,6 +175,7 @@ impl GroupRegistry {
                     content.registry.clone(),
                     content.config.clone(),
                     content.palette.clone(),
+                    self.pool.clone(),
                 );
                 self.groups.insert(code.clone(), handle.tx.clone());
                 crate::observability::metric::group_created();

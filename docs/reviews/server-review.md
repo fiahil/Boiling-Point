@@ -18,10 +18,11 @@ are hypotheses, not settled values.
 >   2026-06-03); **F2 → resolved** by the **`converge-game-loops`** change (landed
 >   2026-06-04): `run_game` now drives the tested `Game` engine, and a sync==async
 >   parity test pins their final scores together. See each finding's Status note below.
-> - **F4 (persistence not wired)** is **superseded** by the **`persistence-and-replays`**
->   change. That change replaces the "just wire the existing module" remedy with a
->   reworked design (match results + timeless replays + runtime wiring); do **not**
->   wire the v1 module as-is.
+> - **F4 (persistence not wired)** is **RESOLVED** by the **`persistence-and-replays`**
+>   change (2026-06-03). That change replaced the "just wire the existing module"
+>   remedy with a reworked design (match results + timeless replays + runtime
+>   wiring): persistence is now connected on the live path and degrades cleanly
+>   when no database is configured.
 > - The logging-level sub-item of F5 is **resolved**: the server now accepts
 >   `--log-level` (still honouring `RUST_LOG`) — `server/src/main.rs`,
 >   `observability.rs`.
@@ -339,9 +340,15 @@ game's broadcast stream for leaked secrets. Routing the server's sends through
 
 ### F4 — Persistence is fully built but never invoked at runtime *(wiring, medium)*
 
-> **Status (2026-06-02): superseded by the `persistence-and-replays` change.** The
-> remedy is a *rework* (match results + timeless replays + runtime wiring), not a
-> wire-up of the v1 module. The description below remains accurate as today's state.
+> **Status (2026-06-03): RESOLVED by the `persistence-and-replays` change.** The
+> rework landed: `--database-url`/`DATABASE_URL` connects a `PgPool` and runs the
+> (advisory-locked) migrations at boot; the pool lives in `AppState` and is
+> threaded `RoomRegistry → run_game`; at `GameOver` the live path builds the
+> `GameResult` (via the shared `build_game_result`, now populating `cards_played`
+> and per-round analytics) **and** a timeless replay payload, persisting both in
+> one `db.write` transaction. With no URL configured the server plays normally
+> and skips the write (logged once). The original description below is retained as
+> the pre-change state.
 
 `persistence.rs` is complete and tested, and `runner.rs` even has a
 `to_game_result` bridge (`runner.rs:302-351`) — but nothing on the live path

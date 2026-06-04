@@ -265,6 +265,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "axum",
+ "base64",
  "boiling-point-protocol",
  "chrono",
  "clap",
@@ -276,8 +277,10 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "rand 0.8.6",
+ "rmp-serde",
  "serde",
  "serde_json",
+ "sha2",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",

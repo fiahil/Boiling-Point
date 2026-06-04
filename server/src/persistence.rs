@@ -40,6 +40,26 @@ pub struct RoundResult {
     pub cards_played: i16,
 }
 
+/// A game's timeless replay as one storable row (1:1 with `games`). The
+/// `payload` is the base64-encoded MessagePack replay body; the surrounding
+/// columns carry its format/engine versions, the content-config identity, and
+/// an integrity hash over the encoded bytes. Built by [`crate::replay::encode_replay`].
+#[derive(Debug, Clone)]
+pub struct StoredReplay {
+    /// The game this replay belongs to (PK/FK → `games`).
+    pub game_id: Uuid,
+    /// Base64-encoded MessagePack replay body (the single column value).
+    pub payload: String,
+    /// Replay payload format version.
+    pub format_version: i16,
+    /// Engine version the payload was recorded under.
+    pub engine_version: i16,
+    /// Content-config identity the game ran against.
+    pub config_fingerprint: String,
+    /// Integrity hash over the encoded bytes (hex SHA-256).
+    pub integrity_hash: String,
+}
+
 /// A completed game ready to persist.
 #[derive(Debug, Clone)]
 pub struct GameResult {
@@ -65,15 +85,36 @@ pub async fn connect(database_url: &str) -> Result<PgPool, sqlx::Error> {
         .await
 }
 
-/// Apply the schema (idempotent). Embedded so no external migration tool is needed.
+/// Advisory-lock key serialising concurrent migrators (an arbitrary constant,
+/// "BOIL" in ASCII). Held only for the migration transaction.
+const MIGRATION_LOCK_KEY: i64 = 0x424f_494c;
+
+/// Apply the schema (idempotent). Embedded so no external migration tool is
+/// needed; each migration uses `CREATE TABLE IF NOT EXISTS`, so re-running is a
+/// no-op. Applied in order on every boot when a database is configured.
+///
+/// Wrapped in one transaction guarded by a transaction-scoped advisory lock:
+/// `CREATE TABLE IF NOT EXISTS` is not safe under concurrency on its own, so two
+/// instances booting (or parallel tests) against the same database serialise
+/// here rather than racing on `pg_catalog`.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
-    let schema = include_str!("../migrations/0001_init.sql");
-    sqlx::raw_sql(schema).execute(pool).await?;
-    Ok(())
+    let mut tx: Transaction<'_, Postgres> = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(MIGRATION_LOCK_KEY)
+        .execute(&mut *tx)
+        .await?;
+    for migration in [
+        include_str!("../migrations/0001_init.sql"),
+        include_str!("../migrations/0002_replays.sql"),
+    ] {
+        sqlx::raw_sql(migration).execute(&mut *tx).await?;
+    }
+    tx.commit().await
 }
 
-/// Persist a completed game and all its results in a single transaction. This is
-/// the only write the server performs, at `GameOver`.
+/// Persist a completed game, all its results, and (when present) its replay
+/// payload in a single transaction. This is the only write the server performs,
+/// at `GameOver`.
 ///
 /// `db.write` span (span_schema::span::DB_WRITE): game.id and db.rows are public.
 #[tracing::instrument(
@@ -81,7 +122,11 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
     skip_all,
     fields(game.id = %result.game_id, db.rows = tracing::field::Empty)
 )]
-pub async fn persist_game(pool: &PgPool, result: &GameResult) -> Result<(), sqlx::Error> {
+pub async fn persist_game(
+    pool: &PgPool,
+    result: &GameResult,
+    replay: Option<&StoredReplay>,
+) -> Result<(), sqlx::Error> {
     let mut tx: Transaction<'_, Postgres> = pool.begin().await?;
 
     // Anonymous player records (created on first sight of a UUID).
@@ -136,11 +181,55 @@ pub async fn persist_game(pool: &PgPool, result: &GameResult) -> Result<(), sqlx
         .await?;
     }
 
+    // The replay payload (1:1 with the game), in the same completion write.
+    if let Some(replay) = replay {
+        sqlx::query(
+            "INSERT INTO game_replays \
+             (game_id, payload, format_version, engine_version, config_fingerprint, integrity_hash) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(replay.game_id)
+        .bind(&replay.payload)
+        .bind(replay.format_version)
+        .bind(replay.engine_version)
+        .bind(&replay.config_fingerprint)
+        .bind(&replay.integrity_hash)
+        .execute(&mut *tx)
+        .await?;
+    }
+
     // Public row count for the db.write span: players (anon) + games + game_players
-    // + game_rounds.
-    let rows = result.players.len() * 2 + 1 + result.rounds.len();
+    // + game_rounds + the optional replay row.
+    let rows = result.players.len() * 2 + 1 + result.rounds.len() + replay.is_some() as usize;
     tracing::Span::current().record("db.rows", rows as u64);
     tx.commit().await
+}
+
+/// Fetch a game's stored replay row by id, if one was persisted. The caller
+/// verifies its integrity and reconstructs via [`crate::replay`].
+pub async fn fetch_replay(
+    pool: &PgPool,
+    game_id: Uuid,
+) -> Result<Option<StoredReplay>, sqlx::Error> {
+    let row: Option<(String, i16, i16, String, String)> = sqlx::query_as(
+        "SELECT payload, format_version, engine_version, config_fingerprint, integrity_hash \
+         FROM game_replays WHERE game_id = $1",
+    )
+    .bind(game_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(
+        |(payload, format_version, engine_version, config_fingerprint, integrity_hash)| {
+            StoredReplay {
+                game_id,
+                payload,
+                format_version,
+                engine_version,
+                config_fingerprint,
+                integrity_hash,
+            }
+        },
+    ))
 }
 
 /// Fetch (player_id, final_score, finish_position) for a game, ordered by
@@ -202,7 +291,7 @@ mod tests {
             }],
         };
 
-        persist_game(&pool, &result).await.expect("persist");
+        persist_game(&pool, &result, None).await.expect("persist");
 
         let fetched = fetch_player_results(&pool, game_id).await.expect("fetch");
         assert_eq!(fetched.len(), 4);

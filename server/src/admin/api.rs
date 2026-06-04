@@ -375,6 +375,7 @@ mod tests {
             groups,
             queue,
             conn_timeout: std::time::Duration::from_secs(90),
+            pool: None,
         };
         let resp = player_app(state)
             .oneshot(get("/admin/groups/ABCD/reveal", Some(ELEVATED)))
