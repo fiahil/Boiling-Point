@@ -7,7 +7,7 @@
 
 use std::collections::HashSet;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use boiling_point_protocol::vocab::{Color, EffectKind, ModifierKind};
 
@@ -25,7 +25,7 @@ pub const ROUND_COUNT: u8 = 5;
 pub const MODIFIER_DRAWS: u32 = 4;
 
 /// Top-level content configuration, deserialised from TOML.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentConfig {
     /// Deck size and ratio bounds.
     pub deck: DeckConfig,
@@ -45,7 +45,7 @@ pub struct ContentConfig {
 }
 
 /// Deck-wide settings.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeckConfig {
     /// Declared total number of physical cards (enabled copies must sum to this).
     pub size: u16,
@@ -54,7 +54,7 @@ pub struct DeckConfig {
 }
 
 /// Allowed proportions of effect and wild cards in the deck.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RatioBounds {
     /// Minimum share of the deck that must be effect cards.
     pub effect_min: f64,
@@ -67,7 +67,7 @@ pub struct RatioBounds {
 }
 
 /// A card archetype.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CardConfig {
     /// The card's colour.
     pub color: Color,
@@ -86,7 +86,7 @@ pub struct CardConfig {
 }
 
 /// A modifier pool entry.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModifierConfig {
     /// The modifier kind.
     pub kind: ModifierKind,
@@ -98,7 +98,7 @@ pub struct ModifierConfig {
 }
 
 /// A preset emote.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmoteConfig {
     /// Wire id for the emote.
     pub id: u16,
@@ -110,7 +110,7 @@ pub struct EmoteConfig {
 }
 
 /// Wave timer budgets in milliseconds.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimingConfig {
     /// Budget for the first wave of a round.
     pub wave1_ms: u32,
@@ -119,7 +119,7 @@ pub struct TimingConfig {
 }
 
 /// The (inclusive) hidden boiling-point range before modifiers.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoilingPointConfig {
     /// Lowest possible base boiling point.
     pub min: u8,

@@ -16,9 +16,11 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use chrono::Utc;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -37,10 +39,13 @@ use crate::game::card::Card;
 use crate::game::deck::Deck;
 use crate::game::modifiers::ActiveModifiers;
 use crate::game::round::{Round, RoundEnd, WaveChoice, WaveInput};
+use crate::game::runner::{RoundLog, build_game_result};
 use crate::game::scoring::{ScoringContext, explosion, score_safe};
 use crate::game::state::Hand;
 use crate::game::{DeathmatchResult, run_deathmatch};
 use crate::lobby::group::GroupCommand;
+use crate::persistence::persist_game;
+use crate::replay::encode_replay;
 
 /// A seated player as the game loop needs them: identity, colour, and the
 /// outbound channel to reach them.
@@ -155,7 +160,9 @@ fn scores_vec(scores: &HashMap<PlayerId, i32>, order: &[PlayerId]) -> Vec<Player
 }
 
 /// Run one full game to completion for the given seats. Owns the group's command
-/// receiver for the duration so it can collect commits within wave timers.
+/// receiver for the duration so it can collect commits within wave timers. When
+/// `pool` is `Some`, the completed game and its replay are persisted at `GameOver`.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_game(
     registry: &ContentRegistry,
     config: &ContentConfig,
@@ -164,6 +171,7 @@ pub async fn run_game(
     rx: &mut mpsc::Receiver<GroupCommand>,
     palette: &HashSet<u16>,
     seed: u64,
+    pool: Option<&PgPool>,
 ) -> GameEnd {
     let ids: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
     let color_owner: HashMap<Color, PlayerId> = players.iter().map(|p| (p.color, p.id)).collect();
@@ -180,8 +188,16 @@ pub async fn run_game(
     modifier_pile.shuffle(&mut rng);
     let mut gone: HashSet<PlayerId> = HashSet::new();
 
+    // Replay/analytics recording, retained only until the post-game write:
+    // total cards each player committed, per-round logs, and the ordered
+    // per-wave action log (the deterministic input a timeless replay re-runs).
+    let mut cards_played: HashMap<PlayerId, u32> = ids.iter().map(|id| (*id, 0)).collect();
+    let mut round_logs: Vec<RoundLog> = Vec::new();
+    let mut action_log: Vec<WaveChoice> = Vec::new();
+
     crate::observability::metric::game_started();
     let game_start = std::time::Instant::now();
+    let started_at = Utc::now();
     tracing::info!(players = players.len(), "game started");
 
     // `game` span (span_schema::span::GAME) — child of the caller's group.lifetime
@@ -198,9 +214,13 @@ pub async fn run_game(
     );
 
     for round_number in 1..=ROUND_COUNT {
-        if round_number >= 2
-            && let Some(kind) = modifier_pile.pop()
-        {
+        // Round 2+ draws one cumulative modifier; remember it for the round log.
+        let round_modifier = if round_number >= 2 {
+            modifier_pile.pop()
+        } else {
+            None
+        };
+        if let Some(kind) = round_modifier {
             modifiers.push(kind);
             broadcast(
                 &players,
@@ -347,6 +367,25 @@ pub async fn run_game(
                 ..
             } = collection;
             let played: Vec<PlayerId> = committed.iter().map(|(p, _)| *p).collect();
+
+            // Record this wave's resolved actions in engine decision (acting)
+            // order — the deterministic replay input — plus the cards-played
+            // tally. A committed card is `Play(card_id)`; everything else (pass,
+            // timeout, auto-pass while gone) is `Pass`. (Recall targets are not
+            // yet carried on the wire — tui review T4; until then the log records
+            // what the wire delivers.)
+            let committed_cards: HashMap<PlayerId, boiling_point_protocol::CardId> =
+                committed.iter().map(|(p, c)| (*p, c.id)).collect();
+            for player in &acting {
+                let choice = match committed_cards.get(player) {
+                    Some(card_id) => {
+                        *cards_played.get_mut(player).unwrap() += 1;
+                        WaveChoice::Play(*card_id)
+                    }
+                    None => WaveChoice::Pass,
+                };
+                action_log.push(choice);
+            }
 
             // `commit` leaf spans (one per committed card) — children of the wave.
             // The committed card identity rides as a secret attribute (in-process
@@ -548,6 +587,17 @@ pub async fn run_game(
         crate::observability::metric::round_resolved(exploded);
         crate::observability::metric::round_duration(round_start.elapsed().as_secs_f64());
 
+        // Per-round analytics for the post-game write (populated on the async
+        // path too — review-remediation F2/F4 note).
+        round_logs.push(RoundLog {
+            round_number,
+            effective_boiling_point: effective_bp,
+            exploded,
+            final_volatility: round.pot().volatility,
+            cards_played: round.pot().card_count(),
+            modifier: round_modifier,
+        });
+
         // Spent pot cards return to the discard for future reshuffles.
         let spent: Vec<_> = round.pot().cards.iter().map(|pc| pc.card).collect();
         deck.discard_cards(spent);
@@ -605,6 +655,22 @@ pub async fn run_game(
     )
     .await;
 
+    // Post-game completion write: the game result and its timeless replay
+    // payload, in one write. Skipped cleanly when no database is configured.
+    persist_completed_game(
+        pool,
+        config,
+        game_id,
+        started_at,
+        &players,
+        &scores,
+        &cards_played,
+        &round_logs,
+        &action_log,
+        seed,
+    )
+    .await;
+
     // Hand the final seats (with reconnections' refreshed channels), the
     // still-absent players, and the winners back to the persistent group, which
     // returns the survivors to its lobby and folds the result into standings.
@@ -612,6 +678,57 @@ pub async fn run_game(
         players,
         gone,
         winners,
+    }
+}
+
+/// The post-game completion write (the only DB write the server performs).
+/// Builds the [`GameResult`](crate::persistence::GameResult) and the timeless
+/// replay payload, then persists both in [`persist_game`]'s single transaction
+/// (the `db.write` span). With no database configured this is a clean no-op —
+/// persistence is optional infrastructure, never a precondition for play.
+#[allow(clippy::too_many_arguments)]
+async fn persist_completed_game(
+    pool: Option<&PgPool>,
+    config: &ContentConfig,
+    game_id: Uuid,
+    started_at: chrono::DateTime<Utc>,
+    players: &[SeatInfo],
+    scores: &HashMap<PlayerId, i32>,
+    cards_played: &HashMap<PlayerId, u32>,
+    rounds: &[RoundLog],
+    action_log: &[WaveChoice],
+    seed: u64,
+) {
+    let Some(pool) = pool else {
+        tracing::trace!(game.id = %game_id, "no database configured; completion write skipped");
+        return;
+    };
+    let result = build_game_result(
+        players.iter().map(|p| (p.id, p.name.clone())),
+        scores,
+        cards_played,
+        rounds,
+        game_id,
+        started_at,
+        Utc::now(),
+    );
+    // Encode the timeless replay payload; on an (unexpected) encode failure,
+    // still persist the results so the match record is not lost.
+    let replay = match encode_replay(
+        game_id,
+        seed,
+        config,
+        players.iter().map(|p| (p.id, p.color, p.name.clone())),
+        action_log,
+    ) {
+        Ok(replay) => Some(replay),
+        Err(e) => {
+            tracing::error!(game.id = %game_id, error = %e, "failed to encode replay; persisting results only");
+            None
+        }
+    };
+    if let Err(e) = persist_game(pool, &result, replay.as_ref()).await {
+        tracing::error!(game.id = %game_id, error = %e, "failed to persist completed game");
     }
 }
 
@@ -729,11 +846,16 @@ async fn collect_wave(
                                 )
                                 .await;
                             }
-                            // Entry messages (create/join/enqueue) are never valid
-                            // mid-game: reply WrongPhase, never silently drop.
-                            ClientMessage::CreateRoom { .. }
-                            | ClientMessage::JoinRoom { .. }
-                            | ClientMessage::EnqueueMatch { .. } => {
+                            // Entry and group-lobby messages (create/join/enqueue,
+                            // play-again, fill, leave) are never valid mid-game:
+                            // reply WrongPhase, never silently drop (§I/F1).
+                            ClientMessage::CreateGroup { .. }
+                            | ClientMessage::JoinGroup { .. }
+                            | ClientMessage::EnqueueMatch { .. }
+                            | ClientMessage::PlayAgain
+                            | ClientMessage::FillGroup
+                            | ClientMessage::CancelFill
+                            | ClientMessage::LeaveGroup => {
                                 send_to(
                                     players,
                                     player,
@@ -824,6 +946,7 @@ mod tests {
                 id: PlayerId(Uuid::from_u128(n)),
                 name: format!("p{n}"),
                 color,
+                guest: false,
                 out: tx,
             },
             rx,
@@ -864,7 +987,7 @@ mod tests {
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
         cmd_tx
-            .send(RoomCommand::Action {
+            .send(GroupCommand::Action {
                 player: id1,
                 msg: ClientMessage::CommitCard { card: CardId(99) },
             })
@@ -922,7 +1045,7 @@ mod tests {
         // id2 is NOT in the acting set (already passed / locked out this round).
         let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
         cmd_tx
-            .send(RoomCommand::Action {
+            .send(GroupCommand::Action {
                 player: id2,
                 msg: ClientMessage::CommitPass,
             })
@@ -973,14 +1096,14 @@ mod tests {
         // A palette emote is broadcast; an off-palette one is rejected — matching
         // the lobby, resolving the lobby-vs-wave inconsistency.
         cmd_tx
-            .send(RoomCommand::Action {
+            .send(GroupCommand::Action {
                 player: id1,
                 msg: ClientMessage::Emote { emote: EmoteId(1) },
             })
             .await
             .unwrap();
         cmd_tx
-            .send(RoomCommand::Action {
+            .send(GroupCommand::Action {
                 player: id1,
                 msg: ClientMessage::Emote {
                     emote: EmoteId(999),
@@ -1033,7 +1156,7 @@ mod tests {
     async fn client_loop(
         id: PlayerId,
         mut rx: mpsc::Receiver<ServerMessage>,
-        cmd_tx: mpsc::Sender<RoomCommand>,
+        cmd_tx: mpsc::Sender<GroupCommand>,
     ) -> Option<Vec<PlayerScore>> {
         let mut hand: Vec<CardId> = Vec::new();
         let mut idx = 0usize;
@@ -1052,13 +1175,13 @@ mod tests {
                         ClientMessage::CommitPass
                     };
                     let _ = cmd_tx
-                        .send(RoomCommand::Action {
+                        .send(GroupCommand::Action {
                             player: id,
                             msg: action,
                         })
                         .await;
                     let _ = cmd_tx
-                        .send(RoomCommand::Action {
+                        .send(GroupCommand::Action {
                             player: id,
                             msg: ClientMessage::LockIn,
                         })
@@ -1079,7 +1202,7 @@ mod tests {
         cfg.timing.wave_ms = wave_ms;
         let registry = cfg.build_registry().unwrap();
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<RoomCommand>(512);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<GroupCommand>(512);
         let mut seats = Vec::new();
         let mut clients = Vec::new();
         for (i, color) in Color::PLAYER_COLORS.into_iter().enumerate() {
@@ -1089,6 +1212,7 @@ mod tests {
                 id,
                 name: format!("p{i}"),
                 color,
+                guest: false,
                 out: out_tx,
             });
             clients.push(client_loop(id, out_rx, cmd_tx.clone()));
@@ -1106,11 +1230,12 @@ mod tests {
         let game = run_game(
             &registry,
             &cfg,
-            RoomCode("BREW-TEST".into()),
+            GroupCode("BREW-TEST".into()),
             seats,
             &mut cmd_rx,
             &palette,
             seed,
+            None,
         );
         let (_g, r0, r1, r2, r3) = tokio::join!(game, c0, c1, c2, c3);
 

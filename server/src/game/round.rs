@@ -48,8 +48,9 @@ pub struct DepileData {
     pub boiling_point: u8,
 }
 
-/// One player's choice in a wave.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One player's choice in a wave. Serializable so the per-game action log can
+/// ride in a timeless replay payload (the deterministic input the engine re-runs).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum WaveChoice {
     /// Commit a specific card.
     Play(CardId),

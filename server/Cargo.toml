@@ -18,7 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 boiling-point-protocol = { path = "../protocol" }
-clap = { workspace = true }
+clap = { workspace = true, features = ["env"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = "0.8"
@@ -39,6 +39,9 @@ opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"] }
 arc-swap = "1"
 metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
+rmp-serde = { workspace = true }
+sha2 = "0.10"
+base64 = "0.22"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",

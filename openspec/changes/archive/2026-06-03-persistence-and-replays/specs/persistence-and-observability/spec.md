@@ -42,11 +42,11 @@ Persistence SHALL use PostgreSQL with tables for players (UUID identity, display
 
 ### Requirement: Runtime Persistence Wiring
 
-When a database URL is configured (via `--database-url` / `DATABASE_URL`), the server
-SHALL connect a connection pool at startup, run idempotent migrations before accepting
-connections, hold the pool in shared application state, and invoke the post-game write
-at every `GameOver` on the live path. Absence of a URL SHALL disable persistence
-cleanly rather than fail startup.
+The server SHALL, when a database URL is configured (via `--database-url` /
+`DATABASE_URL`), connect a connection pool at startup, run idempotent migrations
+before accepting connections, hold the pool in shared application state, and invoke
+the post-game write at every `GameOver` on the live path. Absence of a URL SHALL
+disable persistence cleanly rather than fail startup.
 
 #### Scenario: Migrations run before serving
 

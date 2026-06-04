@@ -19,6 +19,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use sqlx::PgPool;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
@@ -163,13 +164,15 @@ impl Standings {
     }
 }
 
-/// Spawn a group task and return a handle to it.
+/// Spawn a group task and return a handle to it. `pool` is the optional
+/// persistence pool, threaded to each game's post-game write.
 pub fn spawn(
     code: GroupCode,
     groups: Arc<GroupRegistry>,
     registry: Arc<ContentRegistry>,
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
+    pool: Option<PgPool>,
 ) -> GroupHandle {
     let (tx, rx) = mpsc::channel(64);
     tokio::spawn(run(
@@ -180,6 +183,7 @@ pub fn spawn(
         registry,
         config,
         emote_palette,
+        pool,
     ));
     GroupHandle { code, tx }
 }
@@ -239,6 +243,7 @@ async fn run_one_game(
     registry: &Arc<ContentRegistry>,
     config: &Arc<ContentConfig>,
     emote_palette: &Arc<HashSet<u16>>,
+    pool: Option<&PgPool>,
 ) {
     if *searching {
         groups.close_fill(code);
@@ -276,6 +281,7 @@ async fn run_one_game(
         rx,
         emote_palette.as_ref(),
         seed,
+        pool,
     )
     .await;
     standings.record_game(&roster, &winners);
@@ -303,6 +309,7 @@ async fn run_one_game(
 // nests several `game` spans over its life. The field name matches
 // `span_schema::attr::GROUP_CODE`.
 #[tracing::instrument(name = "group.lifetime", skip_all, fields(group.code = %code.0))]
+#[allow(clippy::too_many_arguments)]
 async fn run(
     code: GroupCode,
     self_tx: mpsc::Sender<GroupCommand>,
@@ -311,6 +318,7 @@ async fn run(
     registry: Arc<ContentRegistry>,
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
+    pool: Option<PgPool>,
 ) {
     let mut seats: Vec<Seat> = Vec::new();
     let mut standings = Standings::default();
@@ -424,6 +432,7 @@ async fn run(
                         &registry,
                         &config,
                         &emote_palette,
+                        pool.as_ref(),
                     )
                     .await;
                     idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);
@@ -489,6 +498,7 @@ async fn run(
                             &registry,
                             &config,
                             &emote_palette,
+                            pool.as_ref(),
                         )
                         .await;
                         idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);
@@ -547,6 +557,7 @@ async fn run(
                         &registry,
                         &config,
                         &emote_palette,
+                        pool.as_ref(),
                     )
                     .await;
                     idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);
