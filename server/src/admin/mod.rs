@@ -7,8 +7,8 @@
 //!   lifecycle (`admin-span-projection`). It is read-only by construction.
 //! - [`auth`] gates every capability by operator role, separate from player
 //!   session tokens.
-//! - [`api`] serves the read endpoints (fleet/rooms/reveal/replay/live) and the
-//!   command endpoints (reload/toggle/room lifecycle) over isolated routes.
+//! - [`api`] serves the read endpoints (fleet/groups/reveal/replay/live) and the
+//!   command endpoints (reload/toggle/group lifecycle) over isolated routes.
 //!
 //! All reads — including the hidden-state reveal — are reachable by any
 //! authenticated operator over this admin channel (never a player connection); only
@@ -26,23 +26,23 @@ use axum::http::StatusCode;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 
-use crate::lobby::RoomRegistry;
+use crate::lobby::GroupRegistry;
 
 pub use auth::{Operator, OperatorAuth, OperatorRole};
 pub use projection::AdminProjection;
 
 /// Shared state for the admin API. Distinct from the player `AppState`: it carries
 /// the read projection, the operator auth policy, and the command-plane handle to
-/// the room registry — but **no** player session/transport state.
+/// the group registry — but **no** player session/transport state.
 #[derive(Clone)]
 pub struct AdminState {
     /// The span-sourced read projection.
     pub projection: Arc<AdminProjection>,
     /// The operator auth policy.
     pub auth: Arc<OperatorAuth>,
-    /// The room registry — the command plane's authoritative target (never the
+    /// The group registry — the command plane's authoritative target (never the
     /// player wire). Used only by the elevated command endpoints.
-    pub rooms: Arc<RoomRegistry>,
+    pub groups: Arc<GroupRegistry>,
 }
 
 /// Build the admin Router. Mount this on a listener **separate** from the player

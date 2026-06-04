@@ -2,7 +2,7 @@
 
 use rand::Rng;
 
-use boiling_point_protocol::RoomCode;
+use boiling_point_protocol::GroupCode;
 
 /// Unambiguous alphabet (no `0/O`, `1/I`, etc.) for readable codes.
 const ALPHABET: &[u8] = b"ACDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -10,12 +10,12 @@ const ALPHABET: &[u8] = b"ACDEFGHJKLMNPQRSTUVWXYZ23456789";
 const SUFFIX_LEN: usize = 4;
 
 /// Generate a fresh invite code. Callers should retry on the (rare) collision.
-pub fn generate_code() -> RoomCode {
+pub fn generate_code() -> GroupCode {
     let mut rng = rand::thread_rng();
     let suffix: String = (0..SUFFIX_LEN)
         .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
         .collect();
-    RoomCode(format!("BREW-{suffix}"))
+    GroupCode(format!("BREW-{suffix}"))
 }
 
 #[cfg(test)]
@@ -24,7 +24,7 @@ mod tests {
 
     #[test]
     fn code_has_expected_shape() {
-        let RoomCode(code) = generate_code();
+        let GroupCode(code) = generate_code();
         assert!(code.starts_with("BREW-"));
         let suffix = &code["BREW-".len()..];
         assert_eq!(suffix.len(), SUFFIX_LEN);

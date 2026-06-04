@@ -18,9 +18,9 @@ use uuid::Uuid;
 
 use boiling_point_protocol::client::PROTOCOL_VERSION;
 use boiling_point_protocol::vocab::Color;
-use boiling_point_protocol::{ClientMessage, EmoteId, PlayerId, RoomCode, ServerMessage};
+use boiling_point_protocol::{ClientMessage, EmoteId, GroupCode, PlayerId, ServerMessage};
 use boiling_point_server::config::ContentConfig;
-use boiling_point_server::lobby::{MatchQueue, RoomRegistry, SessionStore};
+use boiling_point_server::lobby::{GroupRegistry, MatchQueue, SessionStore};
 use boiling_point_server::session::{SeatInfo, run_game};
 use boiling_point_server::transport::{AppState, app};
 
@@ -152,6 +152,7 @@ async fn run_in_process(
                 id: player,
                 name: format!("seat{seat}"),
                 color,
+                guest: false,
                 out: out_tx,
             });
             conns.push(InProcess::new(player, cmd_tx.clone(), out_rx));
@@ -167,12 +168,12 @@ async fn run_in_process(
             .try_into()
             .map_err(|_| HarnessError::Config("seat count mismatch".into()))?;
         let [c0, c1, c2, c3] = conns;
-        let room_code = RoomCode(format!("BATCH-{index}"));
+        let group_code = GroupCode(format!("BATCH-{index}"));
 
         let game_fut = run_game(
             &registry,
             config,
-            room_code,
+            group_code,
             seat_infos,
             &mut cmd_rx,
             &palette_set,
@@ -227,7 +228,7 @@ async fn run_in_process(
 }
 
 /// The WebSocket honesty-check batch: stand up an embedded server, then for each
-/// game connect four bots (one creates the room, three join by code) and play.
+/// game connect four bots (one creates the group, three join by code) and play.
 async fn run_websocket(
     config: &ContentConfig,
     params: &BatchParams,
@@ -240,10 +241,10 @@ async fn run_websocket(
     for index in 0..params.games {
         let seeds = GameSeeds::for_game(params.seed, index);
 
-        // Seat 0 creates the room; learn the invite code from its RoomJoined.
+        // Seat 0 creates the group; learn the invite code from its GroupJoined.
         let (c0, id0, color0, code) = ws_join(
             &url,
-            ClientMessage::CreateRoom {
+            ClientMessage::CreateGroup {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "seat0".into(),
                 session_token: None,
@@ -251,7 +252,7 @@ async fn run_websocket(
         )
         .await?;
         let code = code
-            .ok_or_else(|| HarnessError::WebSocket("create did not return a room code".into()))?;
+            .ok_or_else(|| HarnessError::WebSocket("create did not return a group code".into()))?;
 
         // Seats 1–3 join by code (the fourth join starts the game).
         let (c1, id1, color1, _) = ws_join(&url, join_msg("seat1", &code)).await?;
@@ -338,40 +339,40 @@ fn seat_record(player_id: PlayerId, color: Color, strategy: &dyn Strategy) -> Se
     }
 }
 
-fn join_msg(name: &str, code: &RoomCode) -> ClientMessage {
-    ClientMessage::JoinRoom {
+fn join_msg(name: &str, code: &GroupCode) -> ClientMessage {
+    ClientMessage::JoinGroup {
         protocol_version: PROTOCOL_VERSION,
         display_name: name.into(),
         session_token: None,
-        room_code: code.clone(),
+        group_code: code.clone(),
     }
 }
 
-/// Connect, send the entry message, and read until `RoomJoined`, returning the
-/// connection plus the seat's confirmed identity (and the room code, on create).
+/// Connect, send the entry message, and read until `GroupJoined`, returning the
+/// connection plus the seat's confirmed identity (and the group code, on create).
 async fn ws_join(
     url: &str,
     entry: ClientMessage,
-) -> Result<(WebSocket, PlayerId, Color, Option<RoomCode>), HarnessError> {
+) -> Result<(WebSocket, PlayerId, Color, Option<GroupCode>), HarnessError> {
     let mut conn = WebSocket::connect(url)
         .await
         .map_err(|e| HarnessError::WebSocket(e.to_string()))?;
     conn.send(entry).await;
     loop {
         match conn.recv().await {
-            Some(ServerMessage::RoomJoined {
-                room_code,
+            Some(ServerMessage::GroupJoined {
+                group_code,
                 your_player_id,
                 your_color,
                 ..
-            }) => return Ok((conn, your_player_id, your_color, Some(room_code))),
+            }) => return Ok((conn, your_player_id, your_color, Some(group_code))),
             Some(ServerMessage::Error { message, .. }) => {
                 return Err(HarnessError::WebSocket(message));
             }
             Some(_) => continue,
             None => {
                 return Err(HarnessError::WebSocket(
-                    "connection closed before RoomJoined".into(),
+                    "connection closed before GroupJoined".into(),
                 ));
             }
         }
@@ -392,11 +393,11 @@ async fn spawn_embedded_server(config: &ContentConfig) -> Result<String, Harness
             .map_err(|e| HarnessError::Config(e.to_string()))?,
     );
     let config = Arc::new(config);
-    let rooms = Arc::new(RoomRegistry::new(registry, config));
-    let queue = Arc::new(MatchQueue::new(rooms.clone()));
+    let groups = Arc::new(GroupRegistry::new(registry, config));
+    let queue = Arc::new(MatchQueue::new(groups.clone()));
     let state = AppState {
         sessions: Arc::new(SessionStore::new()),
-        rooms,
+        groups,
         queue,
         conn_timeout: Duration::from_secs(60),
     };

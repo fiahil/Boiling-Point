@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use boiling_point_server::admin::{self, AdminProjection, AdminState, OperatorAuth};
 use boiling_point_server::config::ContentConfig;
-use boiling_point_server::lobby::{MatchQueue, RoomRegistry, SessionStore};
+use boiling_point_server::lobby::{GroupRegistry, MatchQueue, SessionStore};
 use boiling_point_server::observability;
 use boiling_point_server::transport::{AppState, app};
 use clap::Parser;
@@ -100,8 +100,10 @@ async fn main() {
     };
     let config = Arc::new(config);
 
-    let rooms = Arc::new(RoomRegistry::new(registry, config));
-    let queue = Arc::new(MatchQueue::new(rooms.clone()));
+    let groups = Arc::new(GroupRegistry::new(registry, config));
+    let queue = Arc::new(MatchQueue::new(groups.clone()));
+    // Wire the queue back into the registry so groups can request matchmaking fill.
+    groups.set_queue(&queue);
 
     // Admin surface: served on an isolated port, distinct from the player wire.
     // Operators authenticate with bearer tokens from the environment, never the
@@ -116,7 +118,7 @@ async fn main() {
     let admin_state = AdminState {
         projection: projection.clone(),
         auth: admin_auth,
-        rooms: rooms.clone(),
+        groups: groups.clone(),
     };
     let admin_addr = cli.admin_addr;
     match tokio::net::TcpListener::bind(admin_addr).await {
@@ -135,7 +137,7 @@ async fn main() {
 
     let state = AppState {
         sessions: Arc::new(SessionStore::new()),
-        rooms,
+        groups,
         queue,
         conn_timeout: Duration::from_secs(cli.conn_timeout_secs),
     };

@@ -14,7 +14,7 @@ const el = (tag, cls, text) => {
 
 let token = localStorage.getItem("bp_admin_token") || "";
 let activityAbort = null;
-let roomsTimer = null;
+let groupsTimer = null;
 
 // ---- API helper ---------------------------------------------------------
 
@@ -38,7 +38,7 @@ async function connect() {
     $("#role").textContent = me.role;
     $("#role").className = "pill " + (me.role === "elevated" ? "warn" : "ok");
     renderFleet(await getJson("/admin/fleet"));
-    startRooms();
+    startGroups();
     startActivity();
     loadBalance();
   } catch (e) {
@@ -63,40 +63,40 @@ function metricCard(label, value, sub) {
 function renderFleet(f) {
   const box = $("#fleet-cards");
   box.innerHTML = "";
-  box.appendChild(metricCard("Live rooms", f.rooms));
+  box.appendChild(metricCard("Live groups", f.groups));
   box.appendChild(metricCard("In-flight games", f.games));
   box.appendChild(metricCard("Queue depth", f.queue_depth));
-  box.appendChild(metricCard("Stuck rooms", f.stuck_rooms));
+  box.appendChild(metricCard("Stuck groups", f.stuck_groups));
   box.appendChild(metricCard("Explosion rate", pct(f.balance.explosion_rate), "target 30–40%"));
   box.appendChild(metricCard("Games observed", f.balance.games));
 }
 
 const pct = (x) => (x * 100).toFixed(1) + "%";
 
-// ---- rooms --------------------------------------------------------------
+// ---- groups --------------------------------------------------------------
 
-function startRooms() {
-  if (roomsTimer) clearInterval(roomsTimer);
+function startGroups() {
+  if (groupsTimer) clearInterval(groupsTimer);
   const tick = async () => {
     try {
-      const rooms = await getJson("/admin/rooms");
-      renderRooms(rooms);
+      const groups = await getJson("/admin/groups");
+      renderGroups(groups);
       renderFleet(await getJson("/admin/fleet"));
     } catch (_) { /* transient */ }
   };
   tick();
-  roomsTimer = setInterval(tick, 2000);
+  groupsTimer = setInterval(tick, 2000);
 }
 
-function renderRooms(rooms) {
-  $("#rooms-count").textContent = `(${rooms.length})`;
-  const tb = $("#rooms-table tbody");
+function renderGroups(groups) {
+  $("#groups-count").textContent = `(${groups.length})`;
+  const tb = $("#groups-table tbody");
   tb.innerHTML = "";
-  for (const r of rooms) {
+  for (const r of groups) {
     const tr = el("tr", "selectable" + (r.stuck ? " stuck" : ""));
     const round = r.round_number ? `${r.round_number}/${r.round_total}` : "—";
     const cells = [
-      r.room_code || r.room_id,
+      r.group_code || r.group_id,
       r.phase + (r.stuck ? " ⚠" : ""),
       round,
       r.wave_number ?? "—",
@@ -106,17 +106,17 @@ function renderRooms(rooms) {
     for (const c of cells) tr.appendChild(el("td", null, String(c)));
     const td = el("td");
     const btn = el("button", null, "Inspect");
-    btn.onclick = () => inspectRoom(r.room_code || String(r.room_id));
+    btn.onclick = () => inspectGroup(r.group_code || String(r.group_id));
     td.appendChild(btn);
     tr.appendChild(td);
     tb.appendChild(tr);
   }
 }
 
-async function inspectRoom(code) {
-  const box = $("#room-detail");
+async function inspectGroup(code) {
+  const box = $("#group-detail");
   box.innerHTML = "";
-  box.appendChild(el("h3", null, "Room " + code));
+  box.appendChild(el("h3", null, "Group " + code));
   const revealBtn = el("button", "warn", "🔓 Reveal hidden state");
   revealBtn.onclick = () => reveal(code, box);
   box.appendChild(revealBtn);
@@ -124,7 +124,7 @@ async function inspectRoom(code) {
 
 async function reveal(code, box) {
   try {
-    const res = await api(`/admin/rooms/${encodeURIComponent(code)}/reveal`);
+    const res = await api(`/admin/groups/${encodeURIComponent(code)}/reveal`);
     const data = await res.json();
     const out = el("div");
     if (data.status === "no_round_in_progress") {
@@ -148,7 +148,7 @@ async function reveal(code, box) {
         }
       }
     } else {
-      out.appendChild(el("p", "muted", "No such live room."));
+      out.appendChild(el("p", "muted", "No such live group."));
     }
     box.querySelectorAll(".reveal-out").forEach((n) => n.remove());
     out.classList.add("reveal-out");
@@ -192,10 +192,10 @@ async function startActivity() {
 
 function appendActivity(feed, ev) {
   const li = el("li", "ev-" + ev.kind);
-  const room = ev.room_code ? `[${ev.room_code}] ` : "";
+  const group = ev.group_code ? `[${ev.group_code}] ` : "";
   const detail = describe(ev);
   li.appendChild(el("span", "tag", ev.span));
-  li.appendChild(document.createTextNode(`${ev.kind} ${room}${detail}`));
+  li.appendChild(document.createTextNode(`${ev.kind} ${group}${detail}`));
   feed.prepend(li);
   while (feed.childElementCount > 200) feed.lastChild.remove();
 }
@@ -219,7 +219,7 @@ async function loadReplay() {
   const games = await getJson("/admin/replay");
   if (!games.length) list.appendChild(el("li", "muted", "No completed games retained yet."));
   for (const g of games.reverse()) {
-    const li = el("li", null, `${g.room_code || g.game_id} · ${(g.duration_ms / 1000).toFixed(1)}s · ${g.span_count} spans`);
+    const li = el("li", null, `${g.group_code || g.game_id} · ${(g.duration_ms / 1000).toFixed(1)}s · ${g.span_count} spans`);
     li.onclick = () => viewReplay(g.game_id);
     list.appendChild(li);
   }
@@ -234,7 +234,7 @@ async function viewReplay(gameId) {
     return;
   }
   const game = await res.json();
-  box.appendChild(el("h3", null, "Game " + (game.room_code || game.game_id)));
+  box.appendChild(el("h3", null, "Game " + (game.group_code || game.game_id)));
   // Group spans by round, then waves, in completion order.
   const rounds = game.spans.filter((s) => s.name === "round");
   for (const r of rounds) {
@@ -262,11 +262,11 @@ async function command(cmd) {
   try {
     let res;
     if (cmd === "seed") {
-      res = await api("/admin/commands/rooms/seed", { method: "POST" });
+      res = await api("/admin/commands/groups/seed", { method: "POST" });
     } else if (cmd === "force-start" || cmd === "kill") {
-      const code = $("#room-target").value.trim();
-      if (!code) return alert("enter a room code");
-      res = await api(`/admin/commands/rooms/${encodeURIComponent(code)}/${cmd}`, { method: "POST" });
+      const code = $("#group-target").value.trim();
+      if (!code) return alert("enter a group code");
+      res = await api(`/admin/commands/groups/${encodeURIComponent(code)}/${cmd}`, { method: "POST" });
     } else if (cmd === "toggle") {
       const kind = $("#toggle-kind").value;
       const raw = $("#toggle-value").value.trim();

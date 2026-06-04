@@ -15,7 +15,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use boiling_point_protocol::{ClientMessage, PlayerId, ServerMessage, codec};
-use boiling_point_server::lobby::RoomCommand;
+use boiling_point_server::lobby::GroupCommand;
 
 /// A bidirectional channel to the server, in the bot's own vocabulary.
 ///
@@ -30,12 +30,12 @@ pub trait BotConnection {
 
 /// In-process backend: talks straight to `session::run_game` over mpsc channels,
 /// with no socket or serialization. Outbound client messages are wrapped as the
-/// room's [`RoomCommand::Action`]s the way the real transport layer wraps them.
+/// group's [`GroupCommand::Action`]s the way the real transport layer wraps them.
 pub struct InProcess {
     /// This seat's player id, stamped onto every outbound action.
     player: PlayerId,
     /// Channel into the game loop's shared command receiver.
-    tx: mpsc::Sender<RoomCommand>,
+    tx: mpsc::Sender<GroupCommand>,
     /// This seat's private inbound message stream.
     rx: mpsc::Receiver<ServerMessage>,
 }
@@ -44,7 +44,7 @@ impl InProcess {
     /// Build an in-process connection for one seat.
     pub fn new(
         player: PlayerId,
-        tx: mpsc::Sender<RoomCommand>,
+        tx: mpsc::Sender<GroupCommand>,
         rx: mpsc::Receiver<ServerMessage>,
     ) -> Self {
         InProcess { player, tx, rx }
@@ -59,7 +59,7 @@ impl BotConnection for InProcess {
     async fn send(&mut self, msg: ClientMessage) {
         let _ = self
             .tx
-            .send(RoomCommand::Action {
+            .send(GroupCommand::Action {
                 player: self.player,
                 msg,
             })

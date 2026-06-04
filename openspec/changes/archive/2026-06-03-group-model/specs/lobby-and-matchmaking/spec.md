@@ -88,3 +88,25 @@ rather than destroying the group, so the same table can play again without re-qu
 
 - **WHEN** a player leaves the post-game group lobby
 - **THEN** their seat is freed; the group persists for the remaining players (subject to idle cleanup)
+
+### Requirement: Connection Persists Across Groups
+
+A player's connection SHALL be a session that outlives any single group: it holds zero or
+one group at a time and is never torn down by a game or group ending. Leaving a group
+returns the connection to an unbound **menu** state on the same socket, from which the
+player MAY create, join, or enqueue for another group without reconnecting.
+
+#### Scenario: Connection survives a finished game
+
+- **WHEN** a game reaches `GameOver`
+- **THEN** each player's connection stays open and returns to the group lobby, rather than being closed
+
+#### Scenario: Leave a group, then join another on one socket
+
+- **WHEN** a player leaves their group and then sends a `JoinGroup` for a different code on the same connection
+- **THEN** they join the second group without opening a new connection or re-authenticating
+
+#### Scenario: Menu connection is kept alive while unbound
+
+- **WHEN** a connected player sits in the unbound menu state without joining a group
+- **THEN** the server keeps the connection alive as long as it heartbeats, independent of any group's lifecycle

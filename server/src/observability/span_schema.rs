@@ -14,17 +14,19 @@
 
 /// Schema version. Bump on any breaking change to names/attributes so consumers
 /// can detect a mismatch.
-pub const SPAN_SCHEMA_VERSION: u32 = 1;
+///
+/// v2: room→group rename (`group.lifetime` span, `group.code` attribute).
+pub const SPAN_SCHEMA_VERSION: u32 = 2;
 
 /// Span names emitted by the server, as stable string constants.
 pub mod span {
-    /// A room's whole lifetime (lobby → game → teardown). Long-lived; the live
+    /// A group's whole lifetime (lobby → game → teardown). Long-lived; the live
     /// open-span registry is keyed off this one.
-    pub const ROOM_LIFETIME: &str = "room.lifetime";
+    pub const GROUP_LIFETIME: &str = "group.lifetime";
     /// A player waiting in the auto-match queue. Open while they wait; the count of
     /// open `lobby.wait` spans is the live queue depth. Connection-scoped root.
     pub const LOBBY_WAIT: &str = "lobby.wait";
-    /// One full game within a room. Child of [`ROOM_LIFETIME`].
+    /// One full game within a group. Child of [`GROUP_LIFETIME`].
     pub const GAME: &str = "game";
     /// One round within a game. Child of [`GAME`].
     pub const ROUND: &str = "round";
@@ -53,8 +55,8 @@ pub mod span {
 /// the export boundary and only ever read in-process.
 pub mod attr {
     // --- public (exportable) ---
-    /// Room invite code.
-    pub const ROOM_CODE: &str = "room.code";
+    /// Group invite code.
+    pub const GROUP_CODE: &str = "group.code";
     /// Game UUID.
     pub const GAME_ID: &str = "game.id";
     /// 1-based round number.
@@ -91,7 +93,7 @@ pub mod attr {
     pub const OPERATOR: &str = "operator";
     /// The command action (e.g. `reload`, `kill`).
     pub const ACTION: &str = "action";
-    /// The command target (e.g. a room code or item id).
+    /// The command target (e.g. a group code or item id).
     pub const TARGET: &str = "target";
     /// The command outcome (`ok` or a rejection reason).
     pub const OUTCOME: &str = "outcome";
@@ -111,11 +113,11 @@ pub mod attr {
 }
 
 /// The span tree as `(span, parent)` pairs. A `None` parent marks a span that may
-/// be a root (connection- or registry-scoped rather than nested under a room).
+/// be a root (connection- or registry-scoped rather than nested under a group).
 pub const SPAN_TREE: &[(&str, Option<&str>)] = &[
-    (span::ROOM_LIFETIME, None),
+    (span::GROUP_LIFETIME, None),
     (span::LOBBY_WAIT, None),
-    (span::GAME, Some(span::ROOM_LIFETIME)),
+    (span::GAME, Some(span::GROUP_LIFETIME)),
     (span::ROUND, Some(span::GAME)),
     (span::HAND, Some(span::ROUND)),
     (span::WAVE, Some(span::ROUND)),
@@ -160,13 +162,13 @@ mod tests {
         }
     }
 
-    /// The documented core nesting room → game → round → wave holds.
+    /// The documented core nesting group → game → round → wave holds.
     #[test]
     fn core_nesting_is_documented() {
         assert_eq!(parent_of(span::WAVE), Some(span::ROUND));
         assert_eq!(parent_of(span::ROUND), Some(span::GAME));
-        assert_eq!(parent_of(span::GAME), Some(span::ROOM_LIFETIME));
-        assert_eq!(parent_of(span::ROOM_LIFETIME), None);
+        assert_eq!(parent_of(span::GAME), Some(span::GROUP_LIFETIME));
+        assert_eq!(parent_of(span::GROUP_LIFETIME), None);
     }
 
     /// The version is exposed and non-zero (checked at compile time).

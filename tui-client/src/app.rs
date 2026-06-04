@@ -11,7 +11,7 @@ use std::collections::VecDeque;
 
 use boiling_point_protocol::{
     ClientMessage, PROTOCOL_VERSION,
-    ids::{CardId, EmoteId, RoomCode},
+    ids::{CardId, EmoteId, GroupCode},
     server::ServerMessage,
     vocab::{EffectKind, HandCard},
 };
@@ -85,6 +85,10 @@ pub struct App {
     pub(crate) conn: Conn,
     pub(crate) name_input: String,
     pub(crate) code_input: String,
+    /// The session token learned from `GroupJoined`, replayed on every entry
+    /// message so this connection's identity (and a held seat) survives a socket
+    /// drop. `None` until the first join.
+    pub(crate) session_token: Option<String>,
     pub(crate) menu_index: usize,
     pub(crate) cursor: usize,
     pub(crate) committed: Selection,
@@ -120,6 +124,7 @@ impl App {
             conn: Conn::Connected,
             name_input: String::new(),
             code_input: String::new(),
+            session_token: None,
             menu_index: 0,
             cursor: 0,
             committed: Selection::None,
@@ -168,7 +173,7 @@ impl App {
         vec![ClientMessage::EnqueueMatch {
             protocol_version: PROTOCOL_VERSION,
             display_name: name,
-            session_token: None,
+            session_token: self.session_token.clone(),
         }]
     }
 
@@ -193,8 +198,17 @@ impl App {
 
     fn react(&mut self, msg: &ServerMessage) {
         match msg {
-            ServerMessage::RoomJoined { .. } => self.phase = Phase::Lobby,
-            ServerMessage::GameStarting { .. } => self.phase = Phase::RoundStart,
+            ServerMessage::GroupJoined { session_token, .. } => {
+                // Persist the session token so our identity survives a socket drop.
+                self.session_token = Some(session_token.clone());
+                self.phase = Phase::Lobby;
+            }
+            ServerMessage::GameStarting { .. } => {
+                // A fresh game (first or play-again): clear the previous game's
+                // per-game state so a replayed table doesn't render stale results.
+                self.begin_next_game();
+                self.phase = Phase::RoundStart;
+            }
             ServerMessage::ModifierRevealed { .. } => self.phase = Phase::RoundStart,
             ServerMessage::YourHand { .. } => {
                 if self.phase != Phase::Playing {
@@ -276,7 +290,22 @@ impl App {
             ServerMessage::DeathmatchStarted { .. } => {
                 self.toast("⚔ Deathmatch — tie for the lead!");
             }
-            ServerMessage::ScoreUpdate { .. }
+            ServerMessage::LeftGroup => {
+                // The server confirmed we left; drop the table and return to the
+                // main menu (the connection stays open — identity is kept).
+                self.return_to_menu();
+                self.toast("left the group");
+            }
+            ServerMessage::GroupSearching { needed } => {
+                if *needed > 0 {
+                    self.toast(format!("🔎 looking for {needed} more…"));
+                } else {
+                    self.toast("search stopped");
+                }
+            }
+            // Standings are folded into the view model and rendered; no toast.
+            ServerMessage::StandingsUpdate { .. }
+            | ServerMessage::ScoreUpdate { .. }
             | ServerMessage::PlayerConnectionChanged { .. }
             | ServerMessage::Heartbeat => {}
         }
@@ -358,8 +387,11 @@ impl App {
         match self.phase {
             Phase::Entry => self.key_entry(key.code),
             Phase::JoinCode => self.key_joincode(key.code),
-            // Lobby/queue/connecting: nothing to do but wait for the table to fill.
-            Phase::Connecting | Phase::Queue | Phase::Lobby => vec![],
+            // Queue/connecting: nothing to do but wait for the table to fill.
+            Phase::Connecting | Phase::Queue => vec![],
+            // In a group lobby, waiting for the table to fill — but the player may
+            // leave back to the menu on the same connection.
+            Phase::Lobby => self.key_lobby(key.code),
             Phase::RoundStart => vec![],
             Phase::Playing => self.key_playing(key.code),
             Phase::Depile => self.key_depile(key.code),
@@ -398,15 +430,15 @@ impl App {
                         vec![ClientMessage::EnqueueMatch {
                             protocol_version: PROTOCOL_VERSION,
                             display_name: name,
-                            session_token: None,
+                            session_token: self.session_token.clone(),
                         }]
                     }
                     1 => {
                         self.phase = Phase::Connecting;
-                        vec![ClientMessage::CreateRoom {
+                        vec![ClientMessage::CreateGroup {
                             protocol_version: PROTOCOL_VERSION,
                             display_name: name,
-                            session_token: None,
+                            session_token: self.session_token.clone(),
                         }]
                     }
                     _ => {
@@ -443,11 +475,11 @@ impl App {
                     return vec![];
                 }
                 self.phase = Phase::Connecting;
-                vec![ClientMessage::JoinRoom {
+                vec![ClientMessage::JoinGroup {
                     protocol_version: PROTOCOL_VERSION,
                     display_name: self.name_input.trim().to_string(),
-                    session_token: None,
-                    room_code: RoomCode(self.code_input.trim().to_string()),
+                    session_token: self.session_token.clone(),
+                    group_code: GroupCode(self.code_input.trim().to_string()),
                 }]
             }
             _ => vec![],
@@ -576,24 +608,69 @@ impl App {
         vec![]
     }
 
+    /// In a group lobby (waiting for the table): `f` toggles matchmaking fill
+    /// ("look for a 4th…" / cancel the search), and `Esc`/`q` leaves the group and
+    /// returns to the main menu on the same connection.
+    fn key_lobby(&mut self, code: KeyCode) -> Vec<ClientMessage> {
+        match code {
+            KeyCode::Char('f') => {
+                if self.vm.searching_needed.is_some() {
+                    vec![ClientMessage::CancelFill]
+                } else if self.vm.players.len() < 4 {
+                    vec![ClientMessage::FillGroup]
+                } else {
+                    self.toast("table is already full");
+                    vec![]
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('q') => vec![ClientMessage::LeaveGroup],
+            _ => vec![],
+        }
+    }
+
     fn key_gameover(&mut self, code: KeyCode) -> Vec<ClientMessage> {
         match code {
-            KeyCode::Char('r') => {
-                let name = self.name_input.trim().to_string();
-                self.reset_for_new_game();
-                self.phase = Phase::Queue;
-                vec![ClientMessage::EnqueueMatch {
-                    protocol_version: PROTOCOL_VERSION,
-                    display_name: name,
-                    session_token: None,
-                }]
+            // Play again with the same table: opt in. The server re-deals once all
+            // four seats have opted in; we stay on this screen until `GameStarting`.
+            KeyCode::Char('r') | KeyCode::Enter => {
+                self.toast("ready — waiting for the table to play again");
+                vec![ClientMessage::PlayAgain]
             }
-            KeyCode::Enter | KeyCode::Esc => {
-                self.reset_for_new_game();
+            // Leave the group and return to the main menu (the server frees the seat
+            // and replies `LeftGroup`, which resets us to the entry screen).
+            KeyCode::Char('m') | KeyCode::Esc => vec![ClientMessage::LeaveGroup],
+            KeyCode::Char('q') => {
+                self.should_quit = true;
                 vec![]
             }
             _ => vec![],
         }
+    }
+
+    /// Clear the previous game's per-game state ahead of a fresh game with the same
+    /// group (play-again), keeping the roster, identity, and group code.
+    fn begin_next_game(&mut self) {
+        self.vm.reset_for_next_game();
+        self.my_pot.clear();
+        self.committed = Selection::None;
+        self.locked_in = false;
+        self.recall = None;
+        self.emote_open = false;
+        self.depile_shown = 0;
+        self.depile_accum_ms = 0;
+        self.boom_ms = 0;
+        self.peek_modal_ms = 0;
+    }
+
+    /// Return to the main (unbound) menu, keeping the session token so identity is
+    /// retained. Used after `LeftGroup`.
+    fn return_to_menu(&mut self) {
+        self.vm = ViewModel::default();
+        self.phase = Phase::Entry;
+        self.conn = Conn::Connected;
+        self.code_input.clear();
+        self.menu_index = 0;
+        self.begin_next_game();
     }
 
     fn reset_for_new_game(&mut self) {
@@ -683,7 +760,7 @@ pub(crate) fn emote_label(id: u16) -> (&'static str, &'static str) {
 /// A short tag for a server message, for the debug log.
 fn server_tag(m: &ServerMessage) -> &'static str {
     match m {
-        ServerMessage::RoomJoined { .. } => "RoomJoined",
+        ServerMessage::GroupJoined { .. } => "GroupJoined",
         ServerMessage::GameStarting { .. } => "GameStarting",
         ServerMessage::YourHand { .. } => "YourHand",
         ServerMessage::WaveOpened { .. } => "WaveOpened",
@@ -703,6 +780,9 @@ fn server_tag(m: &ServerMessage) -> &'static str {
         ServerMessage::PlayerConnectionChanged { .. } => "PlayerConnectionChanged",
         ServerMessage::StateSnapshot { .. } => "StateSnapshot",
         ServerMessage::DeathmatchStarted { .. } => "DeathmatchStarted",
+        ServerMessage::LeftGroup => "LeftGroup",
+        ServerMessage::GroupSearching { .. } => "GroupSearching",
+        ServerMessage::StandingsUpdate { .. } => "StandingsUpdate",
         ServerMessage::Heartbeat => "Heartbeat",
     }
 }
@@ -710,13 +790,17 @@ fn server_tag(m: &ServerMessage) -> &'static str {
 /// A short tag for a client message, for the debug log.
 fn client_tag(m: &ClientMessage) -> &'static str {
     match m {
-        ClientMessage::JoinRoom { .. } => "JoinRoom",
-        ClientMessage::CreateRoom { .. } => "CreateRoom",
+        ClientMessage::JoinGroup { .. } => "JoinGroup",
+        ClientMessage::CreateGroup { .. } => "CreateGroup",
         ClientMessage::EnqueueMatch { .. } => "EnqueueMatch",
         ClientMessage::CommitCard { .. } => "CommitCard",
         ClientMessage::CommitPass => "CommitPass",
         ClientMessage::LockIn => "LockIn",
         ClientMessage::Emote { .. } => "Emote",
+        ClientMessage::PlayAgain => "PlayAgain",
+        ClientMessage::FillGroup => "FillGroup",
+        ClientMessage::CancelFill => "CancelFill",
+        ClientMessage::LeaveGroup => "LeaveGroup",
         ClientMessage::Heartbeat => "Heartbeat",
     }
 }

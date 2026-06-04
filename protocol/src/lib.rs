@@ -15,7 +15,7 @@ pub mod vocab;
 
 pub use client::{ClientMessage, PROTOCOL_VERSION, ProtocolVersion};
 pub use codec::{CodecError, decode, decode_json, encode, encode_json};
-pub use ids::{CardId, EmoteId, PlayerId, RoomCode};
+pub use ids::{CardId, EmoteId, GroupCode, PlayerId};
 pub use server::{Audience, Outbound, ServerMessage};
 pub use vocab::{CardView, Color, EffectKind, HandCard, ModifierKind};
 
@@ -42,13 +42,13 @@ mod tests {
     #[test]
     fn client_messages_roundtrip_msgpack() {
         let msgs = vec![
-            ClientMessage::JoinRoom {
+            ClientMessage::JoinGroup {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "alice".into(),
                 session_token: None,
-                room_code: RoomCode("BREW-7K3F".into()),
+                group_code: GroupCode("BREW-7K3F".into()),
             },
-            ClientMessage::CreateRoom {
+            ClientMessage::CreateGroup {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "bob".into(),
                 session_token: Some("tok".into()),
@@ -62,6 +62,10 @@ mod tests {
             ClientMessage::CommitPass,
             ClientMessage::LockIn,
             ClientMessage::Emote { emote: EmoteId(3) },
+            ClientMessage::PlayAgain,
+            ClientMessage::FillGroup,
+            ClientMessage::CancelFill,
+            ClientMessage::LeaveGroup,
             ClientMessage::Heartbeat,
         ];
         for m in msgs {
@@ -76,16 +80,29 @@ mod tests {
     fn server_messages_roundtrip_both_formats() {
         let p = sample_player();
         let msgs = vec![
-            ServerMessage::RoomJoined {
-                room_code: RoomCode("BREW-7K3F".into()),
+            ServerMessage::GroupJoined {
+                group_code: GroupCode("BREW-7K3F".into()),
                 your_player_id: p,
                 your_color: Color::Sapphire,
+                session_token: "session-token".into(),
                 players: vec![PlayerPublic {
                     id: p,
                     display_name: "alice".into(),
                     color: Color::Sapphire,
                     connected: true,
+                    guest: false,
                 }],
+            },
+            ServerMessage::LeftGroup,
+            ServerMessage::GroupSearching { needed: 1 },
+            ServerMessage::StandingsUpdate {
+                members: vec![MemberStanding {
+                    player: p,
+                    games_played: 3,
+                    wins: 2,
+                }],
+                guest_games: 1,
+                guest_wins: 0,
             },
             ServerMessage::YourHand {
                 cards: vec![HandCard {
@@ -172,7 +189,7 @@ mod tests {
                 connected: false,
             },
             ServerMessage::StateSnapshot {
-                room_code: RoomCode("BREW-7K3F".into()),
+                group_code: GroupCode("BREW-7K3F".into()),
                 your_player_id: p,
                 round_number: 3,
                 players: vec![],
@@ -229,7 +246,7 @@ mod tests {
                 crossing_index: None,
             },
             ServerMessage::StateSnapshot {
-                room_code: RoomCode("BREW-7K3F".into()),
+                group_code: GroupCode("BREW-7K3F".into()),
                 your_player_id: p,
                 round_number: 2,
                 players: vec![],

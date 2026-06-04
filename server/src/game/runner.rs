@@ -2,7 +2,7 @@
 //! modifier per round from round 2, runs each round's waves to completion,
 //! accumulates scores, and ends after the final round.
 //!
-//! This is the synchronous heart that the async room task (a later task) drives
+//! This is the synchronous heart that the async group task (a later task) drives
 //! over the network; here it is fully testable in-process via a decision
 //! callback. A tie for the lead is broken by a Deathmatch among the tied players.
 

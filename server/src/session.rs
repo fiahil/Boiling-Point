@@ -1,4 +1,4 @@
-//! The in-room networked game loop: drives the (synchronous, tested) engine over
+//! The in-group networked game loop: drives the (synchronous, tested) engine over
 //! the wire for one full game.
 //!
 //! For each round it deals refill-to-5 hands (private `YourHand`), reveals a
@@ -28,7 +28,7 @@ use boiling_point_protocol::server::{
     Contribution, DepileEntry, PlayerPublic, PlayerScore, ScoringOutcome,
 };
 use boiling_point_protocol::vocab::{Color, ModifierKind};
-use boiling_point_protocol::{ClientMessage, PlayerId, RoomCode, ServerMessage};
+use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
@@ -39,7 +39,7 @@ use crate::game::round::{Round, RoundEnd, WaveChoice, WaveInput};
 use crate::game::scoring::{ScoringContext, explosion, score_safe};
 use crate::game::state::Hand;
 use crate::game::{DeathmatchResult, run_deathmatch};
-use crate::lobby::room::RoomCommand;
+use crate::lobby::group::GroupCommand;
 
 /// A seated player as the game loop needs them: identity, colour, and the
 /// outbound channel to reach them.
@@ -50,8 +50,25 @@ pub struct SeatInfo {
     pub name: String,
     /// Assigned colour.
     pub color: Color,
+    /// Whether this seat is a matchmaking guest (not a group member).
+    pub guest: bool,
     /// Outbound channel to this player's connection.
     pub out: mpsc::Sender<ServerMessage>,
+}
+
+/// What a finished game hands back to the persistent group so it can return to its
+/// lobby: the final seats (with any mid-game reconnections' refreshed channels) and
+/// the set of players who left/abandoned and never came back.
+pub struct GameEnd {
+    /// The seats as they stood at `GameOver` — reconnected players carry their
+    /// refreshed `out` channel here.
+    pub players: Vec<SeatInfo>,
+    /// Players who disconnected (or left) and did not reconnect before the game
+    /// ended; the group drops their seats when it returns to the lobby.
+    pub gone: HashSet<PlayerId>,
+    /// The game's winner(s) — more than one only for Deathmatch co-champions. The
+    /// group folds these into its standings.
+    pub winners: Vec<PlayerId>,
 }
 
 /// What one wave's collection yielded.
@@ -90,6 +107,7 @@ fn public_players(players: &[SeatInfo], gone: &HashSet<PlayerId>) -> Vec<PlayerP
             display_name: s.name.clone(),
             color: s.color,
             connected: !gone.contains(&s.id),
+            guest: s.guest,
         })
         .collect()
 }
@@ -116,17 +134,17 @@ fn scores_vec(scores: &HashMap<PlayerId, i32>, order: &[PlayerId]) -> Vec<Player
         .collect()
 }
 
-/// Run one full game to completion for the given seats. Owns the room's command
+/// Run one full game to completion for the given seats. Owns the group's command
 /// receiver for the duration so it can collect commits within wave timers.
 pub async fn run_game(
     registry: &ContentRegistry,
     config: &ContentConfig,
-    room_code: RoomCode,
+    group_code: GroupCode,
     mut players: Vec<SeatInfo>,
-    rx: &mut mpsc::Receiver<RoomCommand>,
+    rx: &mut mpsc::Receiver<GroupCommand>,
     palette: &HashSet<u16>,
     seed: u64,
-) {
+) -> GameEnd {
     let ids: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
     let color_owner: HashMap<Color, PlayerId> = players.iter().map(|p| (p.color, p.id)).collect();
     let mut hands: HashMap<PlayerId, Hand> = ids.iter().map(|id| (*id, Hand::new())).collect();
@@ -146,7 +164,7 @@ pub async fn run_game(
     let game_start = std::time::Instant::now();
     tracing::info!(players = players.len(), "game started");
 
-    // `game` span (span_schema::span::GAME) — child of the caller's room.lifetime
+    // `game` span (span_schema::span::GAME) — child of the caller's group.lifetime
     // span. Held open for the whole game; the deck seed rides as a sensitive
     // attribute (admin-only via the reveal, never on the player wire). Field names
     // match `span_schema::attr`.
@@ -285,7 +303,7 @@ pub async fn run_game(
                 crate::observability::metric::player_reconnected();
                 gone.remove(player);
                 let snapshot = ServerMessage::StateSnapshot {
-                    room_code: room_code.clone(),
+                    group_code: group_code.clone(),
                     your_player_id: *player,
                     round_number,
                     players: public_players(&players, &gone),
@@ -557,10 +575,19 @@ pub async fn run_game(
         &players,
         ServerMessage::GameOver {
             final_scores: scores_vec(&scores, &ids),
-            winners,
+            winners: winners.clone(),
         },
     )
     .await;
+
+    // Hand the final seats (with reconnections' refreshed channels), the
+    // still-absent players, and the winners back to the persistent group, which
+    // returns the survivors to its lobby and folds the result into standings.
+    GameEnd {
+        players,
+        gone,
+        winners,
+    }
 }
 
 /// Per-player contributed-card counts in the current pot (the public signal).
@@ -582,7 +609,7 @@ fn contributions(round: &Round, ids: &[PlayerId]) -> Vec<Contribution> {
 /// player has locked in. Heartbeats and emotes are serviced live; a disconnect
 /// (`Leave`) auto-passes the player for the rest of the game.
 async fn collect_wave(
-    rx: &mut mpsc::Receiver<RoomCommand>,
+    rx: &mut mpsc::Receiver<GroupCommand>,
     players: &mut [SeatInfo],
     acting: &[PlayerId],
     hands: &mut HashMap<PlayerId, Hand>,
@@ -610,7 +637,7 @@ async fn collect_wave(
             maybe = rx.recv() => {
                 match maybe {
                     None => break,
-                    Some(RoomCommand::Action { player, msg }) => {
+                    Some(GroupCommand::Action { player, msg }) => {
                         let active = acting.contains(&player) && !gone.contains(&player);
                         match msg {
                             ClientMessage::CommitCard { card }
@@ -638,14 +665,14 @@ async fn collect_wave(
                             _ => {}
                         }
                     }
-                    Some(RoomCommand::Leave { player }) => {
+                    Some(GroupCommand::Leave { player }) => {
                         gone.insert(player);
                         if acting.contains(&player) {
                             choice.insert(player, WaveChoice::Pass);
                             locked.insert(player);
                         }
                     }
-                    Some(RoomCommand::Join { player, out, .. }) => {
+                    Some(GroupCommand::Join { player, out, .. }) => {
                         // A reconnect: reattach the returning player's channel.
                         // The snapshot is sent by the caller once the wave settles.
                         if let Some(seat) = players.iter_mut().find(|s| s.id == player) {
@@ -662,8 +689,8 @@ async fn collect_wave(
                     }
                     // Force-start is meaningless mid-game; an operator kill closes
                     // the current commit window (the lobby loop owns full teardown).
-                    Some(RoomCommand::ForceStart) => {}
-                    Some(RoomCommand::Shutdown) => break,
+                    Some(GroupCommand::ForceStart) => {}
+                    Some(GroupCommand::Shutdown) => break,
                 }
             }
         }

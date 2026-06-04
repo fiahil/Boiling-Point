@@ -94,7 +94,7 @@ pub fn secret_audit(msg: &ServerMessage) -> Result<(), HarnessError> {
 /// the seeded `rng`, and return the per-game observation.
 ///
 /// `me`/`my_color` seed the bot's identity (a player always knows their own seat);
-/// a `RoomJoined`, if the transport sends one, confirms them.
+/// a `GroupJoined`, if the transport sends one, confirms them.
 pub async fn run_bot<C: BotConnection>(
     mut conn: C,
     me: PlayerId,
@@ -130,7 +130,7 @@ pub async fn run_bot<C: BotConnection>(
     while let Some(msg) = conn.recv().await {
         secret_audit(&msg)?;
         match msg {
-            ServerMessage::RoomJoined {
+            ServerMessage::GroupJoined {
                 your_player_id,
                 your_color,
                 players,
@@ -302,6 +302,12 @@ pub async fn run_bot<C: BotConnection>(
             }
             ServerMessage::DeckReshuffled | ServerMessage::EmoteBroadcast { .. } => {}
             ServerMessage::Heartbeat => {}
+            // The bot plays a single game per connection and never leaves a group
+            // itself, so a `LeftGroup` ack is a no-op here. Fill/standings are
+            // lobby-level signals the bot does not act on.
+            ServerMessage::LeftGroup
+            | ServerMessage::GroupSearching { .. }
+            | ServerMessage::StandingsUpdate { .. } => {}
             ServerMessage::Error { .. } => {} // a rejected action is a no-op for the bot
         }
     }

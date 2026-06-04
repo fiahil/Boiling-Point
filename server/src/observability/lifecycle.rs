@@ -51,7 +51,7 @@ pub struct SpanEvent {
     pub kind: SpanEventKind,
     /// The `tracing` span id (stable for the span's lifetime).
     pub id: u64,
-    /// The span name (e.g. `room.lifetime`, `round`).
+    /// The span name (e.g. `group.lifetime`, `round`).
     pub name: &'static str,
     /// The parent span's id, if any — used to reconstruct the live tree.
     pub parent_id: Option<u64>,
@@ -285,7 +285,7 @@ mod tests {
 
         let subscriber = tracing_subscriber::registry().with(handle.layer());
         tracing::subscriber::with_default(subscriber, || {
-            let span = tracing::info_span!("room.lifetime", room.code = "ABCD");
+            let span = tracing::info_span!("group.lifetime", group.code = "ABCD");
             span.in_scope(|| {});
             drop(span);
         });
@@ -304,9 +304,9 @@ mod tests {
             .iter()
             .find(|e| e.kind == SpanEventKind::Start)
             .unwrap();
-        assert_eq!(start.name, "room.lifetime");
+        assert_eq!(start.name, "group.lifetime");
         assert_eq!(
-            start.attributes.get("room.code").map(String::as_str),
+            start.attributes.get("group.code").map(String::as_str),
             Some("ABCD")
         );
         assert!(
