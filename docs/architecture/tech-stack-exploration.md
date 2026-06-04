@@ -1,5 +1,13 @@
 # Boiling Point — Tech Stack Exploration
 
+> **Decision (2026-06-04, constitution v1.1.0):** the client is **PixiJS (web + mobile
+> hybrid via Capacitor)** — a pure renderer of server state with a DOM overlay for
+> selectable/accessible text and TypeScript wire types generated from the Rust `protocol`
+> crate. **Flutter/Flame is deferred** (revisit for a premium native app); **Macroquad and
+> Godot are rejected.** See change [`adopt-pixi-client`](../../openspec/changes/adopt-pixi-client/)
+> and `CLAUDE.md`. The exploration below is retained as the historical record that led here
+> (direction was prototyped and screenshot-verified in [`docs/ui-explorations/`](../ui-explorations/)).
+
 ## Design Constraints
 
 The tech stack must support:
@@ -180,11 +188,15 @@ The real fork:
 
 **Server:** settled — **Rust (Axum + Tokio) + PostgreSQL + observability stack**.
 
-**Client:** three contenders, no final decision yet:
+**Client:** decided — **PixiJS (web + mobile hybrid via Capacitor)** (change
+`adopt-pixi-client`, constitution v1.1.0). After prototyping all three short-listed
+options plus a DOM/CSS sketch in [`docs/ui-explorations/`](../ui-explorations/), PixiJS won
+on web-first reach + animation ceiling + agent-writability + a one-codebase hybrid mobile
+path, with its two weaknesses mitigated: shared-type drift via codegen from the Rust
+`protocol` crate, and canvas text/a11y via a DOM overlay.
 
-| | Macroquad | Godot | Flutter/Flame |
-|---|---|---|---|
-| **Core bet** | Full Rust stack, shared types, agent-driven dev | Fastest to polished game feel | Proven cross-platform, mature 2D engine |
-| **Strongest for** | Agent autonomy, protocol safety, tiny WASM | Visual polish speed, editor iteration | Native mobile/desktop, production-tested pipeline |
-| **Weakest at** | Building game engine layer yourself | Agent closed loop (needs custom screenshot pipeline) | Second language (Dart), codegen for shared types, GC micro-stutters |
-| **Agent testability** | Excellent (Playwright on WASM) | Medium (custom pipeline) | Medium (Flutter integration tests) |
+| | **PixiJS + Capacitor** | Flutter/Flame | Macroquad | Godot |
+|---|---|---|---|---|
+| **Core bet** | Web-first, agent-writable, GPU spectacle, one codebase → web + mobile | Polished native feel, mature exports | Full Rust stack, shared types | Fastest to polished game feel |
+| **Agent testability** | Excellent (Playwright: canvas screenshots + DOM assertions) | Medium (Flutter integration tests) | Excellent (Playwright on WASM) | Medium (custom pipeline) |
+| **Outcome** | **Chosen** | Deferred — revisit for a premium native app | Rejected — immature text/a11y/mobile | Rejected — editor-driven vs agent closed loop |

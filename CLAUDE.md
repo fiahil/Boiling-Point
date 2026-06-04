@@ -1,6 +1,6 @@
 # Boiling Point — Agent Guidelines
 
-## Constitution (v1.0.0)
+## Constitution (v1.1.0)
 
 ### I. Server-Authoritative
 
@@ -55,21 +55,34 @@ Game mechanics, scoring values, thresholds, and card effects are hypotheses unti
 - MessagePack over WebSocket for real-time game communication
 - serde for serialization with JSON fallback for debugging
 
-**Client (undecided):**
+**Client (decided — v1.1.0): PixiJS (web + mobile hybrid).**
 
-| Candidate | Core Bet |
-|---|---|
-| Macroquad | Full Rust stack, shared types, agent-driven dev |
-| Godot | Fastest to polished game feel, full 2D editor |
-| Flutter/Flame | Proven cross-platform, mature 2D engine |
+PixiJS v8 + TypeScript on a WebGL/WebGPU canvas, web-first, packaged for iOS/Android as a
+hybrid (Capacitor) app from one codebase. The client is a pure renderer of server state
+(Principle I); a thin DOM overlay carries selectable/accessible text (room code, chat,
+names, scores); the TypeScript wire types are generated from the Rust `protocol` crate so
+the client cannot drift. Selected in change `adopt-pixi-client`
+(`openspec/changes/adopt-pixi-client/`; full rationale and the rejected/deferred
+alternatives in `docs/architecture/tech-stack-exploration.md`).
+
+| Candidate | Core bet | Outcome |
+|---|---|---|
+| **PixiJS + Capacitor** | Web-first reach, agent-writable, GPU spectacle, one codebase → web + mobile | **Chosen** |
+| Flutter / Flame | Polished native feel, mature mobile exports | Deferred — revisit for a premium native app |
+| Macroquad | Full Rust stack, shared types | Rejected — immature text/a11y/mobile; type-sharing solved via codegen |
+| Godot | Fastest to polished game feel, full 2D editor | Rejected — editor-driven workflow conflicts with the agent-writable closed loop (§II) |
+
+The Rust TUI (`tui-client/`) remains the agent-test reference client. Agent testability
+remains a first-class selection criterion for any client technology decision.
 
 **Project structure:**
 
 ```
 cargo workspace
 ├── server/        # authoritative game logic (Axum + Tokio)
-├── client/        # game client (compiles to WASM for web)
-├── shared/        # protocol types, game enums, serde derives
+├── protocol/      # wire protocol types, game enums, serde derives (canonical source)
+├── tui-client/    # reference client — Rust + ratatui (agent-test target)
+├── web-client/    # graphical client — TypeScript + PixiJS (web + mobile hybrid)
 ├── bot-harness/   # headless bot players for balance testing
 └── agent-harness/ # Claude-as-player wrapper
 ```
@@ -92,3 +105,11 @@ When a practice conflicts with a principle above, the principle wins.
 
 **Compliance:** All implementation plans MUST include a Constitution Check section.
 Violations MUST be documented with justification and rejected simpler alternative.
+
+**Amendment log:**
+- **v1.1.0 (2026-06-04)** — MINOR. Resolved the client technology decision: adopted
+  **PixiJS (web + mobile hybrid via Capacitor)**, recorded Flutter/Flame as deferred and
+  Macroquad/Godot as rejected, and retired the "`client/` compiles to WASM" project-
+  structure note (the graphical client is TypeScript/Pixi, not Rust→WASM). Rationale,
+  alternatives, and specs in change `adopt-pixi-client`.
+- **v1.0.0** — Initial constitution.
