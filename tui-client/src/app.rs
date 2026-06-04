@@ -97,6 +97,11 @@ pub struct App {
     pub(crate) my_pot: Vec<HandCard>,
     pub(crate) recall: Option<RecallPrompt>,
     pub(crate) emote_open: bool,
+    /// Whether the `?` effect/modifier Codex overlay is open.
+    pub(crate) codex_open: bool,
+    /// Free-running animation clock (ms), advanced by [`App::on_tick`]. Drives the
+    /// ambient cauldron motion; pinned in snapshot tests for determinism.
+    pub(crate) anim_ms: u32,
     pub(crate) depile_shown: usize,
     pub(crate) depile_accum_ms: u32,
     pub(crate) boom_ms: u32,
@@ -133,6 +138,8 @@ impl App {
             my_pot: Vec::new(),
             recall: None,
             emote_open: false,
+            codex_open: false,
+            anim_ms: 0,
             depile_shown: 0,
             depile_accum_ms: 0,
             boom_ms: 0,
@@ -326,6 +333,9 @@ impl App {
 
     /// Advance time-based state by `dt_ms` (animations, timers, toasts).
     pub fn on_tick(&mut self, dt_ms: u32) {
+        // Free-running clock for ambient (information-free) animation. Wraps so a
+        // long session never overflows; rendering only ever reads it modulo a phase.
+        self.anim_ms = self.anim_ms.wrapping_add(dt_ms);
         if let Some(ms) = self.countdown_ms.as_mut() {
             *ms = ms.saturating_sub(dt_ms);
         }
@@ -383,6 +393,19 @@ impl App {
         // A Recall picker, when open, captures input.
         if self.recall.is_some() {
             return self.key_recall(key.code);
+        }
+        // The Codex overlay captures input while open; `?`/Esc dismiss it.
+        if self.codex_open {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+                self.codex_open = false;
+            }
+            return vec![];
+        }
+        // `?` opens the Codex from any in-game screen (not the text-entry menus,
+        // where `?` is literal input into the name/code field).
+        if key.code == KeyCode::Char('?') && !matches!(self.phase, Phase::Entry | Phase::JoinCode) {
+            self.codex_open = true;
+            return vec![];
         }
         match self.phase {
             Phase::Entry => self.key_entry(key.code),
@@ -656,6 +679,7 @@ impl App {
         self.locked_in = false;
         self.recall = None;
         self.emote_open = false;
+        self.codex_open = false;
         self.depile_shown = 0;
         self.depile_accum_ms = 0;
         self.boom_ms = 0;
@@ -683,6 +707,7 @@ impl App {
         self.my_pot.clear();
         self.recall = None;
         self.emote_open = false;
+        self.codex_open = false;
         self.depile_shown = 0;
         self.boom_ms = 0;
         self.peek_modal_ms = 0;
@@ -741,6 +766,17 @@ impl App {
     /// Force the Deathmatch flag (test/mock) until the wire carries a marker.
     pub fn set_deathmatch(&mut self, on: bool) {
         self.vm.deathmatch = on;
+    }
+
+    /// Move the hand cursor (test/mock) so the inspector can be exercised without
+    /// synthesising key events. A value at or past the hand length selects Pass.
+    pub fn set_cursor(&mut self, i: usize) {
+        self.cursor = i;
+    }
+
+    /// Open the `?` Codex overlay (test/mock).
+    pub fn open_codex(&mut self) {
+        self.codex_open = true;
     }
 }
 

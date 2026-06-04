@@ -112,6 +112,17 @@ until that lands.
 - Display wording was updated room→group in this pass; the underlying protocol field
   names (`RoomCode`, `room_code`) are intentionally unchanged pending `group-model`.
 
+### T7 — Readability pass: card faces, a live inspector, and a Codex *(addressed by `tui-readability-pass`)*
+
+A playtest found the UI hard to read — a hand card showed only *that* it had an effect
+(`◆`), never what. The **`tui-readability-pass`** change reworks the card face (volatility
+loudest, colour as a shape sigil, points as pips, the effect **by name**), adds a
+cursor-driven **live inspector** that explains the selected card or the Pass slot, a `?`
+**Codex** of all effects and modifiers (effects with vol/points; modifiers direction-only),
+and ambient — information-free — cauldron motion. The cauldron stays blind
+(`playing_cauldron_is_opaque` still passes) and the animation is rendered at a pinned phase
+so the `TestBackend` snapshots stay deterministic.
+
 ## 5. Recommendations
 
 1. **Close T4 at the protocol layer** — add the Recall target to `CommitCard` and

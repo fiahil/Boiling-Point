@@ -59,6 +59,9 @@ pub(crate) fn draw(frame: &mut Frame, app: &App) {
     if app.emote_open {
         emote_palette(frame, area);
     }
+    if app.codex_open {
+        codex_overlay(frame, area);
+    }
     // The reconnect/abandoned overlay only makes sense once seated at a table;
     // on the pre-game menu a dropped socket must not strand the player behind it.
     let seated = matches!(
@@ -255,10 +258,12 @@ fn lobby(frame: &mut Frame, area: Rect, app: &App) {
 // ---- round screens -------------------------------------------------------
 
 fn round_start(frame: &mut Frame, area: Rect, app: &App) {
-    let [head, body, hand_area, foot] = Layout::vertical([
+    let insp_h = if area.height >= 30 { 5 } else { 1 };
+    let [head, body, hand_area, insp_area, foot] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Min(5),
         Constraint::Length(6),
+        Constraint::Length(insp_h),
         Constraint::Length(2),
     ])
     .areas(area);
@@ -320,16 +325,29 @@ fn round_start(frame: &mut Frame, area: Rect, app: &App) {
     );
 
     hand_row(frame, hand_area, app, usize::MAX, true);
-    hint(frame, foot, "wave 1 opens automatically");
+    inspector(frame, insp_area, app, 0);
+    hint(frame, foot, "wave 1 opens automatically · ? codex");
 }
 
 fn playing(frame: &mut Frame, area: Rect, app: &App) {
-    let [head, opp, cauldron_area, me_area, hand_area, foot] = Layout::vertical([
+    // A full inspector panel when there's vertical room; a single compact line at
+    // the 80×24 minimum (the cauldron's Min(3) is always honoured first).
+    let insp_h = if area.height >= 30 { 5 } else { 1 };
+    let [
+        head,
+        opp,
+        cauldron_area,
+        me_area,
+        hand_area,
+        insp_area,
+        foot,
+    ] = Layout::vertical([
         Constraint::Length(3),
         Constraint::Length(5),
         Constraint::Min(3),
         Constraint::Length(2),
         Constraint::Length(6),
+        Constraint::Length(insp_h),
         Constraint::Length(2),
     ])
     .areas(area);
@@ -349,20 +367,20 @@ fn playing(frame: &mut Frame, area: Rect, app: &App) {
     opponents(frame, opp, app);
     cauldron(frame, cauldron_area, app);
     self_line(frame, me_area, app);
+    hand_row(frame, hand_area, app, app.cursor, false);
+    inspector(frame, insp_area, app, app.cursor);
 
     if app.vm.deathmatch {
-        hand_row(frame, hand_area, app, app.cursor, false);
         hint(
             frame,
             foot,
-            "←/→ choose   ↵ commit (no pass — you must play)   e emote",
+            "←/→ choose · ↵ commit (no pass — you must play) · e emote · ? codex",
         );
     } else {
-        hand_row(frame, hand_area, app, app.cursor, false);
         hint(
             frame,
             foot,
-            "←/→ move  ↵ commit  p pass  L lock-in  e emote  F12 debug",
+            "←/→ move · ↵ commit · p pass · L lock-in · e emote · ? codex · F12 debug",
         );
     }
 }
@@ -648,15 +666,29 @@ fn cauldron(frame: &mut Frame, area: Rect, app: &App) {
     if chips.is_empty() {
         chips.push(Span::styled("empty", Style::default().fg(Color::DarkGray)));
     }
+    // Ambient brew motion — purely decorative and chosen from the animation clock
+    // ALONE, never from cauldron_count or any volatility-correlated value, so it
+    // can never become a cue (design §4: the cauldron is blind). Deterministic in
+    // the animation phase, so snapshot tests at a pinned phase stay stable.
+    let bubbles = match (app.anim_ms / 250) % 4 {
+        0 => "·  ° ∘   ˚ ·  °",
+        1 => " ∘ ·  ° ˚  ∘ ·",
+        2 => "°  ˚ ∘  ·  ° ∘",
+        _ => " ·  ∘ ˚  °  · ∘",
+    };
+    let teal = Color::Rgb(120, 200, 200);
+    // Essentials first (title, count, hidden-volatility) so the opaque cauldron's
+    // text survives even when the area shrinks to its Min(3) at the 80×24 minimum.
     let lines = vec![
         Line::from(Span::styled(
             "~ ~ ~  T H E   C A U L D R O N  ~ ~ ~",
-            Style::default().fg(Color::Rgb(120, 200, 200)),
+            Style::default().fg(teal),
         ))
         .alignment(Alignment::Center),
         Line::from(format!("{} cards in the pot", app.vm.cauldron_count))
             .alignment(Alignment::Center),
         Line::from("volatility  ?? / ??").alignment(Alignment::Center),
+        Line::from(Span::styled(bubbles, Style::default().fg(teal))).alignment(Alignment::Center),
         Line::from(chips).alignment(Alignment::Center),
     ];
     frame.render_widget(
@@ -700,14 +732,25 @@ fn self_line(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
-/// Render the hand as a row of bracketed card tokens plus a Pass slot.
-/// Card box geometry.
-const CARD_W: u16 = 9;
+/// Card box geometry. Wider than a bare token so the effect's *name* (not just a
+/// "has-effect" mark) and the points pips fit on the face.
+const CARD_W: u16 = 14;
 const CARD_H: u16 = 4;
 
-/// Render the hand as a row of rounded mini-cards with soft drop shadows, under
-/// a faint label. The cursor card is highlighted; a committed card glows green;
-/// a Pass card closes the row (except in Deathmatch).
+/// Ember — used to make volatility the loudest mark on a card (design §15:
+/// Volatility › Color › Points › Effect).
+const EMBER: Color = Color::Rgb(230, 140, 40);
+/// Brass — labels and pips.
+const BRASS: Color = Color::Rgb(236, 211, 154);
+/// Soft body text inside panels.
+const PARCH: Color = Color::Rgb(217, 203, 176);
+
+/// Render the hand as a row of rounded mini-cards with soft drop shadows, under a
+/// faint label. Each card shows its volatility loudest (bold ember), its colour
+/// as a shape sigil plus a coloured frame (never hue alone), its points as pips,
+/// and — for an effect card — the effect's short name. The cursor card is
+/// highlighted; a committed card glows green; a Pass card closes the row (except
+/// in Deathmatch).
 fn hand_row(frame: &mut Frame, area: Rect, app: &App, cursor: usize, round_start: bool) {
     let label = if round_start {
         "your hand — refilled to 5 (✦ newly drawn)"
@@ -737,15 +780,21 @@ fn hand_row(frame: &mut Frame, area: Rect, app: &App, cursor: usize, round_start
         } else {
             ""
         };
-        let eff = if c.view.effect.is_some() { "◆" } else { "" };
+        let (label, is_effect) = match c.view.effect {
+            Some(e) => (effect_short(e).to_string(), true),
+            None => (palette::name(c.view.color).to_string(), false),
+        };
         draw_card(
             frame,
             rect,
             CardFace {
-                label: format!("{}{}", i + 1, newmark),
-                glyph: palette::glyph(c.view.color),
+                title: format!("{}{}", i + 1, newmark),
+                vol: c.view.volatility,
+                sigil: palette::sigil(c.view.color),
                 color: card_color(&c.view),
-                line2: format!("v{} p{} {}", c.view.volatility, c.view.points, eff),
+                label,
+                label_is_effect: is_effect,
+                points: c.view.points,
                 selected: !round_start && i == cursor,
                 committed,
             },
@@ -759,28 +808,21 @@ fn hand_row(frame: &mut Frame, area: Rect, app: &App, cursor: usize, round_start
             width: 7,
             height: CARD_H,
         };
-        draw_card(
-            frame,
-            rect,
-            CardFace {
-                label: "P".into(),
-                glyph: "",
-                color: Color::Gray,
-                line2: "pass".into(),
-                selected: cursor >= app.vm.hand.len(),
-                committed: false,
-            },
-        );
+        draw_pass(frame, rect, cursor >= app.vm.hand.len());
     }
 }
 
-/// The face of a card to draw: its corner label, colour glyph, attribute line,
-/// and selection/commit state.
+/// The face of a card: its corner title (hand index + new-mark), the three
+/// independent attributes laid out by readability priority, and selection/commit
+/// state.
 struct CardFace {
-    label: String,
-    glyph: &'static str,
+    title: String,
+    vol: u8,
+    sigil: &'static str,
     color: Color,
-    line2: String,
+    label: String,
+    label_is_effect: bool,
+    points: u8,
     selected: bool,
     committed: bool,
 }
@@ -788,31 +830,17 @@ struct CardFace {
 /// Draw one rounded card with a soft drop shadow into `rect`.
 fn draw_card(frame: &mut Frame, rect: Rect, face: CardFace) {
     let CardFace {
-        label,
-        glyph,
+        title,
+        vol,
+        sigil,
         color,
-        line2,
+        label,
+        label_is_effect,
+        points,
         selected,
         committed,
     } = face;
-    // Soft drop shadow: an L of dim cells one column right and one row down.
-    {
-        let shadow = Style::default().fg(Color::Rgb(60, 60, 72));
-        let buf = frame.buffer_mut();
-        let bounds = buf.area;
-        let right = rect.right();
-        let bottom = rect.bottom();
-        for sy in (rect.y + 1)..=bottom {
-            if right < bounds.right() && sy < bounds.bottom() {
-                buf[(right, sy)].set_symbol("░").set_style(shadow);
-            }
-        }
-        for sx in (rect.x + 1)..=right {
-            if bottom < bounds.bottom() && sx < bounds.right() {
-                buf[(sx, bottom)].set_symbol("░").set_style(shadow);
-            }
-        }
-    }
+    card_shadow(frame, rect);
 
     let border_style = if selected {
         Style::default()
@@ -827,19 +855,242 @@ fn draw_card(frame: &mut Frame, rect: Rect, face: CardFace) {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(border_style)
-        .title(Span::styled(label, border_style));
+        .title(Span::styled(title, border_style));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    // Row 0: volatility (loud), the colour sigil, then the effect/colour label.
+    let label_style = if label_is_effect {
+        Style::default().fg(BRASS)
+    } else {
+        Style::default().fg(color)
+    };
+    let row0 = Line::from(vec![
+        Span::styled(
+            vol.to_string(),
+            Style::default().fg(EMBER).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(sigil, Style::default().fg(color)),
+        Span::raw(" "),
+        Span::styled(label, label_style),
+    ]);
+    // Row 1: points as filled/empty pips, then the numeric value.
+    let p = points.min(3) as usize;
+    let pips = format!("{}{}", "●".repeat(p), "○".repeat(3 - p));
+    let row1 = Line::from(vec![
+        Span::styled(pips, Style::default().fg(BRASS)),
+        Span::raw("  "),
+        Span::styled(format!("{points}p"), Style::default().fg(Color::DarkGray)),
+    ]);
+    frame.render_widget(Paragraph::new(vec![row0, row1]), inner);
+}
+
+/// Draw the Pass slot — a narrow card with the same shadow treatment.
+fn draw_pass(frame: &mut Frame, rect: Rect, selected: bool) {
+    card_shadow(frame, rect);
+    let style = if selected {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(style)
+        .title(Span::styled("P", style));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(Span::styled(glyph, Style::default().fg(color))),
-            Line::from(Span::styled(line2, Style::default().fg(color))),
+            Line::from(Span::styled("pass", Style::default().fg(Color::Gray))),
+            Line::from(Span::styled("out", Style::default().fg(Color::DarkGray))),
         ]),
         inner,
     );
 }
 
+/// Soft drop shadow: an L of dim cells one column right and one row down (shared
+/// by cards and the Pass slot).
+fn card_shadow(frame: &mut Frame, rect: Rect) {
+    let shadow = Style::default().fg(Color::Rgb(60, 60, 72));
+    let buf = frame.buffer_mut();
+    let bounds = buf.area;
+    let right = rect.right();
+    let bottom = rect.bottom();
+    for sy in (rect.y + 1)..=bottom {
+        if right < bounds.right() && sy < bounds.bottom() {
+            buf[(right, sy)].set_symbol("░").set_style(shadow);
+        }
+    }
+    for sx in (rect.x + 1)..=right {
+        if bottom < bounds.bottom() && sx < bounds.right() {
+            buf[(sx, bottom)].set_symbol("░").set_style(shadow);
+        }
+    }
+}
+
+/// The live **inspector**: explain the cursor-selected hand item (`sel`), or the
+/// Pass slot when `sel` is past the hand. The terminal-native "tooltip" — it
+/// follows the cursor and shows only public, player-known facts (never a hidden
+/// cauldron value). Renders a full bordered panel when it has the height, and a
+/// single compact line when space is tight (the 80×24 minimum).
+fn inspector(frame: &mut Frame, area: Rect, app: &App, sel: usize) {
+    let hand = &app.vm.hand;
+    let pass = hand.is_empty() || sel >= hand.len();
+    let (title, header, blurb, vis, accent) = if pass {
+        (
+            "Pass".to_string(),
+            "commit nothing this wave".to_string(),
+            "Pass = locked out for the rest of the round.".to_string(),
+            "You still lose the pot if it blows.".to_string(),
+            Color::Gray,
+        )
+    } else {
+        let cv = &hand[sel].view;
+        let colorname = palette::name(cv.color);
+        let accent = palette::style(cv.color);
+        match cv.effect {
+            Some(e) => {
+                let (_v, _p, b, vz) = effect_help(e);
+                let note = match e {
+                    EffectKind::VolatileSurge => {
+                        format!(" (+2 → {} effective)", cv.volatility as u16 + 2)
+                    }
+                    _ => String::new(),
+                };
+                (
+                    effect_name(e).to_string(),
+                    format!(
+                        "{colorname} · volatility {}{note} · {} pts",
+                        cv.volatility, cv.points
+                    ),
+                    b.to_string(),
+                    vz.to_string(),
+                    accent,
+                )
+            }
+            None => {
+                let b = if cv.color == Wire::Wild {
+                    "No colour of its own — pure points that swell the pot (and the boom)."
+                        .to_string()
+                } else {
+                    format!("A plain ingredient: backs {colorname} and adds volatility to the pot.")
+                };
+                (
+                    format!("{colorname} ingredient"),
+                    format!(
+                        "{colorname} · volatility {} · {} pts",
+                        cv.volatility, cv.points
+                    ),
+                    b,
+                    String::new(),
+                    accent,
+                )
+            }
+        }
+    };
+
+    if area.height >= 4 {
+        let btitle = format!("inspect · {title}");
+        let block = bordered(&btitle);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        let mut lines = vec![
+            Line::from(Span::styled(
+                header,
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(blurb, Style::default().fg(PARCH))),
+        ];
+        if !vis.is_empty() {
+            lines.push(Line::from(Span::styled(
+                vis,
+                Style::default().fg(Color::Rgb(120, 200, 200)),
+            )));
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    } else {
+        // Compact one-line inspector for tight terminals.
+        let line = Line::from(vec![
+            Span::styled(" inspect ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("▸ {title}  "),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(blurb, Style::default().fg(Color::DarkGray)),
+        ]);
+        frame.render_widget(Paragraph::new(line), area);
+    }
+}
+
 // ---- overlays ------------------------------------------------------------
+
+/// The `?` **Codex**: a dismissable reference for every effect and modifier.
+/// Effects show their volatility/points and what they do; modifiers show only the
+/// qualitative direction of their effect (magnitudes stay server-side).
+fn codex_overlay(frame: &mut Frame, area: Rect) {
+    let r = center(area, 84, 24);
+    frame.render_widget(Clear, r);
+    let mut lines = vec![Line::from(Span::styled(
+        "SPECIAL EFFECTS  (~1 in 4 cards)",
+        Style::default().fg(EMBER).add_modifier(Modifier::BOLD),
+    ))];
+    for e in [
+        EffectKind::Peek,
+        EffectKind::Dampen,
+        EffectKind::VolatileSurge,
+        EffectKind::Shield,
+        EffectKind::Expose,
+        EffectKind::Copycat,
+        EffectKind::Recall,
+        EffectKind::DoubleDown,
+    ] {
+        let (v, p, b, _vis) = effect_help(e);
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<16}", effect_name(e)),
+                Style::default().fg(BRASS),
+            ),
+            Span::styled(format!("v{v} p{p}  "), Style::default().fg(Color::DarkGray)),
+            Span::styled(b, Style::default().fg(PARCH)),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "CAULDRON MODIFIERS  (stack each round — direction only)",
+        Style::default().fg(EMBER).add_modifier(Modifier::BOLD),
+    )));
+    for m in [
+        ModifierKind::Residue,
+        ModifierKind::ThinIce,
+        ModifierKind::DeepCauldron,
+        ModifierKind::BountifulBrew,
+        ModifierKind::DoubleStakes,
+        ModifierKind::Reversal,
+    ] {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {:<16}", modifier_label(m)),
+                Style::default().fg(Color::Magenta),
+            ),
+            Span::styled(modifier_desc(m), Style::default().fg(PARCH)),
+        ]));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        "press ? or Esc to close",
+        Style::default().fg(Color::DarkGray),
+    )));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(bordered("Codex — effects & modifiers"))
+            .wrap(Wrap { trim: false }),
+        r,
+    );
+}
 
 fn boom(frame: &mut Frame, area: Rect, app: &App) {
     let pot = app
@@ -848,8 +1099,42 @@ fn boom(frame: &mut Frame, area: Rect, app: &App) {
         .as_ref()
         .map(|x| x.pot_value)
         .unwrap_or(0);
-    let r = center(area, 50, 9);
+    let base = center(area, 50, 9);
+    // Shake: jitter the box, hardest at the blast and settling as boom_ms decays.
+    let phase = app.boom_ms / 70;
+    let amp: i32 = if app.boom_ms > 1100 {
+        2
+    } else if app.boom_ms > 750 {
+        1
+    } else {
+        0
+    };
+    let dx = match phase % 4 {
+        0 => amp,
+        2 => -amp,
+        _ => 0,
+    };
+    let dy = match phase % 3 {
+        1 => amp.min(1),
+        2 => -amp.min(1),
+        _ => 0,
+    };
+    let x = (base.x as i32 + dx).clamp(
+        area.x as i32,
+        area.right().saturating_sub(base.width) as i32,
+    ) as u16;
+    let y = (base.y as i32 + dy).clamp(
+        area.y as i32,
+        area.bottom().saturating_sub(base.height) as i32,
+    ) as u16;
+    let r = Rect { x, y, ..base };
     frame.render_widget(Clear, r);
+    // Flash: the fill pulses between deep red and hot ember on alternate frames.
+    let bg = if phase.is_multiple_of(2) {
+        Color::Red
+    } else {
+        Color::Rgb(255, 90, 31)
+    };
     let lines = vec![
         Line::raw(""),
         Line::from("####   B O O M   ####").alignment(Alignment::Center),
@@ -861,7 +1146,7 @@ fn boom(frame: &mut Frame, area: Rect, app: &App) {
         Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .style(Style::default().fg(Color::White).bg(Color::Red)),
+                .style(Style::default().fg(Color::White).bg(bg)),
         ),
         r,
     );
@@ -1094,6 +1379,77 @@ fn effect_name(e: EffectKind) -> &'static str {
         EffectKind::Copycat => "Copycat",
         EffectKind::Recall => "Recall",
         EffectKind::DoubleDown => "Double Down",
+    }
+}
+
+/// A ≤7-char effect name for the card face (the full name lives in the inspector).
+fn effect_short(e: EffectKind) -> &'static str {
+    match e {
+        EffectKind::Peek => "Peek",
+        EffectKind::Dampen => "Dampen",
+        EffectKind::VolatileSurge => "Surge",
+        EffectKind::Shield => "Shield",
+        EffectKind::Expose => "Expose",
+        EffectKind::Copycat => "Copycat",
+        EffectKind::Recall => "Recall",
+        EffectKind::DoubleDown => "DblDown",
+    }
+}
+
+/// Public, player-known facts about an effect, for the inspector and Codex:
+/// `(canonical volatility, canonical points, what it does, its visibility)`.
+/// These are the design's §9 semantics — never a hidden cauldron value. Peek is
+/// phrased as the "threshold" so the playing screen never prints the secret term.
+fn effect_help(e: EffectKind) -> (u8, u8, &'static str, &'static str) {
+    match e {
+        EffectKind::Peek => (
+            2,
+            1,
+            "Privately reveal the cauldron's exact threshold.",
+            "Announced — others see only \"someone peeked\".",
+        ),
+        EffectKind::Dampen => (
+            1,
+            0,
+            "Cools the brew: -2 total volatility (net -1 after its own).",
+            "Silent until the depile.",
+        ),
+        EffectKind::VolatileSurge => (
+            3,
+            0,
+            "A weapon: +2 over its base, shoving the pot hotter.",
+            "Silent until the depile.",
+        ),
+        EffectKind::Shield => (
+            2,
+            0,
+            "No explosion loss — but forfeit all scoring if it resolves safely.",
+            "Silent until the depile.",
+        ),
+        EffectKind::Expose => (
+            1,
+            0,
+            "Flip one random pot card face-up for the whole table.",
+            "Announced — reveals a card.",
+        ),
+        EffectKind::Copycat => (
+            1,
+            1,
+            "Becomes the top-point colour already in the pot (Wild if empty).",
+            "Silent until the depile.",
+        ),
+        EffectKind::Recall => (
+            1,
+            0,
+            "Pull one of your own pot cards back to your hand.",
+            "Partly visible — your pot count drops.",
+        ),
+        EffectKind::DoubleDown => (
+            2,
+            0,
+            "Doubles the pot points of its own colour from earlier waves.",
+            "Silent until the depile.",
+        ),
     }
 }
 
