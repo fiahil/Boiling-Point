@@ -738,8 +738,8 @@ mod tests {
         let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
         send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
         let code = loop {
-            if let ServerMessage::RoomJoined { room_code, .. } = recv(&mut ws1).await {
-                break room_code;
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
             }
         };
         let mut joiners = Vec::new();
@@ -749,7 +749,7 @@ mod tests {
             joiners.push(tokio::spawn(async move {
                 let (mut ws, _) = connect_async(url).await.unwrap();
                 send(&mut ws, &join(&format!("p{i}"), code)).await;
-                while !matches!(recv(&mut ws).await, ServerMessage::RoomJoined { .. }) {}
+                while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
                 play_and_capture(&mut ws).await
             }));
         }

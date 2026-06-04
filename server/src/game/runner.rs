@@ -6,24 +6,25 @@
 //! over the network; here it is fully testable in-process via a decision
 //! callback. A tie for the lead is broken by a Deathmatch among the tied players.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 use boiling_point_protocol::PlayerId;
-use boiling_point_protocol::vocab::{Color, ModifierKind};
+use boiling_point_protocol::vocab::{CardView, Color, ModifierKind};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::persistence::{GameResult, PlayerResult, RoundResult};
 
+use super::card::Card;
 use super::deathmatch::{DeathmatchResult, run_deathmatch};
 use super::deck::Deck;
 use super::modifiers::ActiveModifiers;
-use super::round::{Round, RoundEnd, WaveChoice, WaveInput};
-use super::scoring::{ScoringContext, explosion, score_safe};
+use super::round::{DepileData, Round, RoundEnd, WaveChoice, WaveInput};
+use super::scoring::{ExplosionResult, SafeScore, ScoringContext, explosion, score_safe};
 use super::state::{Hand, Player};
 
 /// Per-round summary, for analytics and persistence.
@@ -56,6 +57,63 @@ pub struct GameOutcome {
     pub cards_played: HashMap<PlayerId, u32>,
 }
 
+/// What opening a round produced, for a networked presenter to announce.
+pub struct RoundOpening {
+    /// The cumulative modifier revealed at the start of this round (round 2+), if any.
+    pub modifier: Option<ModifierKind>,
+    /// How many hand refills reshuffled the discard back in (a public table event).
+    pub reshuffles: usize,
+    /// The round's effective (post-modifier) boiling point — secret; for the reveal
+    /// span and the private Peek disclosure only, never broadcast.
+    pub effective_boiling_point: i32,
+}
+
+/// What resolving one wave produced, for a networked presenter.
+pub struct WaveResolution {
+    /// The cards committed this wave, with identities — server-side only, never wired.
+    pub committed: Vec<(PlayerId, Card)>,
+    /// Players who passed (or whose choice was an invalid / unheld card).
+    pub passers: Vec<PlayerId>,
+    /// Players who privately played Peek and should receive the boiling point.
+    pub peeked: Vec<PlayerId>,
+    /// Cards revealed to the whole table (by Expose).
+    pub exposed: Vec<CardView>,
+    /// Owners whose hand grew from a recall this wave — re-send each a private hand (D3).
+    pub recalled_to: Vec<PlayerId>,
+    /// Number of cards in the pot after this wave.
+    pub pot_card_count: u8,
+    /// Running pot volatility after this wave (secret — for the reveal span only).
+    pub pot_volatility: i32,
+    /// `Some` if this wave ended the round.
+    pub ended: Option<RoundEnd>,
+}
+
+/// A round's scoring outcome.
+pub enum RoundScoring {
+    /// The pot exploded (shared loss).
+    Exploded(ExplosionResult),
+    /// The pot resolved safely (dominance payout).
+    Safe(SafeScore),
+}
+
+/// What settling a round produced, for a networked presenter.
+pub struct RoundSettlement {
+    /// The end-of-round depile (reverse play order; the presenter discloses the
+    /// boiling point only on an explosion).
+    pub depile: DepileData,
+    /// The round's scoring outcome.
+    pub scoring: RoundScoring,
+}
+
+/// The round in progress, owned by `Game` between waves so a networked driver can
+/// step it wave-by-wave (open → resolve waves → settle).
+struct ActiveRound {
+    round: Round,
+    round_number: u8,
+    modifier: Option<ModifierKind>,
+    effective_boiling_point: i32,
+}
+
 /// A decision source: given a player and their hand, choose a wave action.
 pub trait Decider {
     /// Choose to play a card or pass for `player`, who holds `hand`.
@@ -84,6 +142,8 @@ pub struct Game<'a> {
     rounds: Vec<RoundLog>,
     cards_played: HashMap<PlayerId, u32>,
     seed: u64,
+    /// The round currently in progress (None between rounds and at game end).
+    current: Option<ActiveRound>,
 }
 
 impl<'a> Game<'a> {
@@ -123,23 +183,35 @@ impl<'a> Game<'a> {
             rounds: Vec::new(),
             cards_played,
             seed,
+            current: None,
         }
     }
 
-    /// Play the whole game with the given decider, returning the outcome.
+    /// Play the whole game with the given decider, returning the outcome. The
+    /// synchronous driver of the shared orchestration core: open each round, ask the
+    /// decider for every active player's wave choice, resolve the wave, settle the
+    /// round, then break any tie for the lead with a Deathmatch. The networked path
+    /// (`session::run_game`) drives the very same `begin_round` / `resolve_wave` /
+    /// `settle_round` / `break_tie` steps over the wire, so the two cannot drift.
     pub fn play_out(&mut self, decider: &mut dyn Decider) -> GameOutcome {
+        // The sync runner has no disconnected players.
+        let absent = HashSet::new();
         for round in 1..=ROUND_COUNT {
-            self.play_round(round, decider);
+            self.begin_round(round, &absent);
+            while self.round_is_open() {
+                let acting = self.active().to_vec();
+                let mut choices = HashMap::with_capacity(acting.len());
+                for player in acting {
+                    let choice = decider.decide(player, &self.hands[&player]);
+                    choices.insert(player, choice);
+                }
+                self.resolve_wave(&choices);
+            }
+            self.settle_round();
         }
-        let best = self.scores.values().copied().max().unwrap_or(0);
-        let leaders: Vec<PlayerId> = self
-            .players
-            .iter()
-            .map(|p| p.id)
-            .filter(|id| self.scores[id] == best)
-            .collect();
-        // A tie for the lead is broken by a Deathmatch among the tied players,
-        // using their remaining hands (whole-game hand management matters).
+        // A tie for the lead is broken by a Deathmatch among the tied players, using
+        // their remaining hands (whole-game hand management matters).
+        let leaders = self.leaders();
         let winners = if leaders.len() > 1 {
             self.break_tie(&leaders)
         } else {
@@ -153,10 +225,211 @@ impl<'a> Game<'a> {
         }
     }
 
+    /// Open round `round_number`: draw the round's cumulative modifier (round 2+),
+    /// refill every hand to the [`crate::config::HAND_SIZE`] floor, roll the hidden
+    /// boiling point, and start the round with the players who still hold cards and
+    /// are not `absent` (the networked path passes its disconnected set; the sync
+    /// path passes an empty set). Returns what a presenter must announce.
+    pub fn begin_round(&mut self, round_number: u8, absent: &HashSet<PlayerId>) -> RoundOpening {
+        // Round 2+ draws one cumulative modifier.
+        let modifier = if round_number >= 2 {
+            let drawn = self.modifier_pile.pop();
+            if let Some(kind) = drawn {
+                self.modifiers.push(kind);
+            }
+            drawn
+        } else {
+            None
+        };
+
+        // Refill every hand to the 5-card floor (carryover kept), counting how many
+        // refills reshuffled the discard back in (a public table event).
+        let ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
+        let mut reshuffles = 0usize;
+        for id in &ids {
+            let len = self.hands[id].len();
+            let (drawn, reshuffled) = self.deck.refill(len);
+            self.hands.get_mut(id).unwrap().add(drawn);
+            if reshuffled {
+                reshuffles += 1;
+            }
+        }
+
+        // Hidden boiling point for the round (+ active modifier offsets).
+        let base = self.rng.gen_range(self.bp_min..=self.bp_max);
+        let effective_boiling_point = self.modifiers.effective_boiling_point(base, self.registry);
+        let start_vol = self.modifiers.start_volatility(self.registry);
+
+        let active: Vec<PlayerId> = ids
+            .iter()
+            .copied()
+            .filter(|id| !self.hands[id].is_empty() && !absent.contains(id))
+            .collect();
+        let round = Round::start(active, effective_boiling_point, start_vol);
+        self.current = Some(ActiveRound {
+            round,
+            round_number,
+            modifier,
+            effective_boiling_point,
+        });
+        RoundOpening {
+            modifier,
+            reshuffles,
+            effective_boiling_point,
+        }
+    }
+
+    /// Resolve one wave from each acting player's `choices`. Validates every choice
+    /// against the player's hand (an unheld card is treated as a pass), removes the
+    /// committed cards, applies the wave to the round, and returns any recalled cards
+    /// to their owners. Reports what a presenter must surface. Panics if no round is
+    /// open (drive after [`Game::begin_round`]).
+    pub fn resolve_wave(&mut self, choices: &HashMap<PlayerId, WaveChoice>) -> WaveResolution {
+        let acting: Vec<PlayerId> = self
+            .current
+            .as_ref()
+            .expect("a round is open")
+            .round
+            .active()
+            .to_vec();
+
+        let mut committed = Vec::new();
+        let mut passers = Vec::new();
+        let mut emptied = Vec::new();
+        for player in &acting {
+            match choices.get(player) {
+                Some(WaveChoice::Play(card_id)) => {
+                    if let Some(card) = self.hands.get_mut(player).and_then(|h| h.take(*card_id)) {
+                        *self.cards_played.get_mut(player).unwrap() += 1;
+                        if self.hands[player].is_empty() {
+                            emptied.push(*player);
+                        }
+                        committed.push((*player, card));
+                    } else {
+                        passers.push(*player); // invalid / unheld card → treated as a pass
+                    }
+                }
+                _ => passers.push(*player),
+            }
+        }
+
+        // A snapshot of the committed (player, card) pairs for the presenter's spans;
+        // `Card` is `Copy`, so this is cheap and taken before the cards move into the pot.
+        let committed_report = committed.clone();
+
+        // Copy the registry reference out before borrowing `self.current` mutably.
+        let registry = self.registry;
+        let round = &mut self.current.as_mut().expect("a round is open").round;
+        let report = round.apply_wave(
+            registry,
+            WaveInput {
+                committed,
+                passers: passers.clone(),
+                emptied,
+                recalls: HashMap::new(),
+            },
+        );
+        let ended = report.ended;
+        let peeked = report.outcome.peeked;
+        let exposed = report.outcome.exposed;
+
+        // Return recalled cards to their owners' hands; their hand grew, so the owner
+        // must be told (D3 — the presenter re-sends them a private hand view).
+        let mut recalled_to = Vec::new();
+        for (player, card) in report.outcome.recalled {
+            if let Some(hand) = self.hands.get_mut(&player) {
+                hand.add([card]);
+                if !recalled_to.contains(&player) {
+                    recalled_to.push(player);
+                }
+            }
+        }
+
+        let pot = self.current.as_ref().unwrap().round.pot();
+        WaveResolution {
+            committed: committed_report,
+            passers,
+            peeked,
+            exposed,
+            recalled_to,
+            pot_card_count: pot.card_count() as u8,
+            pot_volatility: pot.volatility,
+            ended,
+        }
+    }
+
+    /// Settle the open round: depile, score it (explosion or safe brew), fold the
+    /// deltas into the cumulative scores, log the round for analytics/persistence, and
+    /// return the spent cards to the discard. Hands the depile + scoring back for a
+    /// presenter. Panics if no round is open.
+    pub fn settle_round(&mut self) -> RoundSettlement {
+        let ActiveRound {
+            round,
+            round_number,
+            modifier,
+            effective_boiling_point,
+        } = self.current.take().expect("a round is open to settle");
+
+        let all: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
+        let shielded = round.shielded().clone();
+        let ctx = ScoringContext {
+            modifiers: &self.modifiers,
+            registry: self.registry,
+            color_owner: &self.color_owner,
+            shielded: &shielded,
+            all_players: &all,
+        };
+        let exploded = round.ended() == Some(RoundEnd::Exploded);
+        let scoring = if exploded {
+            let result = explosion(round.pot(), &ctx);
+            for (player, delta) in &result.deltas {
+                *self.scores.get_mut(player).unwrap() += *delta;
+            }
+            RoundScoring::Exploded(result)
+        } else {
+            let result = score_safe(round.pot(), &ctx);
+            for (player, delta) in &result.awards {
+                *self.scores.get_mut(player).unwrap() += *delta;
+            }
+            RoundScoring::Safe(result)
+        };
+
+        self.rounds.push(RoundLog {
+            round_number,
+            effective_boiling_point,
+            exploded,
+            final_volatility: round.pot().volatility,
+            cards_played: round.pot().card_count(),
+            modifier,
+        });
+
+        // Return the pot's cards to the discard for future reshuffles.
+        let spent: Vec<_> = round.pot().cards.iter().map(|pc| pc.card).collect();
+        self.deck.discard_cards(spent);
+
+        RoundSettlement {
+            depile: round.depile(),
+            scoring,
+        }
+    }
+
+    /// The players tied for the lead (highest cumulative score), in seating order.
+    /// More than one means a tie a Deathmatch would break.
+    pub fn leaders(&self) -> Vec<PlayerId> {
+        let best = self.scores.values().copied().max().unwrap_or(0);
+        self.players
+            .iter()
+            .map(|p| p.id)
+            .filter(|id| self.scores[id] == best)
+            .collect()
+    }
+
     /// Resolve a tie for the lead via a Deathmatch among `leaders`, shedding the
     /// lowest-volatility card each forced wave. Falls back to co-winners if the
-    /// Deathmatch can produce no champion (e.g. all tied hands are empty).
-    fn break_tie(&self, leaders: &[PlayerId]) -> Vec<PlayerId> {
+    /// Deathmatch can produce no champion (e.g. all tied hands are empty). The
+    /// networked path announces `DeathmatchStarted` before calling this; the result
+    /// is identical because both paths share this single tiebreak core.
+    pub fn break_tie(&self, leaders: &[PlayerId]) -> Vec<PlayerId> {
         let tied: Vec<(PlayerId, Hand)> = leaders
             .iter()
             .map(|id| (*id, self.hands[id].clone()))
@@ -183,119 +456,57 @@ impl<'a> Game<'a> {
         }
     }
 
-    fn play_round(&mut self, round_number: u8, decider: &mut dyn Decider) {
-        // Round 2+ draws one cumulative modifier.
-        let modifier = if round_number >= 2 {
-            let drawn = self.modifier_pile.pop();
-            if let Some(kind) = drawn {
-                self.modifiers.push(kind);
-            }
-            drawn
-        } else {
-            None
-        };
-
-        // Refill every hand to the 5-card floor (carryover kept).
-        let ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
-        for id in &ids {
-            let len = self.hands[id].len();
-            let (drawn, _reshuffled) = self.deck.refill(len);
-            self.hands.get_mut(id).unwrap().add(drawn);
-        }
-
-        // Hidden boiling point for the round (+ active modifier offsets).
-        let base = self.rng.gen_range(self.bp_min..=self.bp_max);
-        let effective_bp = self.modifiers.effective_boiling_point(base, self.registry);
-        let start_vol = self.modifiers.start_volatility(self.registry);
-
-        let active: Vec<PlayerId> = ids
-            .iter()
-            .copied()
-            .filter(|id| !self.hands[id].is_empty())
-            .collect();
-        let mut round = Round::start(active, effective_bp, start_vol);
-
-        // Run waves until the round ends.
-        while round.is_open() {
-            let acting: Vec<PlayerId> = round.active().to_vec();
-            let mut committed = Vec::new();
-            let mut passers = Vec::new();
-            let mut emptied = Vec::new();
-            for player in acting {
-                let choice = decider.decide(player, &self.hands[&player]);
-                match choice {
-                    WaveChoice::Play(card_id) => {
-                        if let Some(card) = self.hands.get_mut(&player).unwrap().take(card_id) {
-                            *self.cards_played.get_mut(&player).unwrap() += 1;
-                            if self.hands[&player].is_empty() {
-                                emptied.push(player);
-                            }
-                            committed.push((player, card));
-                        } else {
-                            passers.push(player); // invalid card → treated as a pass
-                        }
-                    }
-                    WaveChoice::Pass => passers.push(player),
-                }
-            }
-            let report = round.apply_wave(
-                self.registry,
-                WaveInput {
-                    committed,
-                    passers,
-                    emptied,
-                    recalls: HashMap::new(),
-                },
-            );
-            // Return any recalled cards to their owners' hands.
-            for (player, card) in report.outcome.recalled {
-                if let Some(hand) = self.hands.get_mut(&player) {
-                    hand.add([card]);
-                }
-            }
-        }
-
-        self.settle_round(round_number, &round, modifier, effective_bp);
+    /// A player's current private hand, if seated.
+    pub fn hand(&self, player: PlayerId) -> Option<&Hand> {
+        self.hands.get(&player)
     }
 
-    fn settle_round(
-        &mut self,
-        round_number: u8,
-        round: &Round,
-        modifier: Option<ModifierKind>,
-        effective_boiling_point: i32,
-    ) {
-        let all: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
-        let ctx = ScoringContext {
-            modifiers: &self.modifiers,
-            registry: self.registry,
-            color_owner: &self.color_owner,
-            shielded: round.shielded(),
-            all_players: &all,
-        };
-        let exploded = round.ended() == Some(RoundEnd::Exploded);
-        if exploded {
-            for (player, delta) in explosion(round.pot(), &ctx).deltas {
-                *self.scores.get_mut(&player).unwrap() += delta;
-            }
-        } else {
-            for (player, delta) in score_safe(round.pot(), &ctx).awards {
-                *self.scores.get_mut(&player).unwrap() += delta;
-            }
+    /// Every seated player's private hand, keyed by id.
+    pub fn hands(&self) -> &HashMap<PlayerId, Hand> {
+        &self.hands
+    }
+
+    /// The cumulative scores so far.
+    pub fn scores(&self) -> &HashMap<PlayerId, i32> {
+        &self.scores
+    }
+
+    /// The active cauldron modifiers (cumulative across rounds).
+    pub fn active_modifiers(&self) -> &[ModifierKind] {
+        self.modifiers.kinds()
+    }
+
+    /// Players still active in the open round (act next wave). Empty between rounds.
+    pub fn active(&self) -> &[PlayerId] {
+        match &self.current {
+            Some(r) => r.round.active(),
+            None => &[],
         }
+    }
 
-        self.rounds.push(RoundLog {
-            round_number,
-            effective_boiling_point,
-            exploded,
-            final_volatility: round.pot().volatility,
-            cards_played: round.pot().card_count(),
-            modifier,
-        });
+    /// The current 1-based wave number of the open round (0 between rounds).
+    pub fn wave_number(&self) -> u8 {
+        self.current.as_ref().map_or(0, |r| r.round.wave_number())
+    }
 
-        // Return the pot's cards to the discard for future reshuffles.
-        let spent: Vec<_> = round.pot().cards.iter().map(|pc| pc.card).collect();
-        self.deck.discard_cards(spent);
+    /// Whether a round is open for more waves.
+    pub fn round_is_open(&self) -> bool {
+        self.current.as_ref().is_some_and(|r| r.round.is_open())
+    }
+
+    /// Per-player contributed-card counts in the open round's pot, in `order`; all
+    /// zero between rounds.
+    pub fn contributions(&self, order: &[PlayerId]) -> Vec<(PlayerId, u8)> {
+        let pot = self.current.as_ref().map(|r| r.round.pot());
+        order
+            .iter()
+            .map(|id| {
+                let count = pot.map_or(0, |p| {
+                    p.cards.iter().filter(|pc| pc.player == *id).count() as u8
+                });
+                (*id, count)
+            })
+            .collect()
     }
 
     /// Build a persistable result for this completed game.
@@ -414,6 +625,36 @@ mod tests {
             // No illegal state: every player has a recorded score.
             assert_eq!(outcome.scores.len(), 4, "seed {seed}");
         }
+    }
+
+    /// The orchestration core carries the per-player and per-round analytics that
+    /// feed a persistable [`GameResult`] — the data the pre-convergence async path
+    /// dropped. Both paths drive this same `Game`, so the converged async loop now
+    /// has it too (converge-game-loops 2.3).
+    #[test]
+    fn game_result_carries_per_player_and_per_round_analytics() {
+        let (reg, cfg) = registry_and_config();
+        let mut game = Game::new(&reg, &cfg, four_players(), 2024);
+        let mut decider = eager();
+        let outcome = game.play_out(&mut decider);
+
+        let now = chrono::Utc::now();
+        let result = game.to_game_result(&outcome, Uuid::new_v4(), now, now);
+
+        // Per-round analytics for every round.
+        assert_eq!(result.rounds.len(), ROUND_COUNT as usize);
+        // Every player has a result line, and cards committed are tracked (the eager
+        // decider plays whenever it holds a card).
+        assert_eq!(result.players.len(), 4);
+        let total_cards: i16 = result.players.iter().map(|p| p.cards_played_total).sum();
+        assert!(
+            total_cards > 0,
+            "the converged analytics tracked cards played"
+        );
+        // Finishing positions are a permutation of 1..=4.
+        let mut positions: Vec<i16> = result.players.iter().map(|p| p.finish_position).collect();
+        positions.sort();
+        assert_eq!(positions, vec![1, 2, 3, 4]);
     }
 
     #[test]
