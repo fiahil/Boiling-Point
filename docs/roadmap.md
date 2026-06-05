@@ -31,6 +31,31 @@ skill-based matchmaking on top of rating.
 
 ---
 
+## Deployment, Delivery & CI/CD
+
+Per Principle III (*Start Simple, Scale Later*), v1 is locally runnable behind a
+CI **gate** — `.github/workflows/ci.yml` runs `fmt`, `clippy` (warnings-as-errors)
+and the **unit** tests on every push to `main` and every PR — but nothing is
+hosted, there's no deploy step, and there's no public web presence. v2 turns the
+project into a continuously deployed, publicly reachable service.
+
+| Feature | Why it's v2 | Dependency / note |
+|---|---|---|
+| **Landing page** | v1 distributes via invite links to people who already know the game; no acquisition surface is needed to validate the core loop. | Static marketing page (what the game is, screenshots/trailer, a "play now" → create/join room CTA). Sits alongside or in front of the PixiJS `web-client/`, which is the "play" target. |
+| **Fuller tests in CI** | v1 CI gates `fmt` + `clippy` + **unit** tests only; `make test-unit` deliberately skips the transport tests that boot an in-process server. | Extend CI to the three Principle II testing layers: transport/integration tests, the **bot-harness** balance runs (seeded, deterministic), an **agent-harness** Claude-as-player smoke, and **web-client** build + Playwright visual tests once the Pixi client lands. |
+| **Continuous deployment pipeline** | v1 has a CI gate but no deploy step — releases are manual/local. | CD layered on the existing CI: build + publish the server container and web-client bundle, run DB migrations, and promote on green `main`. Gated behind the fuller test suite above. |
+| **Deployment architecture & target** | v1 runs as a single local binary + local Postgres; nothing is hosted. | Pick a target — a managed container host + managed Postgres is the simplest viable, and the Principle III single-binary monolith maps cleanly to one container. Decide TLS/WebSocket ingress, config/secrets, DB backups, and the staging→prod path. The single-server stance is the seam; horizontal scaling stays out of v2. |
+
+**Benchmarks** fold into this work: the [Server benchmarks](#other-post-v1-candidates)
+regression harness (below) is meant to be *tracked over time*, so its seeded runs
+land in this CI/CD pipeline once it exists.
+
+**Ordering:** fuller tests in CI first (they gate everything), then pick the
+deployment target/architecture, then the CD pipeline on top, with the landing
+page in parallel.
+
+---
+
 ## Other Post-V1 Candidates
 
 These also sit beyond v1. (Some overlap with the design-side deferrals in
@@ -51,7 +76,8 @@ game-design.md §18 — cross-referenced, not duplicated.)
   attaches **no** profile or cross-game identity. Moved here out of the v1
   persistence scope.
 - **Server benchmarks** — a performance-regression harness, deliberately out of
-  v1 (correctness and balance come first). Two layers:
+  v1 (correctness and balance come first); the regression runs land in the v2
+  CI/CD pipeline (see *Deployment, Delivery & CI/CD* above). Two layers:
   - **Engine micro-benchmarks** (`criterion`): hot paths in the round engine —
     wave resolution, depile/scoring, deck deal/reshuffle, modifier stacking —
     tracked over time to catch regressions.
@@ -70,3 +96,7 @@ So the v2 work is a swap, not a rewrite:
 - **Matchmaking:** table-filling queue now → skill-based policy later (same queue).
 - **Persistence:** post-game results now → append-only event log later (enables
   replays/spectating).
+- **Delivery:** CI gate now (`fmt`/`clippy`/unit) → fuller test layers + CD later
+  (additive; the Makefile targets and bot/agent harnesses are the seams).
+- **Hosting:** single local binary + local Postgres now → managed container +
+  managed Postgres later (same monolith, one container).
