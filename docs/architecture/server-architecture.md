@@ -416,42 +416,40 @@ struct StateSnapshot {
 
 ### Schema Sketch
 
+Two tables: anonymous `players`, and a single consolidated `game_replays` row per
+completed game. The game row carries queryable metadata + denormalized `stats_*`
+summary columns + the MessagePack replay payload. Per-round detail is not stored as
+rows — it is recoverable by reconstructing the replay (seed + action log re-run the
+pinned engine). The payload additionally carries a timestamped log of every raw input
+players sent (commits, passes, lock-ins, emotes), so playback can show pacing and emotes.
+
 ```sql
 CREATE TABLE players (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username    TEXT UNIQUE NOT NULL,
+    id           UUID PRIMARY KEY,
     display_name TEXT NOT NULL,
-    created_at  TIMESTAMPTZ DEFAULT now(),
-    elo_rating  INT DEFAULT 1000
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE games (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    started_at  TIMESTAMPTZ NOT NULL,
-    ended_at    TIMESTAMPTZ NOT NULL,
-    round_count SMALLINT NOT NULL
-);
-
-CREATE TABLE game_players (
-    game_id         UUID REFERENCES games(id),
-    player_id       UUID REFERENCES players(id),
-    final_score     INT NOT NULL,
-    finish_position SMALLINT NOT NULL,
-    explosions_caused SMALLINT DEFAULT 0,
-    cards_played_total SMALLINT DEFAULT 0,
-    PRIMARY KEY (game_id, player_id)
-);
-
--- Optional: per-round detail for analytics
-CREATE TABLE game_rounds (
-    game_id           UUID REFERENCES games(id),
-    round_number      SMALLINT NOT NULL,
-    threshold         SMALLINT NOT NULL,
-    exploded          BOOLEAN NOT NULL,
-    explosion_player  UUID REFERENCES players(id),
-    volatility_total  SMALLINT NOT NULL,
-    cards_played      SMALLINT NOT NULL,
-    PRIMARY KEY (game_id, round_number)
+CREATE TABLE game_replays (
+    game_id             UUID PRIMARY KEY,
+    started_at          TIMESTAMPTZ NOT NULL,
+    ended_at            TIMESTAMPTZ NOT NULL,
+    player_ids          UUID[]      NOT NULL,           -- seating order
+    winner_ids          UUID[],                         -- NULL = no winner; array for ties
+    scores              JSONB       NOT NULL,           -- per-player breakdown
+    stats_round_count   SMALLINT    NOT NULL,
+    stats_player_count  SMALLINT    NOT NULL,
+    stats_explosions    SMALLINT    NOT NULL,
+    stats_cards_played  INT         NOT NULL,
+    stats_high_score    INT         NOT NULL,
+    stats_low_score     INT         NOT NULL,
+    stats_deathmatch    BOOLEAN     NOT NULL,
+    payload             BYTEA       NOT NULL,           -- raw MessagePack replay body
+    format_version      SMALLINT    NOT NULL,
+    engine_version      SMALLINT    NOT NULL,
+    config_fingerprint  TEXT        NOT NULL,
+    integrity_hash      TEXT        NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 

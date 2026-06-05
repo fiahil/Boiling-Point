@@ -6,40 +6,80 @@ TBD - created by archiving change server-release-1. Update Purpose after archive
 ### Requirement: Post-Game Persistence Only
 
 The server SHALL persist results only after a game completes (`GameOver`), writing the
-game, its participants and their final results, optional per-round detail, and the
-game's **replay payload**, in a single completion write. No game state is persisted
-mid-game; a crash before completion loses only the in-progress game. When no database is
-configured, the server SHALL play games to completion normally and skip the completion
-write — persistence is optional infrastructure, not a precondition for play.
+anonymous player records and **one consolidated game record** — queryable metadata,
+denormalized summary stats, and the game's **replay payload** — in a single completion
+write. No game state is persisted mid-game; a crash before completion loses only the
+in-progress game. When no database is configured, the server SHALL play games to
+completion normally and skip the completion write — persistence is optional
+infrastructure, not a precondition for play.
 
 #### Scenario: Completed game is written once
 
 - **WHEN** a game reaches `GameOver` and a database is configured
-- **THEN** the server writes one game row, one result row per participant, the per-round rows, and one replay payload, in a single completion write
+- **THEN** the server writes the participants' player records and exactly one consolidated game row (metadata, summary stats, and replay payload), in a single completion write
 
 #### Scenario: In-progress game is not persisted
 
 - **WHEN** a game is still in progress
-- **THEN** no game, participant, round, or replay rows have been written for it
+- **THEN** no game row has been written for it
 
 #### Scenario: No database configured
 
 - **WHEN** the server runs without a configured database URL
 - **THEN** games play to completion normally and the completion write is skipped (logged once, never fatal)
 
-### Requirement: Relational Schema
+### Requirement: Consolidated Schema
 
-Persistence SHALL use PostgreSQL with tables for players (UUID identity, display name, created timestamp), games (timestamps, round count), game_players (final score, finish position, per-player stats), game_rounds (threshold, exploded flag, volatility total, cards played) for analytics, and a **replay payload stored in a single column** (on the game row or a 1:1 `game_replays` table) carrying its format/engine versions and an integrity hash.
+Persistence SHALL use PostgreSQL with two tables: `players` (UUID identity, display name,
+created timestamp) and a single consolidated `game_replays` table holding one row per
+completed game. The game row SHALL carry queryable metadata (start/end timestamps, the
+player id array, and the winner id array — null when no winner was declared, multiple
+entries for a tie), a per-player breakdown (final score, finish position, colour, cards
+played) stored as JSON, denormalized `stats_*` summary columns (round count, player
+count, explosions, total cards played, high/low score, and whether a deathmatch tiebreak
+ran), and the **replay payload stored in a single column** carrying its format/engine
+versions and an integrity hash. Per-round detail is recoverable by reconstructing the
+replay rather than stored as separate rows.
 
 #### Scenario: Results are queryable per player
 
 - **WHEN** a completed game has been persisted
-- **THEN** each participant's final score and finish position can be retrieved by joining game_players to players
+- **THEN** each participant's final score and finish position can be read from the game row's per-player JSON breakdown without decoding the replay payload
+
+#### Scenario: Winners and summary stats are queryable
+
+- **WHEN** a completed game has been persisted
+- **THEN** its winner id array and `stats_*` summary columns (including whether a deathmatch ran) are queryable directly on the game row
 
 #### Scenario: A game's replay is stored in one column
 
 - **WHEN** a completed game has been persisted
-- **THEN** its replay payload is retrievable from a single column keyed by game id, without loading it to query the result analytics
+- **THEN** its replay payload is retrievable from a single column keyed by game id, without loading it to query the metadata or summary stats
+
+### Requirement: Replay Payload
+
+The game's replay payload SHALL be a MessagePack body that re-runs the pinned engine to
+reconstruct the full public event stream — the root seed plus the ordered per-wave action
+log — and SHALL additionally carry an observational, timestamped log of every raw in-game
+input the players sent (card commits, passes, lock-ins, and emotes), each stamped with
+milliseconds since game start. The payload SHALL be wrapped by format/engine version tags
+and an integrity hash over its bytes; a payload whose bytes do not match its hash SHALL be
+rejected rather than reconstructed.
+
+#### Scenario: Replay reconstructs the public event stream
+
+- **WHEN** a stored replay is reconstructed against the engine version and content config it was recorded under
+- **THEN** the re-run reproduces the game's public event stream, final scores, and winners identically
+
+#### Scenario: Replay captures emotes and action timing
+
+- **WHEN** a completed game's replay payload is decoded
+- **THEN** it contains every in-game input each player sent — including emotes — with a millisecond timestamp relative to game start
+
+#### Scenario: Tampered payload is rejected
+
+- **WHEN** a stored replay payload's bytes do not match its integrity hash
+- **THEN** reconstruction is refused rather than producing an incorrect replay
 
 ### Requirement: Anonymous Player Records
 

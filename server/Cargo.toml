@@ -41,13 +41,13 @@ metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
 rmp-serde = { workspace = true }
 sha2 = "0.10"
-base64 = "0.22"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",
     "postgres",
     "uuid",
     "chrono",
+    "json",
 ] }
 
 [dev-dependencies]

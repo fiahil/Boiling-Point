@@ -33,11 +33,11 @@ use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::game::round::WaveChoice;
-use crate::game::runner::{Game, RoundLog, RoundScoring, build_game_result};
+use crate::game::runner::{Game, RoundLog, RoundScoring, build_completed_game};
 use crate::game::state::{Hand, Player};
 use crate::lobby::group::GroupCommand;
 use crate::persistence::persist_game;
-use crate::replay::encode_replay;
+use crate::replay::{RecordedInput, TimedInput, encode_replay};
 
 /// A seated player as the game loop needs them: identity, colour, and the
 /// outbound channel to reach them.
@@ -191,6 +191,10 @@ pub async fn run_game(
     crate::observability::metric::game_started();
     let game_start = std::time::Instant::now();
     let started_at = Utc::now();
+    // Every raw in-game input players send, stamped ms-since-game-start, for the
+    // replay payload (observational only — the engine reconstructs from the
+    // deterministic seed + action log, not from this).
+    let mut input_log: Vec<TimedInput> = Vec::new();
     tracing::info!(players = players.len(), "game started");
 
     // `game` span (span_schema::span::GAME) — child of the caller's group.lifetime
@@ -308,6 +312,8 @@ pub async fn run_game(
                 &mut gone,
                 palette,
                 timer_ms,
+                game_start,
+                &mut input_log,
             )
             .await;
             let wave_timed_out = collection.timed_out;
@@ -553,8 +559,8 @@ pub async fn run_game(
     )
     .await;
 
-    // Post-game completion write: the game result and its timeless replay payload,
-    // in one write, fed straight off the engine's analytics + action log. Skipped
+    // Post-game completion write: one consolidated game_replays row, fed straight
+    // off the engine's analytics + action log + the recorded raw-input log. Skipped
     // cleanly when no database is configured.
     persist_completed_game(
         pool,
@@ -566,6 +572,8 @@ pub async fn run_game(
         game.cards_played(),
         game.round_logs(),
         game.action_log(),
+        &winners,
+        &input_log,
         seed,
     )
     .await;
@@ -589,10 +597,14 @@ fn to_contributions(counts: Vec<(PlayerId, u8)>) -> Vec<Contribution> {
 }
 
 /// The post-game completion write (the only DB write the server performs).
-/// Builds the [`GameResult`](crate::persistence::GameResult) and the timeless
-/// replay payload, then persists both in [`persist_game`]'s single transaction
-/// (the `db.write` span). With no database configured this is a clean no-op —
-/// persistence is optional infrastructure, never a precondition for play.
+/// Encodes the replay payload (seed + action log + recorded raw inputs), builds
+/// the consolidated [`CompletedGame`](crate::persistence::CompletedGame), and
+/// persists it in [`persist_game`]'s single transaction (the `db.write` span).
+/// With no database configured this is a clean no-op — persistence is optional
+/// infrastructure, never a precondition for play.
+///
+/// Because the row *is* the replay, an (unexpected) replay-encode failure skips
+/// the whole write rather than persisting a payload-less stub.
 #[allow(clippy::too_many_arguments)]
 async fn persist_completed_game(
     pool: Option<&PgPool>,
@@ -604,44 +616,64 @@ async fn persist_completed_game(
     cards_played: &HashMap<PlayerId, u32>,
     rounds: &[RoundLog],
     action_log: &[WaveChoice],
+    winners: &[PlayerId],
+    input_log: &[TimedInput],
     seed: u64,
 ) {
     let Some(pool) = pool else {
         tracing::trace!(game.id = %game_id, "no database configured; completion write skipped");
         return;
     };
-    let result = build_game_result(
-        players.iter().map(|p| (p.id, p.name.clone())),
-        scores,
-        cards_played,
-        rounds,
-        game_id,
-        started_at,
-        Utc::now(),
-    );
-    // Encode the timeless replay payload; on an (unexpected) encode failure,
-    // still persist the results so the match record is not lost.
     let replay = match encode_replay(
         game_id,
         seed,
         config,
         players.iter().map(|p| (p.id, p.color, p.name.clone())),
         action_log,
+        input_log,
     ) {
-        Ok(replay) => Some(replay),
+        Ok(replay) => replay,
         Err(e) => {
-            tracing::error!(game.id = %game_id, error = %e, "failed to encode replay; persisting results only");
-            None
+            tracing::error!(game.id = %game_id, error = %e, "failed to encode replay; skipping completion write");
+            return;
         }
     };
-    if let Err(e) = persist_game(pool, &result, replay.as_ref()).await {
+    let completed = build_completed_game(
+        players.iter().map(|p| (p.id, p.color, p.name.clone())),
+        scores,
+        cards_played,
+        rounds,
+        winners,
+        game_id,
+        started_at,
+        Utc::now(),
+        replay,
+    );
+    if let Err(e) = persist_game(pool, &completed).await {
         tracing::error!(game.id = %game_id, error = %e, "failed to persist completed game");
+    }
+}
+
+/// Map an in-game client message to its recorded replay form. Returns `None` for
+/// messages that are not in-game player inputs (heartbeats, lobby/entry messages).
+fn recorded_input(msg: &ClientMessage) -> Option<RecordedInput> {
+    match msg {
+        ClientMessage::CommitCard { card } => Some(RecordedInput::CommitCard { card: *card }),
+        ClientMessage::CommitPass => Some(RecordedInput::CommitPass),
+        ClientMessage::LockIn => Some(RecordedInput::LockIn),
+        ClientMessage::Emote { emote } => Some(RecordedInput::Emote { emote: *emote }),
+        _ => None,
     }
 }
 
 /// Collect one wave's hidden commits until the timer expires or every active
 /// player has locked in. Heartbeats and emotes are serviced live; a disconnect
 /// (`Leave`) auto-passes the player for the rest of the game.
+///
+/// Every raw in-game input (commit/pass/lock-in/emote) is appended to `input_log`
+/// as it arrives — *before* validation, so rejected/off-palette attempts are
+/// captured too — stamped with `game_start.elapsed()` for the replay payload.
+#[allow(clippy::too_many_arguments)]
 async fn collect_wave(
     rx: &mut mpsc::Receiver<GroupCommand>,
     players: &mut [SeatInfo],
@@ -650,6 +682,8 @@ async fn collect_wave(
     gone: &mut HashSet<PlayerId>,
     palette: &HashSet<u16>,
     timer_ms: u32,
+    game_start: std::time::Instant,
+    input_log: &mut Vec<TimedInput>,
 ) -> WaveCollection {
     let mut choice: HashMap<PlayerId, WaveChoice> = HashMap::new();
     let mut locked: HashSet<PlayerId> = HashSet::new();
@@ -673,6 +707,15 @@ async fn collect_wave(
                     None => break,
                     Some(GroupCommand::Action { player, msg }) => {
                         let active = acting.contains(&player) && !gone.contains(&player);
+                        // Record the raw input (everything sent, incl. rejected
+                        // attempts) before validating it.
+                        if let Some(input) = recorded_input(&msg) {
+                            input_log.push(TimedInput {
+                                player,
+                                at_ms: game_start.elapsed().as_millis() as u32,
+                                input,
+                            });
+                        }
                         match msg {
                             ClientMessage::CommitCard { card } if active => {
                                 // §I: a card the player doesn't hold is an invalid
@@ -877,6 +920,8 @@ mod tests {
             &mut gone,
             &palette,
             5_000,
+            std::time::Instant::now(),
+            &mut Vec::new(),
         )
         .await;
 
@@ -938,6 +983,8 @@ mod tests {
             &mut gone,
             &palette,
             5_000,
+            std::time::Instant::now(),
+            &mut Vec::new(),
         )
         .await;
 
@@ -990,6 +1037,7 @@ mod tests {
             .unwrap();
         drop(cmd_tx);
 
+        let mut input_log: Vec<TimedInput> = Vec::new();
         let _ = collect_wave(
             &mut cmd_rx,
             &mut players,
@@ -998,6 +1046,8 @@ mod tests {
             &mut gone,
             &palette,
             5_000,
+            std::time::Instant::now(),
+            &mut input_log,
         )
         .await;
 
@@ -1018,6 +1068,25 @@ mod tests {
             ),
             "expected a valid broadcast then an InvalidEmote error, got {msgs:?}"
         );
+
+        // The raw-input log captured *everything sent* — both the valid emote and
+        // the off-palette one that was rejected — in arrival order, with
+        // non-decreasing timestamps.
+        assert_eq!(
+            input_log
+                .iter()
+                .map(|t| t.input.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                RecordedInput::Emote { emote: EmoteId(1) },
+                RecordedInput::Emote {
+                    emote: EmoteId(999)
+                },
+            ],
+            "the recorder must capture both emotes (incl. the rejected one)"
+        );
+        assert!(input_log.iter().all(|t| t.player == id1));
+        assert!(input_log.windows(2).all(|w| w[0].at_ms <= w[1].at_ms));
     }
 
     // ---- F2: the shipping (async) path is the tested engine path ----

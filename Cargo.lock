@@ -265,7 +265,6 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "axum",
- "base64",
  "boiling-point-protocol",
  "chrono",
  "clap",

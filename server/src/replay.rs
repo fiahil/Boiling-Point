@@ -1,12 +1,18 @@
-//! Timeless replays: a compact, self-describing payload that re-runs the pinned
-//! engine to reconstruct a completed game's public event stream.
+//! Replays: a compact, self-describing payload that re-runs the pinned engine to
+//! reconstruct a completed game's public event stream, plus a timestamped log of
+//! everything the players sent.
 //!
-//! A replay is the *deterministic input* to the engine, not a recording of its
-//! output: the root seed plus the ordered per-wave action log. Because the
-//! engine is fully deterministic from `seed` + content config, re-running it
-//! reproduces the exact game — every deal, reveal, depile, and score. The body
-//! is MessagePack-encoded and base64'd into a single database column, wrapped by
-//! a `format_version`/`engine_version` tag (so a future engine change selects a
+//! The *reconstruction* part of a replay is the **deterministic input** to the
+//! engine, not a recording of its output: the root seed plus the ordered per-wave
+//! action log. Because the engine is fully deterministic from `seed` + content
+//! config, re-running it reproduces the exact game — every deal, reveal, depile,
+//! and score. Alongside it the body carries an **observational** `input_log`: the
+//! raw in-game messages each player actually sent (commit/pass/lock-in/emote),
+//! each stamped with ms-since-game-start, so playback can show emotes and pacing.
+//! It is not fed back into the engine, so determinism is unaffected.
+//!
+//! The body is MessagePack-encoded into a single `BYTEA` database column, wrapped
+//! by a `format_version`/`engine_version` tag (so a future engine change selects a
 //! compatible reconstruction path or migrates the payload) and an integrity hash
 //! over the encoded bytes (so tampering is rejected rather than mis-replayed).
 //!
@@ -17,14 +23,12 @@
 //! the Recall-target wire gap (tui review **T4**) — until then a live log
 //! records what the wire carries.
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use boiling_point_protocol::PlayerId;
 use boiling_point_protocol::vocab::Color;
+use boiling_point_protocol::{CardId, EmoteId, PlayerId};
 
 use crate::config::ContentConfig;
 use crate::content::ContentRegistry;
@@ -36,7 +40,10 @@ use crate::persistence::StoredReplay;
 
 /// Replay payload format version. Bump on an incompatible payload *shape* change
 /// (the wrapper around the action log); a decode of a newer version is rejected.
-pub const REPLAY_FORMAT_VERSION: u16 = 1;
+///
+/// v2: the body gained the observational `input_log` (timestamped raw inputs) and
+/// the payload column moved from base64 `TEXT` to raw `BYTEA`.
+pub const REPLAY_FORMAT_VERSION: u16 = 2;
 
 /// Engine version the payload was recorded under. Bump when an engine change
 /// alters deterministic reconstruction; stored payloads then select a migration
@@ -54,6 +61,38 @@ struct ReplayPlayer {
     display_name: String,
 }
 
+/// A raw in-game input exactly as a player sent it on the wire, independent of
+/// whether the engine ultimately accepted it. This is the observational record —
+/// what was *sent* — not the effective `WaveChoice` the engine resolved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecordedInput {
+    /// The player committed a specific card.
+    CommitCard {
+        /// The hand card committed.
+        card: CardId,
+    },
+    /// The player committed to passing the wave.
+    CommitPass,
+    /// The player locked in their current selection.
+    LockIn,
+    /// The player sent a table-talk emote.
+    Emote {
+        /// The palette emote sent.
+        emote: EmoteId,
+    },
+}
+
+/// One recorded input with its author and a millisecond offset from game start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TimedInput {
+    /// Who sent it.
+    pub player: PlayerId,
+    /// Milliseconds since the game started (monotonic).
+    pub at_ms: u32,
+    /// What they sent.
+    pub input: RecordedInput,
+}
+
 /// The decoded replay body: everything needed to re-run the pinned engine.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct ReplayBody {
@@ -67,8 +106,12 @@ struct ReplayBody {
     seed: u64,
     /// The seated roster, in seating order.
     players: Vec<ReplayPlayer>,
-    /// Ordered per-wave player actions in engine decision order.
+    /// Ordered per-wave player actions in engine decision order — the
+    /// deterministic input the reconstruction re-runs.
     action_log: Vec<WaveChoice>,
+    /// Every raw in-game input the players sent, in arrival order, each stamped
+    /// with ms-since-game-start. Observational only (not fed to the engine).
+    input_log: Vec<TimedInput>,
 }
 
 /// A reconstructed game: its public event stream plus the recomputed outcome.
@@ -94,9 +137,6 @@ pub enum ReplayError {
         /// The version found in the payload.
         found: u16,
     },
-    /// The base64 column value failed to decode.
-    #[error("replay base64 decode failed: {0}")]
-    Base64(#[from] base64::DecodeError),
     /// The MessagePack body failed to decode.
     #[error("replay messagepack decode failed: {0}")]
     Decode(#[from] rmp_serde::decode::Error),
@@ -127,13 +167,15 @@ pub fn config_fingerprint(config: &ContentConfig) -> String {
 
 /// Assemble and encode a completed game's replay into its storable row. The
 /// `seed` and `action_log` come from the played game (e.g. [`GameOutcome`]);
-/// `players` is the seated roster in seating order.
+/// `players` is the seated roster in seating order; `input_log` is the
+/// session-recorded raw inputs (commit/pass/lock-in/emote) with timestamps.
 pub fn encode_replay(
     game_id: Uuid,
     seed: u64,
     config: &ContentConfig,
     players: impl IntoIterator<Item = (PlayerId, Color, String)>,
     action_log: &[WaveChoice],
+    input_log: &[TimedInput],
 ) -> Result<StoredReplay, ReplayError> {
     let body = ReplayBody {
         format_version: REPLAY_FORMAT_VERSION,
@@ -149,12 +191,13 @@ pub fn encode_replay(
             })
             .collect(),
         action_log: action_log.to_vec(),
+        input_log: input_log.to_vec(),
     };
-    let bytes = rmp_serde::to_vec_named(&body)?;
-    let integrity_hash = hash_hex(&bytes);
+    let payload = rmp_serde::to_vec_named(&body)?;
+    let integrity_hash = hash_hex(&payload);
     Ok(StoredReplay {
         game_id,
-        payload: BASE64.encode(&bytes),
+        payload,
         format_version: body.format_version as i16,
         engine_version: body.engine_version as i16,
         config_fingerprint: body.config_fingerprint,
@@ -162,15 +205,13 @@ pub fn encode_replay(
     })
 }
 
-/// Decode and verify a stored replay: base64-decode the payload, check its
-/// integrity hash *before* trusting the bytes, then decode and gate on the
-/// format version.
+/// Decode and verify a stored replay: check the payload's integrity hash *before*
+/// trusting the bytes, then decode and gate on the format version.
 fn decode_and_verify(stored: &StoredReplay) -> Result<ReplayBody, ReplayError> {
-    let bytes = BASE64.decode(&stored.payload)?;
-    if hash_hex(&bytes) != stored.integrity_hash {
+    if hash_hex(&stored.payload) != stored.integrity_hash {
         return Err(ReplayError::Integrity);
     }
-    let body: ReplayBody = rmp_serde::from_slice(&bytes)?;
+    let body: ReplayBody = rmp_serde::from_slice(&stored.payload)?;
     if body.format_version != REPLAY_FORMAT_VERSION {
         return Err(ReplayError::UnsupportedFormat {
             found: body.format_version,
@@ -284,6 +325,7 @@ mod tests {
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
             &outcome.action_log,
+            &[],
         )
         .expect("encode");
 
@@ -292,8 +334,57 @@ mod tests {
         assert_eq!(recon.events, events, "reconstructed event stream differs");
         assert_eq!(recon.outcome.scores, outcome.scores, "scores differ");
         assert_eq!(recon.outcome.winners, outcome.winners, "winners differ");
-        // The payload fits a single column (it is just one base64 string).
+        // The payload fits a single column (one MessagePack blob).
         assert!(!stored.payload.is_empty());
+    }
+
+    /// The observational `input_log` round-trips inside the payload and does not
+    /// disturb deterministic reconstruction.
+    #[test]
+    fn input_log_round_trips_in_the_payload() {
+        let (reg, cfg) = registry_and_config();
+        let roster = four_players();
+        let mut game = Game::new(&reg, &cfg, roster.clone(), 0xBEEF);
+        let mut decider = eager();
+        let (outcome, events) = game.play_out_with_events(&mut decider);
+
+        let inputs = vec![
+            TimedInput {
+                player: roster[0].id,
+                at_ms: 12,
+                input: RecordedInput::CommitCard { card: CardId(1) },
+            },
+            TimedInput {
+                player: roster[1].id,
+                at_ms: 340,
+                input: RecordedInput::Emote {
+                    emote: EmoteId(2),
+                },
+            },
+            TimedInput {
+                player: roster[2].id,
+                at_ms: 980,
+                input: RecordedInput::CommitPass,
+            },
+        ];
+        let stored = encode_replay(
+            Uuid::new_v4(),
+            outcome.seed,
+            &cfg,
+            roster
+                .iter()
+                .map(|p| (p.id, p.color, p.display_name.clone())),
+            &outcome.action_log,
+            &inputs,
+        )
+        .expect("encode");
+
+        // The recorded inputs survive a decode...
+        let body = decode_and_verify(&stored).expect("decode");
+        assert_eq!(body.input_log, inputs, "input log differs after round-trip");
+        // ...and the event stream is still reconstructed identically.
+        let recon = reconstruct(&stored, &reg, &cfg).expect("reconstruct");
+        assert_eq!(recon.events, events, "reconstructed event stream differs");
     }
 
     /// A payload whose bytes have been tampered with fails the integrity check
@@ -314,14 +405,13 @@ mod tests {
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
             &outcome.action_log,
+            &[],
         )
         .expect("encode");
 
-        // Tamper with the encoded bytes (flip one byte, re-base64), keeping the
-        // original hash: reconstruction must refuse rather than mis-replay.
-        let mut bytes = BASE64.decode(&stored.payload).unwrap();
-        bytes[0] ^= 0xFF;
-        stored.payload = BASE64.encode(&bytes);
+        // Tamper with the encoded bytes (flip one byte) while keeping the original
+        // hash: reconstruction must refuse rather than mis-replay.
+        stored.payload[0] ^= 0xFF;
 
         match reconstruct(&stored, &reg, &cfg) {
             Err(ReplayError::Integrity) => {}
