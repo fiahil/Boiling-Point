@@ -17,9 +17,6 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use chrono::Utc;
-use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
 use sqlx::PgPool;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -30,19 +27,14 @@ use boiling_point_protocol::server::{
     Audience, Contribution, DepileEntry, ErrorCode, Outbound, PlayerPublic, PlayerScore,
     ScoringOutcome,
 };
-use boiling_point_protocol::vocab::{Color, ModifierKind};
+use boiling_point_protocol::vocab::Color;
 use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
-use crate::game::card::Card;
-use crate::game::deck::Deck;
-use crate::game::modifiers::ActiveModifiers;
-use crate::game::round::{Round, RoundEnd, WaveChoice, WaveInput};
-use crate::game::runner::{RoundLog, build_game_result};
-use crate::game::scoring::{ScoringContext, explosion, score_safe};
-use crate::game::state::Hand;
-use crate::game::{DeathmatchResult, run_deathmatch};
+use crate::game::round::WaveChoice;
+use crate::game::runner::{Game, RoundLog, RoundScoring, build_game_result};
+use crate::game::state::{Hand, Player};
 use crate::lobby::group::GroupCommand;
 use crate::persistence::persist_game;
 use crate::replay::encode_replay;
@@ -79,9 +71,11 @@ pub struct GameEnd {
 
 /// What one wave's collection yielded.
 struct WaveCollection {
-    committed: Vec<(PlayerId, Card)>,
-    passers: Vec<PlayerId>,
-    emptied: Vec<PlayerId>,
+    /// Each acting player's chosen action this wave (commit a card, or pass).
+    /// Validated against hands at commit time; the engine ([`Game::resolve_wave`])
+    /// removes the committed cards — collection itself never mutates a hand.
+    choices: HashMap<PlayerId, WaveChoice>,
+    /// Players who reconnected during the commit window (they resume next round).
     reconnected: Vec<PlayerId>,
     /// Whether the commit window closed on its timer rather than every active
     /// player locking in (feeds the `wave.timed_out` span attribute / timeout rate).
@@ -174,26 +168,25 @@ pub async fn run_game(
     pool: Option<&PgPool>,
 ) -> GameEnd {
     let ids: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
-    let color_owner: HashMap<Color, PlayerId> = players.iter().map(|p| (p.color, p.id)).collect();
-    let mut hands: HashMap<PlayerId, Hand> = ids.iter().map(|id| (*id, Hand::new())).collect();
-    let mut scores: HashMap<PlayerId, i32> = ids.iter().map(|id| (*id, 0)).collect();
-    let mut deck = Deck::build(registry, seed);
-    let mut modifiers = ActiveModifiers::new();
-    let mut rng = StdRng::seed_from_u64(seed ^ 0xBEEF_F00D);
-    let mut modifier_pile: Vec<ModifierKind> = registry
-        .modifier_pool()
-        .into_iter()
-        .flat_map(|(kind, copies)| std::iter::repeat_n(kind, copies as usize))
-        .collect();
-    modifier_pile.shuffle(&mut rng);
     let mut gone: HashSet<PlayerId> = HashSet::new();
 
-    // Replay/analytics recording, retained only until the post-game write:
-    // total cards each player committed, per-round logs, and the ordered
-    // per-wave action log (the deterministic input a timeless replay re-runs).
-    let mut cards_played: HashMap<PlayerId, u32> = ids.iter().map(|id| (*id, 0)).collect();
-    let mut round_logs: Vec<RoundLog> = Vec::new();
-    let mut action_log: Vec<WaveChoice> = Vec::new();
+    // The single orchestration core: `run_game` owns no game state of its own. It
+    // drives a `Game` — the same engine `Game::play_out` is tested against — through
+    // its `begin_round` / `resolve_wave` / `settle_round` / `break_tie` steps, adding
+    // only the wire I/O (collect commits within a timer, broadcast the public outcome)
+    // and the observability spans. The hands, deck, scores, modifiers, RNG, round
+    // bookkeeping, per-player/per-round analytics, and the replay action log all live
+    // in `Game`, so the shipping path cannot drift from the tested one (F2) and the
+    // post-game write feeds straight off the engine.
+    let game_players: Vec<Player> = players
+        .iter()
+        .map(|s| Player {
+            id: s.id,
+            color: s.color,
+            display_name: s.name.clone(),
+        })
+        .collect();
+    let mut game = Game::new(registry, config, game_players, seed);
 
     crate::observability::metric::game_started();
     let game_start = std::time::Instant::now();
@@ -214,14 +207,11 @@ pub async fn run_game(
     );
 
     for round_number in 1..=ROUND_COUNT {
-        // Round 2+ draws one cumulative modifier; remember it for the round log.
-        let round_modifier = if round_number >= 2 {
-            modifier_pile.pop()
-        } else {
-            None
-        };
-        if let Some(kind) = round_modifier {
-            modifiers.push(kind);
+        // Open the round through the engine (modifier draw, refill, hidden boiling
+        // point, active set excluding the disconnected), then announce it on the wire.
+        let opening = game.begin_round(round_number, &gone);
+        let effective_bp = opening.effective_boiling_point;
+        if let Some(kind) = opening.modifier {
             broadcast(
                 &players,
                 ServerMessage::ModifierRevealed {
@@ -231,49 +221,29 @@ pub async fn run_game(
             )
             .await;
         }
-
-        // Refill hands and send each player their private hand.
-        for id in &ids {
-            let len = hands[id].len();
-            let (drawn, reshuffled) = deck.refill(len);
-            hands
-                .get_mut(id)
-                .expect("invariant: every seated player has a hand")
-                .add(drawn);
-            if reshuffled {
-                crate::observability::metric::deck_reshuffled();
-                broadcast(&players, ServerMessage::DeckReshuffled).await;
-            }
+        for _ in 0..opening.reshuffles {
+            crate::observability::metric::deck_reshuffled();
+            broadcast(&players, ServerMessage::DeckReshuffled).await;
         }
         for id in &ids {
             send_to(
                 &players,
                 *id,
                 ServerMessage::YourHand {
-                    cards: hands[id].views(),
+                    cards: game.hand(*id).map(|h| h.views()).unwrap_or_default(),
                 },
             )
             .await;
         }
 
-        let base = rng.gen_range(config.boiling_point.min..=config.boiling_point.max);
-        let effective_bp = modifiers.effective_boiling_point(base, registry);
-        let start_vol = modifiers.start_volatility(registry);
-        let active: Vec<PlayerId> = ids
-            .iter()
-            .copied()
-            .filter(|id| !hands[id].is_empty() && !gone.contains(id))
-            .collect();
-        let mut round = Round::start(active, effective_bp, start_vol);
-        let mut wave_no: u8 = 1;
         let round_start = std::time::Instant::now();
 
         // `round` span — child of the game span; held open for the whole round.
         // boiling_point/volatility_total are secret (in-process only); round.number,
         // round.exploded, and modifiers are public live-registry keys/outcome. The
         // active modifiers ride as a public attribute (clients already see them).
-        let mods_str = modifiers
-            .kinds()
+        let mods_str = game
+            .active_modifiers()
             .iter()
             .map(|m| format!("{m:?}"))
             .collect::<Vec<_>>()
@@ -295,13 +265,14 @@ pub async fn run_game(
         let _hand_spans: Vec<tracing::Span> = ids
             .iter()
             .map(|id| {
-                let hand = fmt_hand(&hands[id]);
+                let hand = game.hand(*id).map(fmt_hand).unwrap_or_default();
                 round_span.in_scope(|| tracing::info_span!("hand", player.id = %id.0, hand = %hand))
             })
             .collect();
 
-        while round.is_open() {
-            let acting: Vec<PlayerId> = round.active().to_vec();
+        while game.round_is_open() {
+            let acting: Vec<PlayerId> = game.active().to_vec();
+            let wave_no = game.wave_number();
             let timer_ms = if wave_no == 1 {
                 config.timing.wave1_ms
             } else {
@@ -333,7 +304,7 @@ pub async fn run_game(
                 rx,
                 &mut players,
                 &acting,
-                &mut hands,
+                game.hands(),
                 &mut gone,
                 palette,
                 timer_ms,
@@ -352,80 +323,59 @@ pub async fn run_game(
                     your_player_id: *player,
                     round_number,
                     players: public_players(&players, &gone),
-                    scores: scores_vec(&scores, &ids),
-                    active_modifiers: modifiers.kinds().to_vec(),
-                    contributions: contributions(&round, &ids),
-                    your_hand: hands.get(player).map(|h| h.views()).unwrap_or_default(),
+                    scores: scores_vec(game.scores(), &ids),
+                    active_modifiers: game.active_modifiers().to_vec(),
+                    contributions: to_contributions(game.contributions(&ids)),
+                    your_hand: game.hand(*player).map(|h| h.views()).unwrap_or_default(),
                 };
                 send_to(&players, *player, snapshot).await;
                 tracing::info!(player = %player.0, "player reconnected");
             }
-            let WaveCollection {
-                committed,
-                passers,
-                emptied,
-                ..
-            } = collection;
-            let played: Vec<PlayerId> = committed.iter().map(|(p, _)| *p).collect();
 
-            // Record this wave's resolved actions in engine decision (acting)
-            // order — the deterministic replay input — plus the cards-played
-            // tally. A committed card is `Play(card_id)`; everything else (pass,
-            // timeout, auto-pass while gone) is `Pass`. (Recall targets are not
-            // yet carried on the wire — tui review T4; until then the log records
-            // what the wire delivers.)
-            let committed_cards: HashMap<PlayerId, boiling_point_protocol::CardId> =
-                committed.iter().map(|(p, c)| (*p, c.id)).collect();
-            for player in &acting {
-                let choice = match committed_cards.get(player) {
-                    Some(card_id) => {
-                        *cards_played.get_mut(player).unwrap() += 1;
-                        WaveChoice::Play(*card_id)
-                    }
-                    None => WaveChoice::Pass,
-                };
-                action_log.push(choice);
-            }
+            // `resolve` span — child of the wave; pot.card_count is public. The engine
+            // validates choices against hands, removes the committed cards, applies the
+            // wave, returns recalled cards to their owners, and records the per-wave
+            // action log (the deterministic replay input) on the shared `Game`.
+            let resolve_span = wave_span.in_scope(|| {
+                tracing::info_span!("resolve", pot.card_count = tracing::field::Empty)
+            });
+            let resolution = resolve_span.in_scope(|| game.resolve_wave(&collection.choices));
+            resolve_span.record("pot.card_count", resolution.pot_card_count as u64);
+            drop(resolve_span);
 
+            let played: Vec<PlayerId> = resolution.committed.iter().map(|(p, _)| *p).collect();
             // `commit` leaf spans (one per committed card) — children of the wave.
             // The committed card identity rides as a secret attribute (in-process
             // only); it is never broadcast until public resolution.
             wave_span.in_scope(|| {
-                for (player, card) in &committed {
+                for (player, card) in &resolution.committed {
                     let _commit =
                         tracing::info_span!("commit", player.id = %player.0, committed_card = ?card);
                 }
             });
 
-            // `resolve` span — child of the wave; pot.card_count is public.
-            let resolve_span = wave_span.in_scope(|| {
-                tracing::info_span!("resolve", pot.card_count = tracing::field::Empty)
-            });
-            let report = round.apply_wave(
-                registry,
-                WaveInput {
-                    committed,
-                    passers: passers.clone(),
-                    emptied,
-                    recalls: HashMap::new(),
-                },
-            );
-            resolve_span.record("pot.card_count", round.pot().card_count() as u64);
-            drop(resolve_span);
             // Surface the wave outcome and the live running volatility on the open
             // spans (an Update lifecycle event), so the reveal shows current state.
             wave_span.record("wave.timed_out", wave_timed_out);
-            round_span.record("volatility_total", round.pot().volatility as i64);
+            round_span.record("volatility_total", resolution.pot_volatility as i64);
             crate::observability::metric::wave_resolved(wave_timed_out);
             crate::observability::metric::cards_committed(played.len() as u64);
-            for (player, card) in report.outcome.recalled {
-                if let Some(hand) = hands.get_mut(&player) {
-                    hand.add([card]);
-                }
+
+            // A recall grew an owner's hand: re-send each affected owner a private
+            // `YourHand` (D3) so the owning client tracks its true hand.
+            for player in &resolution.recalled_to {
+                send_to(
+                    &players,
+                    *player,
+                    ServerMessage::YourHand {
+                        cards: game.hand(*player).map(|h| h.views()).unwrap_or_default(),
+                    },
+                )
+                .await;
             }
-            if !report.outcome.peeked.is_empty() {
+            if !resolution.peeked.is_empty() {
                 broadcast(&players, ServerMessage::SomeonePeeked).await;
-                for peeker in &report.outcome.peeked {
+                for peeker in &resolution.peeked {
                     send_to(
                         &players,
                         *peeker,
@@ -436,27 +386,28 @@ pub async fn run_game(
                     .await;
                 }
             }
-            for card in report.outcome.exposed {
+            for card in resolution.exposed {
                 broadcast(&players, ServerMessage::Exposed { card }).await;
             }
 
-            let contributions = contributions(&round, &ids);
             broadcast(
                 &players,
                 ServerMessage::WaveResolved {
                     played,
-                    passed: passers,
-                    cauldron_card_count: round.pot().card_count() as u8,
-                    contributions,
+                    passed: resolution.passers,
+                    cauldron_card_count: resolution.pot_card_count,
+                    contributions: to_contributions(game.contributions(&ids)),
                 },
             )
             .await;
-            wave_no += 1;
         }
 
-        // Depile (boiling point revealed only on explosion).
-        let exploded = round.ended() == Some(RoundEnd::Exploded);
-        let depile = round.depile();
+        // Settle the round through the engine (depile + scoring + analytics), then
+        // broadcast the public outcome. The engine has already folded the deltas into
+        // the cumulative scores and logged the round.
+        let settlement = game.settle_round();
+        let depile = settlement.depile;
+        let exploded = matches!(settlement.scoring, RoundScoring::Exploded(_));
         // Round outcome onto the round span: volatility_total is secret (the final
         // running volatility); round.exploded is public.
         round_span.record(
@@ -491,15 +442,6 @@ pub async fn run_game(
         )
         .await;
 
-        // Score the round and broadcast the result.
-        let shielded = round.shielded().clone();
-        let ctx = ScoringContext {
-            modifiers: &modifiers,
-            registry,
-            color_owner: &color_owner,
-            shielded: &shielded,
-            all_players: &ids,
-        };
         // `score` span — child of the round; round.exploded and pot.value are public.
         let score_span = round_span.in_scope(|| {
             tracing::info_span!(
@@ -509,76 +451,71 @@ pub async fn run_game(
                 dominant_color = tracing::field::Empty,
             )
         });
-        if exploded {
-            let result = explosion(round.pot(), &ctx);
-            score_span.record("pot.value", result.pot_value as i64);
-            // An explosion has no scoring colour winner.
-            score_span.record("dominant_color", "none");
-            for (player, delta) in &result.deltas {
-                *scores.entry(*player).or_insert(0) += delta;
+        match settlement.scoring {
+            RoundScoring::Exploded(result) => {
+                score_span.record("pot.value", result.pot_value as i64);
+                // An explosion has no scoring colour winner.
+                score_span.record("dominant_color", "none");
+                broadcast(
+                    &players,
+                    ServerMessage::Explosion {
+                        pot_value: result.pot_value,
+                        deltas: result
+                            .deltas
+                            .iter()
+                            .map(|(p, d)| PlayerScore {
+                                player: *p,
+                                score: *d,
+                            })
+                            .collect(),
+                        shielded: result.shielded,
+                    },
+                )
+                .await;
             }
-            broadcast(
-                &players,
-                ServerMessage::Explosion {
-                    pot_value: result.pot_value,
-                    deltas: result
-                        .deltas
-                        .iter()
-                        .map(|(p, d)| PlayerScore {
-                            player: *p,
-                            score: *d,
-                        })
-                        .collect(),
-                    shielded: result.shielded,
-                },
-            )
-            .await;
-        } else {
-            let result = score_safe(round.pot(), &ctx);
-            for (player, delta) in &result.awards {
-                *scores.entry(*player).or_insert(0) += delta;
+            RoundScoring::Safe(result) => {
+                let outcome = if result.winners.len() == 1 {
+                    ScoringOutcome::Domination {
+                        winner: result.winners[0],
+                    }
+                } else {
+                    ScoringOutcome::Split {
+                        colors: result.winners.clone(),
+                    }
+                };
+                // Public dominant-strategy signal for the balance dashboard: the single
+                // dominating colour, or `split` when several colours tied.
+                score_span.record(
+                    "dominant_color",
+                    match result.winners.as_slice() {
+                        [only] => format!("{only:?}"),
+                        _ => "split".to_string(),
+                    }
+                    .as_str(),
+                );
+                crate::observability::metric::round_decided(result.winners.len() == 1);
+                broadcast(
+                    &players,
+                    ServerMessage::RoundScored {
+                        color_points: result.color_points,
+                        outcome,
+                        awards: result
+                            .awards
+                            .iter()
+                            .map(|(p, s)| PlayerScore {
+                                player: *p,
+                                score: *s,
+                            })
+                            .collect(),
+                    },
+                )
+                .await;
             }
-            let outcome = if result.winners.len() == 1 {
-                ScoringOutcome::Domination {
-                    winner: result.winners[0],
-                }
-            } else {
-                ScoringOutcome::Split {
-                    colors: result.winners.clone(),
-                }
-            };
-            // Public dominant-strategy signal for the balance dashboard: the single
-            // dominating colour, or `split` when several colours tied.
-            score_span.record(
-                "dominant_color",
-                match result.winners.as_slice() {
-                    [only] => format!("{only:?}"),
-                    _ => "split".to_string(),
-                }
-                .as_str(),
-            );
-            crate::observability::metric::round_decided(result.winners.len() == 1);
-            broadcast(
-                &players,
-                ServerMessage::RoundScored {
-                    color_points: result.color_points,
-                    outcome,
-                    awards: result
-                        .awards
-                        .iter()
-                        .map(|(p, s)| PlayerScore {
-                            player: *p,
-                            score: *s,
-                        })
-                        .collect(),
-                },
-            )
-            .await;
         }
         broadcast(
             &players,
             ServerMessage::ScoreUpdate {
-                scores: scores_vec(&scores, &ids),
+                scores: scores_vec(game.scores(), &ids),
             },
         )
         .await;
@@ -586,30 +523,11 @@ pub async fn run_game(
 
         crate::observability::metric::round_resolved(exploded);
         crate::observability::metric::round_duration(round_start.elapsed().as_secs_f64());
-
-        // Per-round analytics for the post-game write (populated on the async
-        // path too — review-remediation F2/F4 note).
-        round_logs.push(RoundLog {
-            round_number,
-            effective_boiling_point: effective_bp,
-            exploded,
-            final_volatility: round.pot().volatility,
-            cards_played: round.pot().card_count(),
-            modifier: round_modifier,
-        });
-
-        // Spent pot cards return to the discard for future reshuffles.
-        let spent: Vec<_> = round.pot().cards.iter().map(|pc| pc.card).collect();
-        deck.discard_cards(spent);
     }
 
-    // Game over — break a tie for the lead with a Deathmatch.
-    let best = scores.values().copied().max().unwrap_or(0);
-    let leaders: Vec<PlayerId> = ids
-        .iter()
-        .copied()
-        .filter(|id| scores[id] == best)
-        .collect();
+    // Game over — break a tie for the lead with a Deathmatch (the engine's tiebreak
+    // core; `run_game` only announces it on the wire first).
+    let leaders = game.leaders();
     let winners = if leaders.len() > 1 {
         broadcast(
             &players,
@@ -618,27 +536,7 @@ pub async fn run_game(
             },
         )
         .await;
-        let tied: Vec<(PlayerId, Hand)> =
-            leaders.iter().map(|id| (*id, hands[id].clone())).collect();
-        let mut shed_lowest = |_p: PlayerId, hand: &Hand| {
-            hand.views()
-                .iter()
-                .min_by_key(|c| c.view.volatility)
-                .expect("invariant: deathmatch sheds only from a non-empty hand")
-                .id
-        };
-        match run_deathmatch(
-            registry,
-            tied,
-            config.boiling_point.min,
-            config.boiling_point.max,
-            &mut shed_lowest,
-            seed ^ 0xD3A7,
-        ) {
-            DeathmatchResult::Champion(p) => vec![p],
-            DeathmatchResult::CoChampions(ps) if !ps.is_empty() => ps,
-            DeathmatchResult::CoChampions(_) => leaders.clone(),
-        }
+        game.break_tie(&leaders)
     } else {
         leaders
     };
@@ -649,24 +547,25 @@ pub async fn run_game(
     broadcast(
         &players,
         ServerMessage::GameOver {
-            final_scores: scores_vec(&scores, &ids),
+            final_scores: scores_vec(game.scores(), &ids),
             winners: winners.clone(),
         },
     )
     .await;
 
-    // Post-game completion write: the game result and its timeless replay
-    // payload, in one write. Skipped cleanly when no database is configured.
+    // Post-game completion write: the game result and its timeless replay payload,
+    // in one write, fed straight off the engine's analytics + action log. Skipped
+    // cleanly when no database is configured.
     persist_completed_game(
         pool,
         config,
         game_id,
         started_at,
         &players,
-        &scores,
-        &cards_played,
-        &round_logs,
-        &action_log,
+        game.scores(),
+        game.cards_played(),
+        game.round_logs(),
+        game.action_log(),
         seed,
     )
     .await;
@@ -679,6 +578,14 @@ pub async fn run_game(
         gone,
         winners,
     }
+}
+
+/// Map the engine's per-player pot-contribution counts onto the public wire signal.
+fn to_contributions(counts: Vec<(PlayerId, u8)>) -> Vec<Contribution> {
+    counts
+        .into_iter()
+        .map(|(player, count)| Contribution { player, count })
+        .collect()
 }
 
 /// The post-game completion write (the only DB write the server performs).
@@ -732,21 +639,6 @@ async fn persist_completed_game(
     }
 }
 
-/// Per-player contributed-card counts in the current pot (the public signal).
-fn contributions(round: &Round, ids: &[PlayerId]) -> Vec<Contribution> {
-    ids.iter()
-        .map(|id| Contribution {
-            player: *id,
-            count: round
-                .pot()
-                .cards
-                .iter()
-                .filter(|pc| pc.player == *id)
-                .count() as u8,
-        })
-        .collect()
-}
-
 /// Collect one wave's hidden commits until the timer expires or every active
 /// player has locked in. Heartbeats and emotes are serviced live; a disconnect
 /// (`Leave`) auto-passes the player for the rest of the game.
@@ -754,7 +646,7 @@ async fn collect_wave(
     rx: &mut mpsc::Receiver<GroupCommand>,
     players: &mut [SeatInfo],
     acting: &[PlayerId],
-    hands: &mut HashMap<PlayerId, Hand>,
+    hands: &HashMap<PlayerId, Hand>,
     gone: &mut HashSet<PlayerId>,
     palette: &HashSet<u16>,
     timer_ms: u32,
@@ -902,28 +794,10 @@ async fn collect_wave(
         }
     }
 
-    let mut committed = Vec::new();
-    let mut passers = Vec::new();
-    let mut emptied = Vec::new();
-    for player in acting {
-        match choice.get(player) {
-            Some(WaveChoice::Play(card_id)) => {
-                if let Some(card) = hands.get_mut(player).and_then(|h| h.take(*card_id)) {
-                    if hands[player].is_empty() {
-                        emptied.push(*player);
-                    }
-                    committed.push((*player, card));
-                } else {
-                    passers.push(*player);
-                }
-            }
-            _ => passers.push(*player),
-        }
-    }
+    // The collected intents are handed to the engine, which validates them against
+    // hands again, removes the committed cards, and detects emptied hands.
     WaveCollection {
-        committed,
-        passers,
-        emptied,
+        choices: choice,
         reconnected,
         timed_out,
     }
@@ -999,17 +873,20 @@ mod tests {
             &mut cmd_rx,
             &mut players,
             &[id1],
-            &mut hands,
+            &hands,
             &mut gone,
             &palette,
             5_000,
         )
         .await;
 
-        // No state change: nothing committed, the player falls through to a pass,
-        // and the real card stays in hand.
-        assert!(collection.committed.is_empty());
-        assert_eq!(collection.passers, vec![id1]);
+        // No state change: an unheld card records no choice (the engine would treat
+        // the absent choice as a pass), and the real card stays in hand untouched —
+        // collection never mutates a hand.
+        assert!(
+            collection.choices.is_empty(),
+            "an unheld card must not record a choice"
+        );
         assert!(hands[&id1].contains(CardId(10)));
         assert_eq!(hands[&id1].len(), 1);
 
@@ -1057,16 +934,16 @@ mod tests {
             &mut cmd_rx,
             &mut players,
             &[id1],
-            &mut hands,
+            &hands,
             &mut gone,
             &palette,
             5_000,
         )
         .await;
 
-        // id2 takes no part in this wave's bookkeeping; its hand is untouched.
-        assert!(collection.committed.iter().all(|(p, _)| *p != id2));
-        assert!(!collection.passers.contains(&id2));
+        // id2 takes no part in this wave's bookkeeping: its locked-out action records
+        // no choice, and its hand is untouched.
+        assert!(!collection.choices.contains_key(&id2));
         assert!(hands[&id2].contains(CardId(20)));
 
         let msgs = drain(&mut rx2);
@@ -1117,7 +994,7 @@ mod tests {
             &mut cmd_rx,
             &mut players,
             &[id1],
-            &mut hands,
+            &hands,
             &mut gone,
             &palette,
             5_000,
@@ -1143,12 +1020,11 @@ mod tests {
         );
     }
 
-    // ---- F2: give the shipping (async) path determinism + stress coverage ----
+    // ---- F2: the shipping (async) path is the tested engine path ----
     //
-    // Full convergence onto the sync engine core (a network-backed `Decider`) is
-    // deferred to a follow-up (see the proposal/design risk plan); these tests give
-    // the async `run_game` the same determinism + no-panic stress guarantees the
-    // sync runner is tested for (`runner.rs`).
+    // `run_game` drives the same orchestration core as `Game::play_out`, so a fixed
+    // seed produces identical final scores (the parity test). A no-panic stress test
+    // over many seeds keeps the live loop honest.
 
     /// A scripted in-process client: plays its hand in order, one card per wave,
     /// locking in so waves close as soon as every acting player has. Returns the
@@ -1248,17 +1124,59 @@ mod tests {
         scores[0].clone()
     }
 
+    /// The sync-engine analogue of the scripted `client_loop`: play the first card
+    /// of the live hand, else pass. `client_loop` walks the hand it last received in
+    /// order — and because a recall re-sends `YourHand` (D3), that is exactly the
+    /// live hand `Game` hands the decider each wave — so the two drive identical plays.
+    fn play_first_else_pass() -> impl FnMut(PlayerId, &Hand) -> WaveChoice {
+        |_player, hand| match hand.views().first() {
+            Some(first) => WaveChoice::Play(first.id),
+            None => WaveChoice::Pass,
+        }
+    }
+
+    /// The four sync-runner players, mirroring `play_async_game`'s seat ids/colours
+    /// so `color_owner` and scoring line up across the two paths.
+    fn sync_players() -> Vec<crate::game::state::Player> {
+        Color::PLAYER_COLORS
+            .into_iter()
+            .enumerate()
+            .map(|(i, color)| crate::game::state::Player {
+                id: PlayerId(Uuid::from_u128(i as u128 + 1)),
+                color,
+                display_name: format!("p{i}"),
+            })
+            .collect()
+    }
+
     #[tokio::test]
-    async fn async_path_is_deterministic_for_a_fixed_seed() {
-        // The shipping loop must be reproducible under a fixed seed, matching the
-        // determinism guarantee the sync runner is tested for.
-        let a = tokio::time::timeout(Duration::from_secs(20), play_async_game(0xA11CE, 1_000))
-            .await
-            .expect("async game completed");
-        let b = tokio::time::timeout(Duration::from_secs(20), play_async_game(0xA11CE, 1_000))
-            .await
-            .expect("async game completed");
-        assert_eq!(a, b);
+    async fn async_path_matches_sync_runner_for_fixed_seeds() {
+        use crate::game::runner::Game;
+
+        // The single orchestration core means the shipping (async) loop and the tested
+        // sync engine must agree on the final scores for any fixed seed (F2). This is
+        // the safety net for the convergence: a real divergence fails loudly here.
+        let cfg = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
+        let registry = cfg.build_registry().unwrap();
+
+        for seed in [0xC0FFEE_u64, 0x1234, 7, 42, 0xBEEF] {
+            let async_scores: HashMap<PlayerId, i32> =
+                tokio::time::timeout(Duration::from_secs(30), play_async_game(seed, 2_000))
+                    .await
+                    .unwrap_or_else(|_| panic!("async game for seed {seed:#x} completed"))
+                    .into_iter()
+                    .map(|s| (s.player, s.score))
+                    .collect();
+
+            let mut game = Game::new(&registry, &cfg, sync_players(), seed);
+            let mut decider = play_first_else_pass();
+            let sync_scores = game.play_out(&mut decider).scores;
+
+            assert_eq!(
+                async_scores, sync_scores,
+                "the async loop diverged from the tested sync engine for seed {seed:#x}"
+            );
+        }
     }
 
     #[tokio::test]

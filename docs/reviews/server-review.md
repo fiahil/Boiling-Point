@@ -15,9 +15,9 @@ are hypotheses, not settled values.
 > **Re-review status (2026-06-02; updated 2026-06-03).** Findings are tracked as
 > OpenSpec changes rather than loose advice:
 > - **F1, F3, F5 → resolved** by the **`review-remediation`** change (landed
->   2026-06-03); **F2 → partially addressed** (async-path determinism/stress coverage
->   added; full loop convergence deferred to a follow-up). See each finding's Status
->   note below.
+>   2026-06-03); **F2 → resolved** by the **`converge-game-loops`** change (landed
+>   2026-06-04): `run_game` now drives the tested `Game` engine, and a sync==async
+>   parity test pins their final scores together. See each finding's Status note below.
 > - **F4 (persistence not wired)** is **RESOLVED** by the **`persistence-and-replays`**
 >   change (2026-06-03). That change replaced the "just wire the existing module"
 >   remedy with a reworked design (match results + timeless replays + runtime
@@ -276,20 +276,24 @@ is benign there.)
 
 ### F2 — The async loop reimplements orchestration the tested engine already has *(robustness, medium)*
 
-> **Status (partially addressed 2026-06-03 by `review-remediation`).** The shipping
-> (async) `run_game` now carries its own determinism + no-panic stress coverage in
-> `session::tests` (`async_path_is_deterministic_for_a_fixed_seed`,
-> `async_path_completes_across_many_seeds_without_panicking`), giving the path that
-> actually ships parity with the sync runner's determinism/stress guarantees. **Full
-> convergence onto a single orchestration core** (a network-backed `Decider` driving
-> `Game`) is **deferred to the follow-up `converge-game-loops` change** — it is the
-> riskiest edit (it touches the live loop), and the `review-remediation` design's Open
-> Question + Risk plan explicitly sanction shipping the async-path-tests fallback and
-> splitting convergence out. The drift this finding warns about is also now documented
-> concretely (and is task 1.x of the follow-up): the two
-> paths derive RNG seeds differently (`seed` vs `seed ^ 0xBEEF_F00D`; deathmatch
-> `^0xD3A7_4A7C` vs `^0xD3A7`) and the async path doesn't surface Recall'd cards to the
-> client — both to be reconciled when the loops are unified.
+> **Status (resolved 2026-06-04 by `converge-game-loops`).** There is now a **single
+> orchestration core**: `Game` (`game/runner.rs`) owns the hands, deck, scores,
+> modifiers, RNG, and round bookkeeping and exposes the round/wave/scoring/deathmatch
+> steps (`begin_round` / `resolve_wave` / `settle_round` / `leaders` / `break_tie`).
+> Both `Game::play_out` (sync) and `session.rs::run_game` (async, shipping) drive those
+> same steps — `run_game` no longer re-derives the flow; it adds only the wire I/O
+> (collect commits within the wave timer, broadcast the public outcome) and the
+> observability spans. The two documented divergences are reconciled: the seeds are
+> aligned on the sync runner's derivation (`rng = seed`, deathmatch `seed ^ 0xD3A7_4A7C`),
+> and a recall now re-sends the owner a private `YourHand` (D3). A
+> `session::tests::async_path_matches_sync_runner_for_fixed_seeds` test asserts the async
+> path produces the **same final scores as `Game::play_out`** across several seeds (the
+> safety net that would fire loudly on any future drift), and
+> `async_path_completes_across_many_seeds_without_panicking` keeps the no-panic stress
+> coverage. The analytics the async path used to drop (`cards_played`, per-round
+> `RoundLog`) are now populated by the shared core, so the converged path can feed
+> `to_game_result`. No observable wire-behavior change (the transport integration tests
+> stay green).
 
 There are **two implementations of the round/wave/scoring/deathmatch flow**:
 `game/runner.rs` (`Game::play_out`, synchronous) and `session.rs::run_game`
