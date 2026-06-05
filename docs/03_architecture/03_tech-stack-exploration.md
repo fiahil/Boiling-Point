@@ -6,7 +6,7 @@
 > crate. **Flutter/Flame is deferred** (revisit for a premium native app); **Macroquad and
 > Godot are rejected.** See change [`adopt-pixi-client`](../../openspec/changes/adopt-pixi-client/)
 > and `CLAUDE.md`. The exploration below is retained as the historical record that led here
-> (direction was prototyped and screenshot-verified in [`docs/ui-explorations/`](../ui-explorations/)).
+> (the candidate directions were prototyped and screenshot-verified during that change).
 
 ## Design Constraints
 
@@ -190,7 +190,7 @@ The real fork:
 
 **Client:** decided — **PixiJS (web + mobile hybrid via Capacitor)** (change
 `adopt-pixi-client`, constitution v1.1.0). After prototyping all three short-listed
-options plus a DOM/CSS sketch in [`docs/ui-explorations/`](../ui-explorations/), PixiJS won
+options plus a DOM/CSS sketch, PixiJS won
 on web-first reach + animation ceiling + agent-writability + a one-codebase hybrid mobile
 path, with its two weaknesses mitigated: shared-type drift via codegen from the Rust
 `protocol` crate, and canvas text/a11y via a DOM overlay.

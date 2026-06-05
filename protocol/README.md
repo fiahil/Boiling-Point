@@ -32,5 +32,5 @@ without leaking anything.
 cargo test -p boiling-point-protocol
 ```
 
-See [`docs/architecture/overview.md`](../docs/architecture/overview.md) for how this
-crate sits at the center of the system.
+See [`docs/03_architecture/01_overview.md`](../docs/03_architecture/01_overview.md) for
+how this crate sits at the center of the system.

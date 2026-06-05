@@ -16,7 +16,7 @@ truth (constitution Principle I).
 | Content | `content/*`, `config.rs`, `content.toml` | Cards/effects/modifiers config, validated at startup. |
 | Observability | `observability.rs`, `observability/{lifecycle,span_schema}.rs` | JSON logs, OTEL span bridge, Prometheus metrics, in-process span feed for admin. |
 | Admin | `admin/{api,auth,projection}.rs` | Operator-only read/control API on an **isolated** port — never reachable from a player connection. |
-| Persistence | `persistence.rs`, `migrations/` | Postgres schema + writers. **Built but not wired at runtime** (review finding F4); being reworked in the `persistence-and-replays` change. |
+| Persistence | `persistence.rs`, `migrations/` | Post-game Postgres writes (match results + a timeless replay in one transaction), wired on the live path. **Optional** — without `DATABASE_URL` the server runs fully in memory and persistence is a clean no-op. |
 
 ## Run
 
@@ -47,5 +47,5 @@ cargo test -p boiling-point-server --lib        # unit tests only
 `tests/admin_e2e.rs` exercises the admin API end-to-end; `tests/lifecycle_log_level.rs`
 guards that the admin span feed stays unsampled regardless of `RUST_LOG`.
 
-See [`docs/architecture/overview.md`](../docs/architecture/overview.md) and
-[`docs/reviews/server-review.md`](../docs/reviews/server-review.md).
+See [`docs/03_architecture/01_overview.md`](../docs/03_architecture/01_overview.md) and
+[`docs/04_reviews/02_server-review.md`](../docs/04_reviews/02_server-review.md).

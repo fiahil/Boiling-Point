@@ -63,7 +63,7 @@ hybrid (Capacitor) app from one codebase. The client is a pure renderer of serve
 names, scores); the TypeScript wire types are generated from the Rust `protocol` crate so
 the client cannot drift. Selected in change `adopt-pixi-client`
 (`openspec/changes/adopt-pixi-client/`; full rationale and the rejected/deferred
-alternatives in `docs/architecture/tech-stack-exploration.md`).
+alternatives in `docs/03_architecture/03_tech-stack-exploration.md`).
 
 | Candidate | Core bet | Outcome |
 |---|---|---|

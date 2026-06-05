@@ -5,8 +5,8 @@ playtested by one person. It connects over the **same public WebSocket protocol 
 client uses** (`protocol/`) and receives only player-permitted information. See the
 shipped proposal/research/specs/design in
 `openspec/changes/archive/2026-06-02-agent-player-harness/`, the review in
-[`docs/reviews/agent-harness-review.md`](../docs/reviews/agent-harness-review.md), and
-the project [docs hub](../docs/).
+[`docs/04_reviews/04_agent-harness-review.md`](../docs/04_reviews/04_agent-harness-review.md),
+and the project [docs hub](../docs/).
 
 This is a **TypeScript/Node package** (not a cargo crate) so it can use the **Claude Agent
 SDK** and bill against a Claude subscription — see design D1/D2.

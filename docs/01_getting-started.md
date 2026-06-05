@@ -6,8 +6,9 @@
   terminal client, and bot harness.
 - **Node.js ≥ 22** — only for the `agent-harness/` (Claude-as-player). Not needed
   to build or run the Rust workspace.
-- **PostgreSQL** — *not required for v1 play.* Persistence is being reworked (see
-  the `persistence-and-replays` change); the server runs fully in memory today.
+- **PostgreSQL** — *optional.* With `DATABASE_URL` set, the server persists match
+  results and replays post-game; without it, it runs fully in memory (persistence is a
+  clean no-op). Not needed to build or play.
 - A terminal that renders Unicode + 256 colors for the TUI client.
 
 ## Build, lint, test
@@ -67,10 +68,10 @@ Game balance (deck, thresholds, modifiers, effects) lives in
 [`server/content.toml`](../server/content.toml) and is validated at startup — an
 inconsistent config fails the boot, not a game. Load a custom config with
 `--config <PATH>`. The numbers are hypotheses until playtested; the bot harness is
-the tool for tuning them (see [game-design.md §16](game-design.md)).
+the tool for tuning them (see [02_game-design.md §16](02_game-design.md)).
 
 ## Where to go next
 
-- [architecture/overview.md](architecture/overview.md) — how the crates fit together.
-- [game-design.md](game-design.md) — the rules and the design rationale.
+- [03_architecture/01_overview.md](03_architecture/01_overview.md) — how the crates fit together.
+- [02_game-design.md](02_game-design.md) — the rules and the design rationale.
 - [`openspec/`](../openspec/) — how changes are proposed and tracked.

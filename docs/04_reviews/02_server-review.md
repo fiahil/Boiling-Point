@@ -4,7 +4,7 @@ A thorough review of the Rust server (`server/`) and its protocol crate
 (`protocol/`), written as both an architecture reference and an evaluation. It
 covers how the server is wired, walks each subsystem, and records findings,
 risks, and prioritized recommendations against the
-[constitution](../../CLAUDE.md) and the [game design](../game-design.md).
+[constitution](../../CLAUDE.md) and the [game design](../02_game-design.md).
 
 Originally reviewed against `main` @ `27cc398` (2026-05-31); re-reviewed
 2026-06-02, then **refreshed 2026-06-05** after the `group-model`,
