@@ -49,10 +49,16 @@ function entryMessage(cfg: EntryConfig): ClientMessage {
   }
 }
 
+/** Keep-alive cadence. The server drops a connection silent past its idle timeout
+ *  (90s by default); an agent that has passed/locked out for a round sends nothing
+ *  otherwise, so a periodic Heartbeat keeps the seat alive. Well under the window. */
+const HEARTBEAT_MS = 20_000;
+
 export class Connection {
   private ws: WebSocket | undefined;
   private handlers: MessageHandler[] = [];
   private closeHandlers: Array<() => void> = [];
+  private heartbeat: ReturnType<typeof setInterval> | undefined;
 
   onClose(handler: () => void): void {
     this.closeHandlers.push(handler);
@@ -79,7 +85,12 @@ export class Connection {
 
       let joined = false;
 
-      ws.on("open", () => this.send(entryMessage(cfg)));
+      ws.on("open", () => {
+        this.send(entryMessage(cfg));
+        // Keep-alive: the server drops connections that go silent (e.g. an agent
+        // locked out for the round), so heartbeat until the socket closes.
+        this.heartbeat = setInterval(() => this.send({ type: "Heartbeat" }), HEARTBEAT_MS);
+      });
 
       ws.on("message", (data: WebSocket.RawData, isBinary: boolean) => {
         let msg: ServerMessage;
@@ -114,9 +125,11 @@ export class Connection {
       });
 
       ws.on("error", (err: Error) => {
+        this.stopHeartbeat();
         if (!joined) reject(err);
       });
       ws.on("close", () => {
+        this.stopHeartbeat();
         if (!joined) reject(new Error("connection closed before join"));
         else for (const h of this.closeHandlers) h();
       });
@@ -131,7 +144,15 @@ export class Connection {
   }
 
   close(): void {
+    this.stopHeartbeat();
     this.ws?.close();
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat !== undefined) {
+      clearInterval(this.heartbeat);
+      this.heartbeat = undefined;
+    }
   }
 }
 

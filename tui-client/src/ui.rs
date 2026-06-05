@@ -358,12 +358,17 @@ fn playing(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         ""
     };
+    // The wave countdown gets a large block-digit clock on the right of the header
+    // (flashes red in the final 10s); the rest of the header keeps the left.
+    let [head_left, clock_area] =
+        Layout::horizontal([Constraint::Min(20), Constraint::Length(CLOCK_W)]).areas(head);
     header(
         frame,
-        head,
+        head_left,
         app,
         &format!("{dm}wave {}{fw}", app.vm.wave_number),
     );
+    big_clock(frame, clock_area, app);
     opponents(frame, opp, app);
     cauldron(frame, cauldron_area, app);
     self_line(frame, me_area, app);
@@ -440,16 +445,27 @@ fn depile(frame: &mut Frame, area: Rect, app: &App) {
 
     let mut lines = Vec::new();
     for (i, e) in d.reveals.iter().take(shown).enumerate() {
-        let owner = app
-            .vm
-            .player(e.player)
-            .map(|p| palette::name(p.color))
-            .unwrap_or("?");
+        // Attribute each card to the player by name, painted (and sigil-marked) in
+        // their colour so the name reads alongside the colour.
+        let (sigil, name, owner_color) = match app.vm.player(e.player) {
+            Some(p) => (
+                palette::sigil(p.color),
+                p.name.as_str(),
+                palette::style(p.color),
+            ),
+            None => ("·", "?", Color::White),
+        };
+        let name: String = name.chars().take(10).collect();
         let crossed = d.exploded && d.crossing_index == Some(i);
-        let mut spans = vec![Span::styled(
-            format!("{owner:<9}"),
-            Style::default().fg(card_color(&e.card)),
-        )];
+        let mut spans = vec![
+            Span::styled(
+                format!("{sigil} "),
+                Style::default()
+                    .fg(owner_color)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("{name:<10} "), Style::default().fg(owner_color)),
+        ];
         spans.extend(card_spans(&e.card));
         spans.push(Span::raw(format!("   (vol→{})", e.running_volatility)));
         if crossed {
@@ -730,20 +746,73 @@ fn self_line(frame: &mut Frame, area: Rect, app: &App) {
             if app.locked_in { " · locked in" } else { "" }
         ),
     };
-    let timer = app
-        .countdown_ms
-        .map(fmt_ms)
-        .unwrap_or_else(|| "--:--".into());
+    // The countdown lives in the big clock in the header now (see `big_clock`).
     let line = Line::from(vec![
         Span::styled(
             format!(" {letter} {name}  "),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!("score {score}    ")),
-        Span::styled(format!("⏱ {timer}    "), Style::default().fg(Color::Yellow)),
         Span::styled(committed, Style::default().fg(Color::Cyan)),
     ]);
     frame.render_widget(Paragraph::new(line), area);
+}
+
+/// Width reserved on the right of the header for the big block-digit clock
+/// ("M:SS" is four 3-wide glyphs + gaps, right-aligned).
+const CLOCK_W: u16 = 18;
+
+/// One character of the 3-row LCD clock font (digits, the colon, and a blank).
+fn lcd_glyph(c: char) -> [&'static str; 3] {
+    match c {
+        '0' => [" _ ", "| |", "|_|"],
+        '1' => ["   ", "  |", "  |"],
+        '2' => [" _ ", " _|", "|_ "],
+        '3' => [" _ ", " _|", " _|"],
+        '4' => ["   ", "|_|", "  |"],
+        '5' => [" _ ", "|_ ", " _|"],
+        '6' => [" _ ", "|_ ", "|_|"],
+        '7' => [" _ ", "  |", "  |"],
+        '8' => [" _ ", "|_|", "|_|"],
+        '9' => [" _ ", "|_|", " _|"],
+        ':' => ["   ", " : ", "   "],
+        _ => ["   ", "   ", "   "],
+    }
+}
+
+/// Render the wave countdown as a large 3-row block-digit clock, right-aligned in
+/// `area`. Calm amber normally; in the final 10 seconds it flashes red (blinking
+/// off the free-running animation clock so it pulses without extra state).
+fn big_clock(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(ms) = app.countdown_ms else {
+        return;
+    };
+    let text = fmt_ms(ms);
+    let mut rows = [String::new(), String::new(), String::new()];
+    for ch in text.chars() {
+        let g = lcd_glyph(ch);
+        for (r, row) in rows.iter_mut().enumerate() {
+            row.push_str(g[r]);
+            row.push(' ');
+        }
+    }
+    let urgent = ms <= 10_000;
+    let blink_on = (app.anim_ms / 350).is_multiple_of(2);
+    let color = if urgent {
+        if blink_on {
+            Color::Rgb(255, 60, 60)
+        } else {
+            Color::Rgb(110, 0, 0)
+        }
+    } else {
+        Color::Rgb(230, 200, 90)
+    };
+    let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let lines: Vec<Line> = rows
+        .into_iter()
+        .map(|r| Line::from(Span::styled(r, style)))
+        .collect();
+    frame.render_widget(Paragraph::new(lines).alignment(Alignment::Right), area);
 }
 
 /// Card box geometry. Wider than a bare token so the effect's *name* (not just a

@@ -35,6 +35,12 @@ use std::io::Stdout;
 
 /// Frame/tick cadence (~30 fps): drives the countdown, depile, and toasts.
 const TICK_MS: u32 = 33;
+/// How often to send a keep-alive Heartbeat. The server drops a connection that
+/// is silent past its idle timeout (90 s by default), and a player who has
+/// passed/locked out — or is just watching a long wave — sends nothing
+/// otherwise, so a periodic heartbeat keeps the seat alive. Well under the
+/// server window to tolerate jitter.
+const HEARTBEAT_MS: u64 = 20_000;
 /// Spacing between scripted messages in replay/mock modes.
 const FEED_MS: u64 = 700;
 /// Server WebSocket URL used when no transport flag is given. Connecting to a
@@ -213,6 +219,7 @@ async fn event_loop(
 ) -> Result<(), Box<dyn Error>> {
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(TICK_MS as u64));
+    let mut heartbeat = tokio::time::interval(Duration::from_millis(HEARTBEAT_MS));
     let mut server_done = false;
 
     loop {
@@ -249,6 +256,14 @@ async fn event_loop(
                 }
             },
             _ = tick.tick() => app.on_tick(TICK_MS),
+            _ = heartbeat.tick(), if !server_done => {
+                // Keep-alive so the server's idle timeout never drops a quiet seat
+                // (passed/locked-out or just watching). Sent straight to the socket,
+                // not through on_key, so it stays out of the debug message log.
+                if let Some(tx) = &intent_tx {
+                    let _ = tx.send(ClientMessage::Heartbeat).await;
+                }
+            }
         }
     }
     Ok(())

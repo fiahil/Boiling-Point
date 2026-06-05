@@ -83,7 +83,7 @@ fn depile_safe_hides_boiling_point() {
     app.on_tick(5000); // reveal all cards
     let s = screen(&app);
     assert_has(&s, "boiling point stays hidden");
-    assert_has(&s, "Ruby"); // an owner attribution
+    assert_has(&s, "mistfox"); // an owner attribution (player name, in their colour)
     assert_lacks(&s, "bp "); // no boiling-point value on a safe brew
 }
 
