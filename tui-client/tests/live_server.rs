@@ -103,6 +103,10 @@ async fn play_seat(
     while let Some(msg) = recv(&mut ws).await {
         if capture {
             app.on_server(&msg);
+            // Pump the client's animation clock as the real event loop does, so a
+            // Depile-opened resolution gate animates and drains instead of holding
+            // the buffer (which includes the next round and the final GameOver).
+            app.on_tick(50);
         }
         match &msg {
             ServerMessage::GroupJoined { group_code, .. } => {
@@ -119,6 +123,19 @@ async fn play_seat(
             }
             ServerMessage::GameOver { .. } => break,
             _ => {}
+        }
+    }
+    if capture {
+        // Drain any resolutions still in flight after the last message: each
+        // round's end is buffered behind its depile, and the final round's scoring
+        // holds the buffered GameOver until its dwell elapses. The depile waits for
+        // a keypress, so press through it as a player would. Pump enough virtual
+        // time to play every buffered round to game over (no real sleeping).
+        for _ in 0..2000 {
+            app.on_tick(50);
+            if render(&app).contains("the depile") {
+                app.advance_resolution();
+            }
         }
     }
     capture.then(|| render(&app))

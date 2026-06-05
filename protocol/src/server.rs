@@ -56,7 +56,7 @@ pub struct Contribution {
     pub count: u8,
 }
 
-/// One revealed card in a depile, in reverse play order.
+/// One revealed card in a depile, in play order (first-added first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DepileEntry {
     /// Who played the card.
@@ -184,12 +184,12 @@ pub enum ServerMessage {
         /// The exact boiling point.
         boiling_point: u8,
     },
-    /// End-of-round reverse-order reveal of the whole pot. (broadcast)
+    /// End-of-round play-order reveal of the whole pot. (broadcast)
     ///
     /// `boiling_point` is `Some` only when the round exploded; on a safe brew it
     /// stays hidden.
     Depile {
-        /// Revealed cards, last-added first.
+        /// Revealed cards, first-added first (play order); `running_volatility` rises.
         reveals: Vec<DepileEntry>,
         /// Whether the round exploded.
         exploded: bool,

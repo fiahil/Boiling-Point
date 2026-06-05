@@ -92,7 +92,7 @@ What flows between a client and the server, from connect to game over:
     │  │  │   CommitCard|CommitPass|LockIn ──▶ │  validate, apply │   │
     │  │  │   WaveResolved {who played/passed} │                  │   │
     │  │  └────────────────────────────────────────────────────────┘   │
-    │  │   Depile {cards, crossing, bp?}      │  reverse-order reveal │
+    │  │   Depile {cards, crossing, bp?}      │  play-order reveal    │
     │  │   RoundScored | Explosion            │                       │
     │  └───────────────────────────────────────────────────────────────┘
     │            GameOver {standings, winners}│

@@ -109,11 +109,11 @@ pub enum ReplayEvent {
         /// Per-player contributed-card counts after this wave.
         contributions: Vec<Contribution>,
     },
-    /// End-of-round reverse-order reveal of the pot.
+    /// End-of-round play-order reveal of the pot.
     Depile {
         /// 1-based round number.
         round_number: u8,
-        /// Revealed cards, last-added first.
+        /// Revealed cards, first-added first (play order).
         reveals: Vec<DepileEntry>,
         /// Whether the round exploded.
         exploded: bool,
@@ -318,8 +318,8 @@ pub enum RoundScoring {
 
 /// What settling a round produced, for a networked presenter.
 pub struct RoundSettlement {
-    /// The end-of-round depile (reverse play order; the presenter discloses the
-    /// boiling point only on an explosion).
+    /// The end-of-round depile (play order, first-added first; the presenter
+    /// discloses the boiling point only on an explosion).
     pub depile: DepileData,
     /// The round's scoring outcome.
     pub scoring: RoundScoring,

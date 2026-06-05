@@ -6,7 +6,7 @@
 //
 // EDGE MODULE: depends on the Agent SDK runtime.
 
-import { query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { createBpToolServer } from "./tools.ts";
 import { SERVER_NAME } from "./tool-names.ts";
 
@@ -19,6 +19,23 @@ export interface AgentSessionConfig {
 
 function userMessage(text: string): SDKUserMessage {
   return { type: "user", message: { role: "user", content: text }, parent_tool_use_id: null };
+}
+
+/** Echo the agent's narration, extended thinking, and tool calls on stderr so Claude's
+ *  reasoning is visible while it plays — set BP_QUIET_AGENT=1 to silence it. */
+function logAgentOutput(message: SDKMessage): void {
+  if (message.type !== "assistant" || process.env.BP_QUIET_AGENT) return;
+  for (const block of message.message.content) {
+    if (block.type === "text") {
+      const text = block.text.trim();
+      if (text) console.error(`[claude] ${text}`);
+    } else if (block.type === "thinking") {
+      const thinking = block.thinking.trim();
+      if (thinking) console.error(`[claude:thinking] ${thinking}`);
+    } else if (block.type === "tool_use") {
+      console.error(`[claude:tool] ${block.name} ${JSON.stringify(block.input)}`);
+    }
+  }
 }
 
 /** Keeps one Agent SDK query() alive for the whole game; prompt() pushes one wave's turn. */
@@ -59,12 +76,14 @@ export class AgentSession {
       },
     });
 
-    // Drain the output in the background. Decisions are captured by the MCP tool handlers
-    // (deps.decideMove); we don't need the assistant text, just to keep the stream flowing.
+    // Drain the output in the background. The move itself is captured by the MCP tool
+    // handlers (deps.decideMove), but surface the agent's narration + tool calls on stderr
+    // so the harness shows what Claude is reasoning, not just the final decision.
     void (async () => {
       try {
         for await (const message of stream) {
           if (process.env.BP_DEBUG) console.error(`[session] <- ${message.type}`);
+          logAgentOutput(message);
           if (self.closed) break;
         }
         if (process.env.BP_DEBUG) console.error("[session] stream ENDED");

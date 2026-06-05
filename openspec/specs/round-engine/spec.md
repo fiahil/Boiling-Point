@@ -98,12 +98,12 @@ The server SHALL enforce, on every message, the information each player is permi
 
 ### Requirement: Depile After Every Round
 
-After every round — explosion or safe brew — the server SHALL reveal all cauldron cards one by one in reverse order (last-added first), each flip disclosing color, points, volatility, any effect, and which player played it. On an explosion the depile MUST mark the card at which the running volatility crossed the boiling point.
+After every round — explosion or safe brew — the server SHALL reveal all cauldron cards one by one in play order (first-added first), each flip disclosing color, points, volatility, any effect, and which player played it, with the running volatility climbing as cards land. On an explosion the depile MUST mark the card at which the running volatility crossed the boiling point.
 
-#### Scenario: Full reverse-order reveal
+#### Scenario: Full play-order reveal
 
 - **WHEN** a round ends
-- **THEN** the server emits a depile revealing every cauldron card from last-added to first-added, with full attributes and the contributing player for each
+- **THEN** the server emits a depile revealing every cauldron card from first-added to last-added, with full attributes and the contributing player for each, and a running volatility that rises with each card
 
 #### Scenario: Explosion crossing point is marked
 

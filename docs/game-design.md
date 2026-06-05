@@ -446,13 +446,14 @@ you shield matters.)
 ### After Every Round — The Depile (Always Reveal)
 
 After **every** round, success *or* explosion, all cards in the pot are revealed
-one by one in **reverse order** (last-added first). Each flip shows color,
-points, volatility, any effect, **and which player played it**.
+one by one in **play order** (first-added first). Each flip shows color,
+points, volatility, any effect, **and which player played it**, while the running
+volatility climbs toward the boiling point like a lit fuse.
 
 ```
-  …last card……→ flip → "That was YOUR card?"
+  …first card…→ flip → "…you started the whole mess."
   …            → flip → "You played Red — and you're Blue. Traitor."
-  …first card…→ flip → "…and you started the whole mess."
+  …last card……→ flip → "…and THAT was the one that tipped it over. Boom."
 ```
 
 The depile is the game's dramatic spectacle and its sole information reveal. It
@@ -699,7 +700,7 @@ playtests should tune. None is final.
 | Modifiers | Residue, Thin Ice, Bountiful Brew, Deep Cauldron, Double Stakes, Reversal — single-effect, compose cleanly, contradictions cancel |
 | Effects | Peek, Dampen, Volatile Surge, Shield, Expose, Copycat, Recall, Double Down — resolve immediately, fixed order |
 | Shield | Rare + forfeits all scoring on safe resolution (a bet on the boom) |
-| Info reveal | Always reveal cards — dramatic reverse-order depile every round; card counting rewarded. Exact boiling point revealed **on explosion only** (hidden on a safe brew) |
+| Info reveal | Always reveal cards — dramatic play-order depile every round (volatility climbs to the boom); card counting rewarded. Exact boiling point revealed **on explosion only** (hidden on a safe brew) |
 | Tiebreaker | Deathmatch — pure elimination, no modifiers, forced 1 card/wave, most-volatility = Detonator = out, co-champions if no boom; effects allowed (Shield god-like) |
 | Deal / hand | Refill-to-5 floor at round start (never discards, no cap); unplayed cards carry over; deck reshuffles from discard if it empties |
 | Comms | Preset emotes only (non-binding); no quick-phrases, no free-text chat |

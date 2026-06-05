@@ -80,12 +80,13 @@ pub fn group_joined() -> ServerMessage {
 
 /// A safe-brew depile of three cards (no explosion).
 pub fn depile_safe() -> ServerMessage {
+    // Play order (first-added first): running_volatility rises 2 → 3 → 5.
     ServerMessage::Depile {
         reveals: vec![
             DepileEntry {
                 player: pid(0),
                 card: card(Color::Ruby, 2, 1, None),
-                running_volatility: 5,
+                running_volatility: 2,
             },
             DepileEntry {
                 player: pid(1),
@@ -95,7 +96,7 @@ pub fn depile_safe() -> ServerMessage {
             DepileEntry {
                 player: pid(0),
                 card: card(Color::Ruby, 2, 1, None),
-                running_volatility: 2,
+                running_volatility: 5,
             },
         ],
         exploded: false,
@@ -105,13 +106,15 @@ pub fn depile_safe() -> ServerMessage {
 }
 
 /// An exploded depile, with the boiling point revealed and the crossing marked.
+/// Play order (first-added first): running_volatility rises 6 → 9 → 12, crossing
+/// the boiling point of 10 at the last card (index 2).
 pub fn depile_boom() -> ServerMessage {
     ServerMessage::Depile {
         reveals: vec![
             DepileEntry {
-                player: pid(2),
-                card: card(Color::Amethyst, 3, 0, Some(EffectKind::VolatileSurge)),
-                running_volatility: 12,
+                player: pid(0),
+                card: card(Color::Ruby, 3, 1, None),
+                running_volatility: 6,
             },
             DepileEntry {
                 player: pid(1),
@@ -119,14 +122,14 @@ pub fn depile_boom() -> ServerMessage {
                 running_volatility: 9,
             },
             DepileEntry {
-                player: pid(0),
-                card: card(Color::Ruby, 3, 1, None),
-                running_volatility: 6,
+                player: pid(2),
+                card: card(Color::Amethyst, 3, 0, Some(EffectKind::VolatileSurge)),
+                running_volatility: 12,
             },
         ],
         exploded: true,
         boiling_point: Some(10),
-        crossing_index: Some(0),
+        crossing_index: Some(2),
     }
 }
 

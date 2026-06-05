@@ -97,7 +97,7 @@ pub(crate) struct StandingsView {
 /// A captured depile for the reveal screen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct DepileView {
-    /// Revealed cards, last-added first.
+    /// Revealed cards, first-added first (play order); `running_volatility` rises.
     pub(crate) reveals: Vec<DepileEntry>,
     /// Whether the round exploded.
     pub(crate) exploded: bool,
@@ -270,7 +270,8 @@ impl ViewModel {
                 boiling_point,
                 crossing_index,
             } => {
-                let total = reveals.first().map(|e| e.running_volatility).unwrap_or(0);
+                // Play order: the final card carries the full cumulative volatility.
+                let total = reveals.last().map(|e| e.running_volatility).unwrap_or(0);
                 self.last_depile = Some(DepileView {
                     reveals: reveals.clone(),
                     exploded: *exploded,

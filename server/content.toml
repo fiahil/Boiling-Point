@@ -16,8 +16,8 @@ wild_min = 0.10
 wild_max = 0.20
 
 [timing]
-wave1_ms = 45000
-wave_ms = 30000
+wave1_ms = 60000
+wave_ms = 45000
 
 [boiling_point]
 min = 8

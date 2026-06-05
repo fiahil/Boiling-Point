@@ -26,7 +26,7 @@ export function allowedToolsFor(difficulty: Difficulty): string[] {
 
 /** Default model per preset — Easy may also lean on a smaller model (design D5). */
 export function modelFor(difficulty: Difficulty): string {
-  return difficulty === "easy" ? "claude-haiku-4-5-20251001" : "claude-opus-4-8";
+  return difficulty === "easy" ? "claude-haiku-4-5-20251001" : "claude-sonnet-4-6";
 }
 
 export function canCountCards(difficulty: Difficulty): boolean {

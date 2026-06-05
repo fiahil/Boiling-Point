@@ -400,9 +400,10 @@ fn depile(frame: &mut Frame, area: Rect, app: &App) {
     };
     let shown = app.depile_shown.min(d.reveals.len());
 
-    // Descending volatility bar: starts at the pot total and drops as cards peel.
+    // Ascending volatility bar: starts at zero and rises as each card lands, up to
+    // the pot total (play order, first-added first).
     let value = if shown == 0 {
-        d.total_volatility
+        0
     } else {
         d.reveals[shown - 1].running_volatility
     };
@@ -433,7 +434,7 @@ fn depile(frame: &mut Frame, area: Rect, app: &App) {
         )));
     }
     frame.render_widget(
-        Paragraph::new(bar_lines).block(bordered("revealing last-played first")),
+        Paragraph::new(bar_lines).block(bordered("revealing first-played first")),
         bar_area,
     );
 
@@ -460,7 +461,16 @@ fn depile(frame: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(spans));
     }
     frame.render_widget(Paragraph::new(lines).block(bordered("the pot")), list_area);
-    hint(frame, foot, "↵/space skip the reveal");
+    let done = shown >= d.reveals.len();
+    hint(
+        frame,
+        foot,
+        if done {
+            "↵/space to continue"
+        } else {
+            "↵/space skip the reveal"
+        },
+    );
 }
 
 fn scoring(frame: &mut Frame, area: Rect, app: &App) {
@@ -516,7 +526,11 @@ fn scoring(frame: &mut Frame, area: Rect, app: &App) {
         }
     }
     frame.render_widget(Paragraph::new(lines).block(bordered("results")), body);
-    hint(frame, foot, "the next round begins automatically");
+    hint(
+        frame,
+        foot,
+        "↵/space continue · next round begins automatically",
+    );
 }
 
 fn game_over(frame: &mut Frame, area: Rect, app: &App) {

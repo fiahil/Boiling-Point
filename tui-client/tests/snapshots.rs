@@ -116,6 +116,64 @@ fn scoring_explosion_after_boom() {
 }
 
 #[test]
+fn resolution_plays_out_before_next_round_clobbers_it() {
+    // Regression: the server sends the end-of-round burst (Depile → Explosion →
+    // …) AND the next round's opening back-to-back. The next round must not
+    // overwrite the resolution before the player has seen it.
+    let mut app = reach_playing();
+    app.on_server(&fixtures::depile_boom());
+    app.on_server(&fixtures::explosion());
+    // Next round arrives immediately (this is what used to clobber the depile and
+    // wipe the captured data via reset_pot).
+    app.on_server(&fixtures::modifier_thin_ice());
+    app.on_server(&fixtures::your_hand());
+    app.on_server(&fixtures::wave_open(2, 1, 30_000));
+
+    // Immediately: still on the depile reveal, not the next wave.
+    let s = screen(&app);
+    assert_has(&s, "the depile");
+    assert_lacks(&s, "your hand"); // not clobbered into the next round's playing screen
+
+    // The cards peel until the crossing card is revealed — and it does NOT
+    // auto-advance: it waits on the depile for the player to continue.
+    let mut saw_crossing = false;
+    for _ in 0..200 {
+        app.on_tick(50);
+        if screen(&app).contains("crossed the boiling point") {
+            saw_crossing = true;
+            break;
+        }
+    }
+    assert!(
+        saw_crossing,
+        "the crossing card must be revealed during the depile"
+    );
+    assert_has(&screen(&app), "the depile"); // still waiting, not auto-advanced
+
+    // Press continue → the explosion result shows (after the boom overlay clears).
+    app.advance_resolution();
+    let mut saw_explosion = false;
+    for _ in 0..40 {
+        app.on_tick(50);
+        if screen(&app).contains("EXPLOSION") {
+            saw_explosion = true;
+            break;
+        }
+    }
+    assert!(
+        saw_explosion,
+        "explosion result must appear after continuing"
+    );
+
+    // After the result's hold, it drains to the buffered next round (now playing).
+    for _ in 0..200 {
+        app.on_tick(50);
+    }
+    let s = screen(&app);
+    assert_has(&s, "your hand");
+}
+
+#[test]
 fn deathmatch_forces_play_no_pass() {
     let mut app = reach_playing();
     app.set_deathmatch(true);
@@ -205,6 +263,15 @@ fn whole_demo_game_reaches_game_over() {
     let mut app = App::new();
     for m in fixtures::demo_game() {
         app.on_server(&m);
+    }
+    // The resolution gate buffers each round's end (and the next round) behind the
+    // depile animation; the real event loop ticks ~30fps to play it. The depile now
+    // waits for a keypress to continue, so press through it as a player would.
+    for _ in 0..400 {
+        app.on_tick(60);
+        if screen(&app).contains("the depile") {
+            app.advance_resolution();
+        }
     }
     let s = screen(&app);
     assert_has(&s, "FINAL STANDINGS");

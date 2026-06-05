@@ -93,6 +93,13 @@ export class AgentRunner {
 
   async start(): Promise<JoinResult> {
     this.conn.onServerMessage((msg) => this.onMessage(msg));
+    // Warm the Agent SDK session NOW, while we connect and wait in the lobby for the
+    // table to fill. The SDK's first query() spins up a cold Claude CLI subprocess
+    // (~20s); doing it lazily at the first wave used to eat into that wave's timer and
+    // make a slow-to-start agent miss its opening commit (the server then auto-passes
+    // it). Pre-spawning here overlaps the cold start with the pre-game wait so the
+    // agent is ready to think the moment wave 1 opens.
+    if (this.cfg.brain === "claude") this.ensureSession();
     return this.conn.connectAndEnter(this.cfg.entry);
   }
 

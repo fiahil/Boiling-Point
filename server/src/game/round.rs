@@ -40,7 +40,7 @@ pub struct DepileItem {
 /// The data needed to render the end-of-round depile.
 #[derive(Debug, Clone)]
 pub struct DepileData {
-    /// Cards last-added-first (reverse play order).
+    /// Cards in play order (first-added first).
     pub reveals: Vec<DepileItem>,
     /// Index into `reveals` of the card that tipped past the boiling point (if exploded).
     pub crossing_index: Option<usize>,
@@ -195,30 +195,26 @@ impl Round {
         WaveReport { outcome, ended }
     }
 
-    /// Build the depile (reverse play order). `running_volatility` and the
-    /// crossing index use cumulative base card volatility, which is what the
-    /// "crack" visual marks.
+    /// Build the depile in play order (first-added first). `running_volatility`
+    /// rises as each card lands; the crossing index uses cumulative base card
+    /// volatility, which is what the "crack" visual marks.
     pub fn depile(&self) -> DepileData {
         let mut running = 0i32;
-        let mut play_order: Vec<DepileItem> = Vec::with_capacity(self.pot.cards.len());
-        let mut crossing_play_order: Option<usize> = None;
+        let mut reveals: Vec<DepileItem> = Vec::with_capacity(self.pot.cards.len());
+        let mut crossing_index: Option<usize> = None;
         for (i, pc) in self.pot.cards.iter().enumerate() {
             running += pc.card.volatility as i32;
-            if crossing_play_order.is_none() && running > self.boiling_point {
-                crossing_play_order = Some(i);
+            if crossing_index.is_none() && running > self.boiling_point {
+                crossing_index = Some(i);
             }
-            play_order.push(DepileItem {
+            reveals.push(DepileItem {
                 player: pc.player,
                 card: pc.card,
                 running_volatility: running,
             });
         }
-        let len = play_order.len();
-        play_order.reverse();
-        // Translate the crossing index into the reversed list.
-        let crossing_index = crossing_play_order.map(|i| len - 1 - i);
         DepileData {
-            reveals: play_order,
+            reveals,
             crossing_index,
             boiling_point: self.boiling_point.max(0) as u8,
         }
@@ -352,8 +348,11 @@ mod tests {
         );
         let d = round.depile();
         assert_eq!(d.reveals.len(), 2);
-        // Reversed: index 0 is the last-added (crossing) card.
-        assert_eq!(d.crossing_index, Some(0));
+        // Play order: index 1 is the 2nd-added card, where cumulative volatility
+        // (2 → 5) first crossed the boiling point of 4.
+        assert_eq!(d.crossing_index, Some(1));
+        assert_eq!(d.reveals[0].running_volatility, 2);
+        assert_eq!(d.reveals[1].running_volatility, 5);
         assert_eq!(d.boiling_point, 4);
     }
 }

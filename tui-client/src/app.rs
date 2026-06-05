@@ -24,6 +24,10 @@ use crate::view::{Phase, ViewModel};
 const MSG_LOG_CAP: usize = 200;
 /// Milliseconds each depile card stays before the next is revealed.
 const DEPILE_STEP_MS: u32 = 600;
+/// How long the scoring/explosion result screen shows before the buffered next
+/// round is drained and play resumes. The boom overlay (`BOOM_MS`) plays inside
+/// this window. (needs playtesting)
+const SCORING_HOLD_MS: u32 = 2200;
 /// How long the boom overlay holds before the scoring screen.
 const BOOM_MS: u32 = 1500;
 /// How long a private Peek result modal stays up.
@@ -45,6 +49,17 @@ pub(crate) enum Conn {
     },
     /// Grace elapsed; the server will have abandoned the seat.
     Abandoned,
+}
+
+/// Whether the round currently being resolved ended safely or with an explosion.
+/// Captured when the scoring message arrives during a resolution and held until
+/// the depile animation finishes, so `react` does not flip the phase early.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingOutcome {
+    /// Safe brew (`RoundScored`).
+    Safe,
+    /// Explosion (`Explosion`) — drives the boom overlay when scoring opens.
+    Exploded,
 }
 
 /// What the player currently intends to commit this wave (changeable until close).
@@ -105,6 +120,27 @@ pub struct App {
     pub(crate) depile_shown: usize,
     pub(crate) depile_accum_ms: u32,
     pub(crate) boom_ms: u32,
+    /// True while an end-of-round resolution is being shown: from `Depile`
+    /// arriving until the scoring screen's hold elapses and the buffer drains.
+    /// While true, every message except the resolution payloads is buffered so
+    /// it cannot clobber the phase or wipe the captured depile/scoring data.
+    pub(crate) resolving: bool,
+    /// The scoring outcome captured during a resolution; `Some` once the
+    /// scoring/explosion message has been folded but the phase flip is deferred.
+    pending_outcome: Option<PendingOutcome>,
+    /// True between this round's scoring message and its `ScoreUpdate`, so the
+    /// matching score update folds in place while a *later* round's update (which
+    /// can pile up under instant message feed) is buffered with its round.
+    awaiting_score_update: bool,
+    /// Messages received during a resolution that must wait (the next round's
+    /// open, game over, emotes, heartbeats…), replayed in order on drain.
+    resolution_buffer: VecDeque<ServerMessage>,
+    /// Counts up while the scoring screen holds (`SCORING_HOLD_MS`), then drains.
+    scoring_hold_ms: u32,
+    /// Total time spent in the resolution gate, debited from the next wave's
+    /// countdown on drain so unused budget flows back to play (the displayed
+    /// clock then tracks the server's true wave deadline).
+    resolution_elapsed_ms: u32,
     pub(crate) peek_modal_ms: u32,
     pub(crate) toasts: Vec<Toast>,
     pub(crate) debug: bool,
@@ -143,6 +179,12 @@ impl App {
             depile_shown: 0,
             depile_accum_ms: 0,
             boom_ms: 0,
+            resolving: false,
+            pending_outcome: None,
+            awaiting_score_update: false,
+            resolution_buffer: VecDeque::new(),
+            scoring_hold_ms: 0,
+            resolution_elapsed_ms: 0,
             peek_modal_ms: 0,
             toasts: Vec::new(),
             debug: false,
@@ -194,13 +236,48 @@ impl App {
     /// Fold a server message into the view model and advance the phase. Any
     /// inbound message also clears a reconnecting overlay (we are clearly live).
     pub fn on_server(&mut self, msg: &ServerMessage) {
-        self.in_count += 1;
-        self.push_log(format!("◀ {}", server_tag(msg)));
+        // Any inbound message proves we are live; clear a reconnecting overlay.
         if !matches!(self.conn, Conn::Connected) {
             self.conn = Conn::Connected;
         }
+        // An authoritative resync supersedes any in-flight resolution: a player
+        // who dropped and rejoined must resume now, not after the dwell.
+        if matches!(msg, ServerMessage::StateSnapshot { .. }) {
+            self.abandon_resolution();
+        }
+        // Resolution gate: once a `Depile` opens it, only *this* round's scoring
+        // payloads fold in place; the next round's messages (and everything else)
+        // wait in the buffer so they cannot flip the phase or wipe the captured
+        // depile/scoring data before the player has seen the resolution. Buffered
+        // messages are logged/counted later, when `drain_resolution` replays them.
+        if self.resolving && !self.folds_in_gate(msg) {
+            self.resolution_buffer.push_back(msg.clone());
+            return;
+        }
+        if matches!(msg, ServerMessage::ScoreUpdate { .. }) {
+            // This round's score update has now been consumed; a later round's
+            // update will be buffered with that round.
+            self.awaiting_score_update = false;
+        }
+        self.in_count += 1;
+        self.push_log(format!("◀ {}", server_tag(msg)));
         self.vm.apply(msg);
         self.react(msg);
+    }
+
+    /// While the gate is open, which messages fold in place rather than wait in
+    /// the buffer: the current round's scoring outcome (only before one has been
+    /// captured) and its single following `ScoreUpdate`. `Depile` is excluded —
+    /// it must reach `react` to *open* the gate (and is not seen here while one is
+    /// already open). `StateSnapshot` breaks the gate earlier in `on_server`.
+    fn folds_in_gate(&self, msg: &ServerMessage) -> bool {
+        match msg {
+            ServerMessage::RoundScored { .. } | ServerMessage::Explosion { .. } => {
+                self.pending_outcome.is_none()
+            }
+            ServerMessage::ScoreUpdate { .. } => self.awaiting_score_update,
+            _ => false,
+        }
     }
 
     fn react(&mut self, msg: &ServerMessage) {
@@ -251,14 +328,35 @@ impl App {
                 self.locked_in = false;
             }
             ServerMessage::Depile { .. } => {
+                // Open the resolution gate. `vm.apply` already captured `last_depile`;
+                // `on_tick` now animates the reveal and (once the scoring outcome
+                // arrives) advances to the scoring screen — see `on_tick`/`drain_resolution`.
                 self.phase = Phase::Depile;
                 self.depile_shown = 0;
                 self.depile_accum_ms = 0;
+                self.resolving = true;
+                self.pending_outcome = None;
+                self.awaiting_score_update = false;
             }
-            ServerMessage::RoundScored { .. } => self.phase = Phase::Scoring,
+            // During a resolution the scoring phase flip is deferred until the
+            // depile animation finishes (the `else` keeps today's behavior for a
+            // scoring message that arrives with no depile in flight).
+            ServerMessage::RoundScored { .. } => {
+                if self.resolving {
+                    self.pending_outcome = Some(PendingOutcome::Safe);
+                    self.awaiting_score_update = true;
+                } else {
+                    self.phase = Phase::Scoring;
+                }
+            }
             ServerMessage::Explosion { .. } => {
-                self.phase = Phase::Scoring;
-                self.boom_ms = BOOM_MS;
+                if self.resolving {
+                    self.pending_outcome = Some(PendingOutcome::Exploded);
+                    self.awaiting_score_update = true;
+                } else {
+                    self.phase = Phase::Scoring;
+                    self.boom_ms = BOOM_MS;
+                }
             }
             ServerMessage::GameOver { .. } => self.phase = Phase::GameOver,
             ServerMessage::PeekResult { .. } => self.peek_modal_ms = PEEK_MODAL_MS,
@@ -361,6 +459,73 @@ impl App {
                 self.depile_accum_ms -= DEPILE_STEP_MS;
             }
         }
+        self.tick_resolution(dt_ms);
+    }
+
+    /// Drive the end-of-round resolution timeline while the gate is open. The
+    /// depile cards keep peeling (in the reveal block above), but the depile does
+    /// **not** auto-advance: it waits for the player to press continue (see
+    /// `key_depile`). The scoring screen, once open, holds a beat and then drains
+    /// the buffered next round. Time spent here is debited from the next wave's
+    /// clock on drain.
+    fn tick_resolution(&mut self, dt_ms: u32) {
+        if !self.resolving {
+            return;
+        }
+        self.resolution_elapsed_ms = self.resolution_elapsed_ms.saturating_add(dt_ms);
+        if self.phase == Phase::Scoring {
+            self.scoring_hold_ms = self.scoring_hold_ms.saturating_add(dt_ms);
+            if self.scoring_hold_ms >= SCORING_HOLD_MS {
+                self.drain_resolution();
+            }
+        }
+    }
+
+    /// Leave the depile reveal for the scoring screen (the player pressed continue
+    /// once the cards are all shown). Boom-shakes the screen if the round exploded.
+    fn advance_to_scoring(&mut self) {
+        self.phase = Phase::Scoring;
+        self.scoring_hold_ms = 0;
+        if self.pending_outcome == Some(PendingOutcome::Exploded) {
+            self.boom_ms = BOOM_MS;
+        }
+    }
+
+    /// Close the resolution gate and replay the buffered messages in arrival
+    /// order through the normal path. The next round's `WaveOpened` advances to
+    /// `Playing` (or a buffered `GameOver` to `GameOver`). If a buffered `Depile`
+    /// re-opens the gate mid-replay, `on_server` folds that round's own payloads
+    /// in place and re-buffers everything after the last such `Depile`, so the
+    /// new resolution animates on the next ticks. The animation time is debited
+    /// from the next wave's countdown so the displayed clock matches the server's
+    /// deadline and unused budget remains available for play.
+    fn drain_resolution(&mut self) {
+        self.resolving = false;
+        self.pending_outcome = None;
+        self.awaiting_score_update = false;
+        self.scoring_hold_ms = 0;
+        let debit = self.resolution_elapsed_ms;
+        self.resolution_elapsed_ms = 0;
+        // Snapshot the buffer first: `on_server` re-buffers into the (now-empty)
+        // `resolution_buffer` if the gate re-opens, which we leave for the next drain.
+        let buffered: Vec<ServerMessage> = self.resolution_buffer.drain(..).collect();
+        for m in buffered {
+            self.on_server(&m);
+        }
+        if let Some(ms) = self.countdown_ms {
+            self.countdown_ms = Some(ms.saturating_sub(debit));
+        }
+    }
+
+    /// Drop any in-flight resolution without showing it (used when an
+    /// authoritative `StateSnapshot` arrives, which must resume play at once).
+    fn abandon_resolution(&mut self) {
+        self.resolving = false;
+        self.pending_outcome = None;
+        self.awaiting_score_update = false;
+        self.resolution_buffer.clear();
+        self.scoring_hold_ms = 0;
+        self.resolution_elapsed_ms = 0;
     }
 
     fn depile_total(&self) -> Option<usize> {
@@ -418,7 +583,7 @@ impl App {
             Phase::RoundStart => vec![],
             Phase::Playing => self.key_playing(key.code),
             Phase::Depile => self.key_depile(key.code),
-            Phase::Scoring => vec![],
+            Phase::Scoring => self.key_scoring(key.code),
             Phase::GameOver => self.key_gameover(key.code),
         }
     }
@@ -626,7 +791,20 @@ impl App {
         if matches!(code, KeyCode::Enter | KeyCode::Char(' '))
             && let Some(total) = self.depile_total()
         {
-            self.depile_shown = total;
+            if self.depile_shown < total {
+                // First press: finish the reveal (skip the card-by-card animation).
+                self.depile_shown = total;
+            } else if self.pending_outcome.is_some() {
+                // Cards all shown and the outcome is known: continue to scoring.
+                self.advance_to_scoring();
+            }
+        }
+        vec![]
+    }
+
+    fn key_scoring(&mut self, code: KeyCode) -> Vec<ClientMessage> {
+        if matches!(code, KeyCode::Enter | KeyCode::Char(' ')) && self.resolving {
+            self.drain_resolution();
         }
         vec![]
     }
@@ -683,6 +861,7 @@ impl App {
         self.depile_shown = 0;
         self.depile_accum_ms = 0;
         self.boom_ms = 0;
+        self.abandon_resolution();
         self.peek_modal_ms = 0;
     }
 
@@ -710,6 +889,7 @@ impl App {
         self.codex_open = false;
         self.depile_shown = 0;
         self.boom_ms = 0;
+        self.abandon_resolution();
         self.peek_modal_ms = 0;
     }
 
@@ -777,6 +957,21 @@ impl App {
     /// Open the `?` Codex overlay (test/mock).
     pub fn open_codex(&mut self) {
         self.codex_open = true;
+    }
+
+    /// Drive the press-to-continue resolution as the keyboard would (test/mock):
+    /// on the depile this finishes the reveal then continues to scoring; on the
+    /// scoring screen it drains to the next round. No effect outside a resolution.
+    pub fn advance_resolution(&mut self) {
+        match self.phase {
+            Phase::Depile => {
+                let _ = self.key_depile(KeyCode::Enter);
+            }
+            Phase::Scoring => {
+                let _ = self.key_scoring(KeyCode::Enter);
+            }
+            _ => {}
+        }
     }
 }
 
