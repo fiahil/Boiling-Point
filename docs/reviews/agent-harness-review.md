@@ -5,8 +5,10 @@ harness from the constitution's §II — against the [constitution](../../CLAUDE
 the [game design](../game-design.md). It is a **Node/TypeScript** package (not a cargo
 crate) so it can use the Claude Agent SDK and bill against a Claude subscription.
 
-Reviewed 2026-06-02 against `main`. `npm run typecheck` is clean (strict TS) and the
-24 pure-logic unit tests pass; four `--brain fallback` bots auto-match and play to
+Reviewed 2026-06-02 against `main`; **refreshed 2026-06-05** (the hand-mirrored
+protocol has tracked the Rust crate through the `group-model` rename and is at
+`PROTOCOL_VERSION = 3`). `npm run typecheck` is clean (strict TS) and the 24
+pure-logic unit tests pass; four `--brain fallback` bots auto-match and play to
 `GameOver`, and the Claude brain drives real decisions via in-process MCP tools.
 
 **Overall:** a thoughtfully layered harness with two standout properties — a
@@ -24,7 +26,7 @@ One agent seat, orchestrated across three layers (`src/cli.ts` → `src/runner.t
 
 - **Net** (`net/connection.ts`, `view-model.ts`, `secret-boundary.ts`,
   `wave-lifecycle.ts`): a `ws` client that performs the entry handshake
-  (`CreateRoom`/`JoinRoom`/`EnqueueMatch` + `protocol_version`), decodes MessagePack,
+  (`CreateGroup`/`JoinGroup`/`EnqueueMatch` + `protocol_version`), decodes MessagePack,
   folds messages into a player-visible view model, and routes wave open/resolve events.
 - **Agent** (`agent/session.ts`, `tools.ts`, `difficulty.ts`, `context.ts`,
   `prompt.ts`, `actions.ts`): one **persistent** Agent SDK `query()` per game (warm
@@ -51,8 +53,8 @@ if (hasSource && !VALID_SOURCES.has(boilingPointSource)) throw new Error("… il
 ```
 
 This is the bot-harness's "secret-by-construction" discipline, but with an added
-**runtime tripwire on the production path** — a stronger posture than the server's own
-(unused) routing rail (cf. server-review F3). `test/secret-boundary.test.ts` and
+**runtime tripwire on the production path** — complementing the server's own routing
+rail (now enforced end-to-end; server-review F3 is resolved). `test/secret-boundary.test.ts` and
 `test/context-gating.test.ts` verify both the gate and that an agent without the
 `reveal_history` capability never receives past card identities in its turn context.
 
@@ -83,10 +85,15 @@ mistake handled well.
 `scripts/gen-protocol-types.ts` is a `ts-rs` generation **seam** that isn't active yet
 (the Rust crate doesn't derive `ts-rs`). Until generation is wired, every protocol
 change must be mirrored by hand or the harness silently desyncs (decode failures or,
-worse, subtle field drift). The MessagePack-only wire and the UUID-bytes→hex
+worse, subtle field drift). So far it has been kept honest by hand — the mirror tracked
+the `group-model` rename and now sits at `PROTOCOL_VERSION = 3` (`CreateGroup`/
+`JoinGroup`/`GroupJoined`/`group_code`) — but that is exactly the manual discipline this
+finding warns will eventually slip. The MessagePack-only wire and the UUID-bytes→hex
 canonicalization in `codec.ts` are correct but add surface that a regenerator would
 keep honest. **Recommend:** add `#[ts(export)]` to the Rust crate and make
-`npm run gen:protocol` authoritative; treat `messages.ts` as generated.
+`npm run gen:protocol` authoritative; treat `messages.ts` as generated. (This is also
+the direction the `adopt-pixi-client` change takes for the web client — generate the TS
+wire types from the Rust `protocol` crate — so the harness can share that seam.)
 
 ### AH2 — Decision latency exceeds the sub-wave timer; correctness leans on fallback *(operational, medium)*
 

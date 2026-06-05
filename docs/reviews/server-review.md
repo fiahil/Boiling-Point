@@ -6,36 +6,40 @@ covers how the server is wired, walks each subsystem, and records findings,
 risks, and prioritized recommendations against the
 [constitution](../../CLAUDE.md) and the [game design](../game-design.md).
 
-Originally reviewed against `main` @ `27cc398` (2026-05-31); **re-reviewed
-2026-06-02**. The full workspace test suite is green (engine + transport,
-bot-harness, tui-client; 2 ignored tests require a live PostgreSQL). Balance
+Originally reviewed against `main` @ `27cc398` (2026-05-31); re-reviewed
+2026-06-02, then **refreshed 2026-06-05** after the `group-model`,
+`group-fill-and-standings`, `converge-game-loops`, and `persistence-and-replays`
+changes landed. The full workspace test suite is green (engine + transport,
+bot-harness, tui-client; a few ignored tests require a live PostgreSQL). Balance
 numbers tagged **[needs playtesting]** match the game design's convention — they
 are hypotheses, not settled values.
 
-> **Re-review status (2026-06-02; updated 2026-06-03).** Findings are tracked as
-> OpenSpec changes rather than loose advice:
-> - **F1, F3, F5 → resolved** by the **`review-remediation`** change (landed
->   2026-06-03); **F2 → resolved** by the **`converge-game-loops`** change (landed
->   2026-06-04): `run_game` now drives the tested `Game` engine, and a sync==async
->   parity test pins their final scores together. See each finding's Status note below.
-> - **F4 (persistence not wired)** is **RESOLVED** by the **`persistence-and-replays`**
->   change (2026-06-03). That change replaced the "just wire the existing module"
->   remedy with a reworked design (match results + timeless replays + runtime
->   wiring): persistence is now connected on the live path and degrades cleanly
->   when no database is configured.
-> - The logging-level sub-item of F5 is **resolved**: the server now accepts
->   `--log-level` (still honouring `RUST_LOG`) — `server/src/main.rs`,
->   `observability.rs`.
-> - Workspace: the bot harness (`bot-harness/`) and terminal client (`tui-client/`)
->   are now first-class crates, and the Claude-as-player harness ships in
->   `agent-harness/` — closing the Principle II gap noted in §5. Each has its own
+> **Re-review status (refreshed 2026-06-05).** Every finding below is now
+> **resolved**; each finding's Status note records the change that closed it.
+> Findings are tracked as OpenSpec changes rather than loose advice:
+> - **F1, F3, F5 → resolved** by **`review-remediation`** (2026-06-03).
+> - **F2 → resolved** by **`converge-game-loops`** (2026-06-04): `run_game` now
+>   drives the tested `Game` engine through one orchestration core, and a
+>   sync==async parity test pins their final scores together.
+> - **F4 → resolved** by **`persistence-and-replays`** (2026-06-03): persistence is
+>   wired on the live path (match results + timeless replays in one post-game write)
+>   and degrades cleanly when no database is configured.
+> - Two structural changes this refresh also folds in: the **room→group rename +
+>   persistent groups** (`group-model`) and **group matchmaking fill + members/guests
+>   + live standings** (`group-fill-and-standings`). The architecture sections below
+>   describe the current (group) shape.
+> - Workspace: the bot harness (`bot-harness/`), terminal client (`tui-client/`), and
+>   the Node/TS Claude-as-player harness (`agent-harness/`) each have a dedicated
 >   review in this folder.
 
 **Overall:** a clean, genuinely server-authoritative implementation with an
-unusually disciplined content/loop separation and strong unit-test coverage of
-the game engine. The main gaps are not correctness bugs but *wiring* gaps: a
-second, less-tested copy of the game loop drives real play; persistence is built
-but never called; and a well-designed secret-routing safety rail goes unused.
+unusually disciplined content/loop separation and strong test coverage of the
+game engine. The *wiring* gaps the first review flagged are now closed: one
+orchestration core backs both the in-process and the networked loop (**F2**),
+post-game persistence and timeless replays are wired on the live path (**F4**),
+and the secret-routing rail is enforced on every server send (**F3**). What
+remains is balance validation (Principle IV) and the usual product surface, not
+correctness or wiring debt.
 
 ---
 
@@ -60,33 +64,39 @@ folder:
 | Module | Responsibility |
 |---|---|
 | `main.rs` | Bootstrap: validate config → bind `:8080` → serve. Fail-fast. |
-| `transport.rs` | Axum app, WebSocket upgrade, per-connection read/write tasks, version handshake, rate limiting. |
-| `lobby/` | `session` (anonymous auth), `codes` (invite codes), `registry` (live rooms), `room` (per-room task), `matchmaking` (4-player queue). |
-| `session.rs` | `run_game`: the **async, networked** game loop driving one full game over the wire. |
-| `game/` | The **synchronous** engine: `runner` (`Game::play_out`), `round`, `resolve`, `scoring`, `deathmatch`, `deck`, `pot`, `modifiers`, `state`, `card`. |
+| `transport.rs` | Axum app, WebSocket upgrade, per-connection read/write tasks, version handshake, rate limiting, the durable per-socket session router. |
+| `lobby/` | `session` (anonymous auth), `codes` (invite codes), `registry` (live groups + optional `PgPool`), `group` (per-group task — persists across games), `matchmaking` (4-player queue + group fill). |
+| `session.rs` | `run_game`: the **async, networked** loop that drives one full game over the wire by stepping the `Game` engine. |
+| `game/` | The engine core: `runner` (`Game` — owns the round/wave/scoring/deathmatch steps, drives both loops), `round`, `resolve`, `scoring`, `deathmatch`, `deck`, `pot`, `modifiers`, `state`, `card`. |
+| `replay.rs` | Timeless replays: encode a finished game to `seed + action_log`, verify integrity, and reconstruct its public event stream by re-running the pinned engine. |
 | `content/` | Config-driven content behind the registry: `card`, `effect`, `modifier`, `registry`. Strategy + Registry patterns. |
 | `config.rs` | TOML schema + fail-fast validation + registry assembly. |
-| `persistence.rs` | Post-game PostgreSQL writes (sqlx). |
-| `observability.rs` | JSON tracing + Prometheus metrics. |
+| `persistence.rs` | Post-game PostgreSQL writes (sqlx): results + replay payload in one transaction. |
+| `admin/` | Operator command-plane + the live open-span projection behind the admin API. |
+| `observability.rs` | JSON tracing, the span lifecycle/projection, and Prometheus metrics. |
 
 ### Request / game flow
 
 ```
-WebSocket /ws  (transport::handle_socket)
-  │  first frame must be an entry message (CreateRoom | JoinRoom | EnqueueMatch)
+WebSocket /ws  (transport::handle_socket — one durable session per socket)
+  │  first frame must be an entry message (CreateGroup | JoinGroup | EnqueueMatch)
   │  + matching PROTOCOL_VERSION, else Error and close
   ▼
-RoomCommand channel  ──►  lobby/room.rs::run   (one async task = sole owner of a room)
-                              │  lobby loop: Join/Leave/Heartbeat/Emote, idle timeout 300s
-                              │  at 4 seats → GameStarting, then…
+GroupCommand channel ──► lobby/group.rs::run  (one async task = sole owner of a group)
+                              │  persistent lobby: Join/Leave/Heartbeat/Emote/PlayAgain/
+                              │  FillGroup, idle timeout 300s; standings kept across games
+                              │  at 4 ready seats → GameStarting, then…
                               ▼
-                         session.rs::run_game   (owns the room rx for the whole game)
+                         session.rs::run_game  (owns the group rx for the whole game;
+                              │  drives a Game through begin_round → resolve_wave →
+                              │  settle_round, adding only wire I/O + spans)
                               │  per round: refill hands → draw modifier (r≥2)
                               │  per wave:  broadcast WaveOpened → collect_wave (timed,
-                              │             hidden commits) → resolve_wave → broadcast
+                              │             hidden commits) → Game::resolve_wave → broadcast
                               │  depile → score → ScoreUpdate
                               ▼
-                         GameOver  (+ Deathmatch on a tie for the lead)
+                         GameOver (+ Deathmatch on a tie) → optional post-game write
+                              │  (results + replay) → return survivors to the group lobby
 ```
 
 ### Concurrency model
@@ -95,17 +105,19 @@ The strongest structural choice: **single-task ownership of game state, no locks
 on the game path.**
 
 - Each connection has its own outbound `mpsc::Sender<ServerMessage>`; a dedicated
-  writer task serialises to the socket (`transport.rs:80-89`).
-- Each room is one async task that *exclusively* owns its state; connections only
-  talk to it via `RoomCommand`s (`lobby/room.rs:1-8`). During a game,
-  `run_game` takes the room's receiver directly (`lobby/room.rs:203`), so all
-  commits funnel through one task — no shared mutable game state, no `Mutex`.
+  writer task serialises to the socket (`transport.rs`).
+- Each group is one async task that *exclusively* owns its state; connections only
+  talk to it via `GroupCommand`s (`lobby/group.rs`). During a game, `run_game`
+  takes the group's receiver directly, so all commits funnel through one task — no
+  shared mutable game state, no `Mutex`. A group **outlives a single game**: it
+  serves its lobby, runs a game when four seats are ready, then returns the
+  survivors to the lobby (`group-model`).
 - The only shared structures are concurrent maps and one short-lived lock:
-  `RoomRegistry` and `SessionStore` are `DashMap`-backed (`lobby/registry.rs:21`,
-  `lobby/session.rs:14`); `MatchQueue` uses a `Mutex<Vec<…>>` held only for the
-  drain and **never across an await** (`lobby/matchmaking.rs:52-66`).
+  `GroupRegistry` and `SessionStore` are `DashMap`-backed (`lobby/registry.rs`,
+  `lobby/session.rs`); `MatchQueue` uses a `Mutex<Vec<…>>` held only for the
+  drain and **never across an await** (`lobby/matchmaking.rs`).
 - Wire format: MessagePack primary, JSON fallback for debugging, via
-  `protocol::codec` (`transport.rs:63,82`).
+  `protocol::codec` (`transport.rs`).
 
 ---
 
@@ -124,46 +136,57 @@ cards with 8 effects and a 20-copy modifier pool (`config.rs:361-373`).
 
 ### Transport (`transport.rs`)
 
-A single route, `GET /ws` (`transport.rs:47-51`). Handshake requires a matching
-`PROTOCOL_VERSION` and one of three entry messages, else an `Error` is sent and
-the writer is drained so the client actually receives it before close
-(`transport.rs:91-102`, `136-197`). The action loop enforces a 100 ms rate limit
-(`RATE_LIMIT`, `transport.rs:30,117-119`) and a heartbeat-driven idle timeout
-(`conn_timeout`, default 90 s — `main.rs:46`, `transport.rs:111-115`). On exit it
-sends `RoomCommand::Leave`. Transport has a solid set of live-WebSocket
-integration tests (handshake, matchmaking, heartbeat, abandonment, a full
-4-client game) at `transport.rs:337-628`.
+A single route, `GET /ws` (`transport.rs`). The socket is a **durable session**:
+it authenticates once on the first entry message, then routes — entry messages
+bind it to a group, `LeaveGroup` returns it to the unbound menu, table actions
+forward to the bound group, and the socket survives a game or group ending
+(`group-model` D5). The handshake requires a matching `PROTOCOL_VERSION` and one
+of three entry messages, else an `Error` is sent and the writer is drained so the
+client receives it before close. The action loop enforces a 100 ms rate limit
+(`RATE_LIMIT`) on table actions and a heartbeat-driven idle timeout
+(`conn_timeout`). Transport has a solid set of live-WebSocket integration tests
+(handshake, matchmaking, heartbeat, abandonment, a full 4-client game, leave/
+re-join, two games via play-again, the secret-leak scan, and the span tree) in
+`transport.rs`'s test module.
 
-### Lobby, rooms, matchmaking (`lobby/`)
+### Lobby, groups, matchmaking (`lobby/`)
 
 - **Auth** is anonymous: a presented token resolves to a stable `PlayerId`; a
   fresh connection mints both. Known tokens return the same id, enabling
-  reconnection (`lobby/session.rs:25-35`).
-- **Rooms** are created collision-safe (retry on duplicate code) and self-
-  deregister when they end (`lobby/registry.rs:50-67`, `lobby/room.rs:256`).
-  Codes are human-readable `BREW-XXXX` from an unambiguous alphabet
+  reconnection (`lobby/session.rs`).
+- **Groups** are created collision-safe (retry on duplicate code) and self-
+  deregister when they empty, idle out (300 s), or an operator kills them
+  (`lobby/registry.rs`, `lobby/group.rs`). A group **persists across games** and
+  keeps a live, in-memory **standings** tally — per-member games/wins plus a guest
+  aggregate (`group-fill-and-standings`). It distinguishes **members** (joined by
+  invite/quick-match) from **guests** (placed by matchmaking fill, dropped at
+  `GameOver`). Codes are human-readable `BREW-XXXX` from an unambiguous alphabet
   (`lobby/codes.rs`).
 - **Matchmaking** parks players on a `oneshot` until a fourth arrives, then
-  creates a room and joins all four (`lobby/matchmaking.rs:45-81`). This *is*
-  wired end-to-end (`main.rs:41`, `transport.rs:170-186`, test at
-  `transport.rs:337`).
-- **Resilience**: a `Leave` mid-lobby drops the seat; if the room empties the
-  task ends (`lobby/room.rs:211-223`). Mid-game, a disconnected player auto-
-  passes and a reconnect reattaches the channel and receives a scoped
-  `StateSnapshot` (`session.rs:443-449,494-508,198-212`).
+  forms a group and joins all four; a partial group can also `FillGroup` to top
+  itself up with guests from the queue (`lobby/matchmaking.rs`). Wired
+  end-to-end (`main.rs`, `transport.rs`, transport tests).
+- **Resilience**: a `Leave` mid-lobby drops the seat; if the group empties the
+  task ends. Mid-game, a disconnected player auto-passes and a reconnect
+  reattaches the channel and receives a scoped `StateSnapshot` (`session.rs`).
 
 ### The game loop (`session.rs::run_game`)
 
-For each of `ROUND_COUNT` (5) rounds: draw a cumulative modifier from round 2
-(`session.rs:126-139`), refill every hand to 5 and send each player their private
-`YourHand` (`session.rs:142-157`), roll the hidden boiling point and apply
-modifier offsets (`session.rs:159-160`), then run waves until the round ends. A
-wave broadcasts `WaveOpened`, collects hidden commits for the timer window
-(`collect_wave`, `session.rs:431-538`), resolves through the engine, routes the
-Peek/Expose tells, and broadcasts a `WaveResolved` that carries counts but never
-card identities (`session.rs:235-262`). The round ends with a depile (boiling
-point disclosed only on explosion — `session.rs:266-290`) and scoring; a tie for
-the lead after round 5 is broken by a Deathmatch (`session.rs:368-399`).
+`run_game` no longer re-derives the game flow — it **drives the tested `Game`
+engine** (see F2). For each of `ROUND_COUNT` (5) rounds it calls
+`Game::begin_round` (draw the round's modifier from round 2, refill hands to 5,
+roll the hidden boiling point), broadcasts `ModifierRevealed`/`DeckReshuffled` and
+each player's private `YourHand`, then runs waves until `Game` reports the round
+closed. A wave broadcasts `WaveOpened`, collects hidden commits for the timer
+window (`collect_wave`) as raw intents, calls `Game::resolve_wave` (which validates
+against hands, takes the committed cards, applies the wave, returns recalled cards
+to their owners, and records the replay action log), routes the Peek/Expose tells,
+re-sends a private `YourHand` to any owner whose hand a recall grew (D3), and
+broadcasts a `WaveResolved` that carries counts but never card identities. The
+round ends with `Game::settle_round` — a depile (boiling point disclosed only on
+explosion) and scoring; a tie for the lead after round 5 is broken by
+`Game::break_tie`'s Deathmatch. At `GameOver`, if a database is configured, the
+results and a timeless replay are written in one transaction.
 
 ### Game engine (`game/`)
 
@@ -204,40 +227,54 @@ The synchronous heart, fully testable in-process:
 
 ### Determinism
 
-Everything stochastic is seeded from one `u64` per game (`lobby/room.rs:197`):
+Everything stochastic is seeded from one `u64` per game (`lobby/group.rs`):
 deck build/shuffle, modifier pile, boiling-point rolls, and a derived deathmatch
-seed. The sync runner has an explicit determinism test (`runner.rs:419-428`) and
-a 300-game no-panic stress test (`runner.rs:405-417`). Expose's "random" card is
-in fact *deterministic* (earliest non-self card) on purpose, so games stay
-reproducible (`resolve.rs:79-85`).
+seed (`seed ^ 0xD3A7_4A7C`). The `Game` engine has an explicit determinism test
+and a 300-game no-panic stress test (`runner.rs`), and — since `converge-game-loops`
+— a `sync==async` parity test asserts the networked `run_game` reproduces
+`Game::play_out`'s final scores for fixed seeds (`session::tests`). Because the
+engine is deterministic from `seed + action_log`, a finished game is **replayable**
+end to end (`replay.rs`). Expose's "random" card is in fact *deterministic*
+(earliest non-self card) on purpose, so games stay reproducible (`resolve.rs`).
 
-### Persistence (`persistence.rs`)
+### Persistence & replays (`persistence.rs`, `replay.rs`)
 
-Write-once-at-`GameOver` design over sqlx with a 5-connection pool
-(`persistence.rs:61-66`), an embedded idempotent schema
-(`migrations/0001_init.sql`, applied via `run_migrations`), and a single
-transactional `persist_game` writing players, game, per-player results, and
-per-round analytics (`persistence.rs:77-133`). **See finding F4: this module is
-not actually called by the running server.**
+Write-once-at-`GameOver` design over sqlx, an embedded idempotent schema
+(`migrations/0001_init.sql` + `0002_replays.sql`, applied under an advisory lock
+via `run_migrations`), and a single transactional `persist_game` writing players,
+game, per-player results, per-round analytics, **and** the timeless replay payload.
+The shared `build_game_result` (`runner.rs`) produces the result identically for
+both loops. `replay.rs` encodes a finished game as `seed + action_log` (with an
+integrity hash and a content fingerprint) and `reconstruct`s its public event
+stream by re-running the pinned engine via `Game::play_out_with_events`. **F4 is
+resolved:** `--database-url`/`DATABASE_URL` connects a `PgPool` threaded
+`GroupRegistry → run_game`; with no URL configured the post-game write is a clean
+no-op (logged once) — persistence is optional infrastructure, never a precondition
+for play.
 
-### Observability (`observability.rs`)
+### Observability (`observability.rs`, `admin/`)
 
-JSON `tracing` plus a Prometheus exporter on `:9090` (`observability.rs:13-27`).
-Counters/gauges are named in one place: `rooms_created_total`, `rooms_active`,
-`games_started_total`, `games_completed_total`, `rounds_total`, and
-`round_explosions_total` — the last feeds the ~30–40 % explosion-rate target
-(`observability.rs:31-59`).
+JSON `tracing` plus a Prometheus exporter. Counters/gauges are named in one place
+(`observability.rs`): `groups_created_total`/`groups_active`, `games_started_total`/
+`games_completed_total`/`games_active`, `rounds_total`, `round_explosions_total`
+(feeding the ~30–40 % explosion-rate target), `round_dominations_total`/
+`round_splits_total`, `waves_total`/`wave_timeouts_total`, `cards_committed_total`,
+`deck_reshuffles_total`, and `player_reconnects_total`. A structured span tree
+(`game → round → wave → resolve/commit/score`, plus `hand`/`reconnect`) carries the
+secret in-flight state as in-process-only attributes; the `admin/` projection
+serves a privileged live-state reveal off the open spans, never the player wire.
 
 ### Protocol & the secret boundary (`protocol/`)
 
 The boiling point appears in exactly two messages — `PeekResult` (private) and
 an exploded `Depile` — and a unit test asserts no other serialized message
-carries it (`protocol/src/server.rs:1-8`,
-`protocol/src/lib.rs:204-248`). `WaveResolved`, `StateSnapshot`, and the depile
-deliberately omit hidden state. The crate also defines an `Outbound`/`Audience`
-routing type with `is_private_only()` and a `broadcast()` debug-assert that
-*would* catch broadcasting a private message (`protocol/src/server.rs:250-303`).
-**See finding F3: the server does not use this rail.**
+carries it (`protocol/src/server.rs`, `protocol/src/lib.rs`). `WaveResolved`,
+`StateSnapshot`, and the depile deliberately omit hidden state. The crate also
+defines an `Outbound`/`Audience` routing type with `is_private_only()` and a
+`broadcast()` debug-assert that catches broadcasting a private message. **F3 is
+resolved:** every server→client send in `run_game` now routes through a single
+`dispatch` egress that constructs the `Outbound`, so the debug-assert guards every
+broadcast, and an end-to-end test scans a whole game's frames for leaked secrets.
 
 ---
 
@@ -262,7 +299,7 @@ through to `_ => {}` and is **silently ignored** (`session.rs:461-485`). The
 even defines the right codes (`NotYourCard`, `LockedOut`,
 `protocol/src/server.rs:79-84`), and the handshake/lobby paths *do* reply with
 errors (`VersionMismatch` at `transport.rs:200-212`; `InvalidEmote`/`WrongPhase`
-at `lobby/room.rs:144-151,241-249`) — only the in-wave action path stays silent.
+in `lobby/group.rs`) — only the in-wave action path stays silent.
 
 Note the resulting inconsistency: an off-palette emote returns
 `Error{InvalidEmote}` *in the lobby* but is dropped *during a wave*.
@@ -343,7 +380,7 @@ game's broadcast stream for leaked secrets. Routing the server's sends through
 > **Status (2026-06-03): RESOLVED by the `persistence-and-replays` change.** The
 > rework landed: `--database-url`/`DATABASE_URL` connects a `PgPool` and runs the
 > (advisory-locked) migrations at boot; the pool lives in `AppState` and is
-> threaded `RoomRegistry → run_game`; at `GameOver` the live path builds the
+> threaded `GroupRegistry → run_game`; at `GameOver` the live path builds the
 > `GameResult` (via the shared `build_game_result`, now populating `cards_played`
 > and per-round analytics) **and** a timeless replay payload, persisting both in
 > one `db.write` transaction. With no URL configured the server plays normally
@@ -393,26 +430,30 @@ mistaken for working.
 
 ## 4. Prioritized Recommendations
 
-1. **Decide F1 (compliance).** Either reply with the existing
-   `NotYourCard`/`LockedOut`/`WrongPhase` codes for in-wave invalid actions, or
-   record in this doc / the wire-protocol spec that silent-drop is an
-   intentional anti-leak choice. Resolve the lobby-vs-wave emote inconsistency
-   the same way.
-2. **Rework persistence (F4) — superseded.** Don't wire the v1 module as-is. The
-   **`persistence-and-replays`** change replaces it with match-results + timeless
-   replays and the runtime wiring (`PgPool` in `AppState`, migrations at startup,
-   `persist_game` at `GameOver`). Tracked there, not here.
-3. **Converge the two loops (F2).** Have `run_game` delegate to a shared engine
-   core, or add engine-level tests directly over the async path, so the shipping
-   path inherits the determinism/stress coverage.
-4. **Make the secret boundary enforce itself (F3).** Route server sends through
-   `Outbound`/`Audience`, and/or add an end-to-end test that scans a whole
-   game's broadcast stream for leaked secrets.
-5. **Polish (F5).** Replace the four invariant `unwrap()`s with explicit
-   `expect`/`entry`, add an `EnvFilter`, fix the "7-step" doc nit.
+All five recommendations from the original review are now **done** — retained
+here as a record of what closed each finding.
 
-None of these block correctness today; #1 and #4 are the constitution-facing
-ones, #2 is the most visible functionality gap.
+1. **Decide F1 (compliance) — done.** In-wave invalid actions reply with the
+   existing `NotYourCard`/`LockedOut`/`InvalidEmote`/`WrongPhase` codes (reason
+   only, no state change), resolving the lobby-vs-wave emote inconsistency the
+   same way (`review-remediation`).
+2. **Rework persistence (F4) — done.** `persistence-and-replays` wired match
+   results + timeless replays on the live path (`PgPool` in `AppState`, migrations
+   at startup, results + replay persisted in one transaction at `GameOver`),
+   degrading cleanly when no database is configured.
+3. **Converge the two loops (F2) — done.** `run_game` drives the tested `Game`
+   engine through one orchestration core; a `sync==async` parity test pins the
+   shipping path to the engine's scores, and the analytics/replay log flow off the
+   shared `Game` (`converge-game-loops`).
+4. **Make the secret boundary enforce itself (F3) — done.** Every server send
+   routes through `Outbound`/`Audience`, and an end-to-end test scans a whole
+   game's broadcast stream for leaked secrets (`review-remediation`).
+5. **Polish (F5) — done.** Invariant `unwrap()`s became `expect`/`entry`, the log
+   level is tunable (`--log-level` + `EnvFilter`), and the "7-step" doc nit is
+   fixed (`review-remediation`).
+
+The remaining open work is **Principle IV** (data-informed balance validation via
+the bot harness), not correctness or wiring debt.
 
 ---
 
@@ -422,6 +463,6 @@ ones, #2 is the most visible functionality gap.
 |---|---|---|---|
 | **I. Server-Authoritative** | Strong | Full state (deck, hands, boiling point) is server-only; `CardId` is opaque and commits are validated against the hand (`session.rs:462-464`); all RNG server-side; secret boundary tested (`protocol/src/lib.rs:204-248`) and now routed through `Outbound` end-to-end (**F3**). | **F1 closed (2026-06-03):** invalid in-wave actions now receive an error response (`NotYourCard`/`LockedOut`/`InvalidEmote`/`WrongPhase`) with no state change. |
 | **II. Agent-Driven Development** | Strong (with a gap) | Sync engine is fully agent-testable via `Decider`/`DeathmatchDecider` traits (`runner.rs:60-69`, `deathmatch.rs:35-44`), deterministic seeds, 300-game stress test; `protocol` is a clean narrow waist for bots. | **Closed (2026-06-02):** the protocol bot harness (`bot-harness/`) and terminal client (`tui-client/`) are now workspace crates, and the Claude-as-player harness ships in `agent-harness/`. |
-| **III. Start Simple, Scale Later** | Strong | Single binary; anonymous token auth; invite codes + simple 4-player matchmaking; embedded config; one fixed game mode; persistence is post-game-only by design. | Persistence seam built but not connected (**F4**) — start-simple, but record it. |
+| **III. Start Simple, Scale Later** | Strong | Single binary; anonymous token auth; invite codes + simple 4-player matchmaking with group fill; embedded config; one fixed game mode; persistence is post-game-only and optional. | **F4 closed:** persistence + timeless replays are now wired on the live path, and degrade to a clean no-op with no database configured. |
 | **IV. Playtest-Driven Balance** | Strong (with a gap) | Every tunable is externalised to `content.toml` and tagged **[needs playtesting]** in code (`content/effect.rs:60-62`, `content/modifier.rs:36-41`); `round_explosions_total` tracks the 30–40 % target. | **Closed (2026-06-02):** the `bot-harness/` seeded batch runner now runs thousands of games for at-scale balance validation. |
 | **Typestate (accepted deviation)** | Documented | Phase/round transitions use `Option<RoundEnd>` + `is_open()` rather than compile-time typestate (`round.rs:82-133`). | This is the previously-accepted deviation in the project history. |

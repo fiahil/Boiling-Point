@@ -5,15 +5,18 @@ renderer over the wire protocol — against the [constitution](../../CLAUDE.md)
 (especially §I server-authoritative and §II agent-driven) and the
 [game design](../game-design.md).
 
-Reviewed 2026-06-02 against `main`. Tests green: 17 snapshot tests + the live-server
-integration test pass. Several items this review would have raised were fixed in the
-same pass that produced it — they're recorded below as **resolved** for traceability.
+Reviewed 2026-06-02 against `main`; **refreshed 2026-06-05** after `group-model`,
+`tui-readability-pass`, and `converge-game-loops` landed. Tests green: 24 snapshot
+tests + the live-server integration test pass. Several items this review would have
+raised were fixed in the same pass that produced it — they're recorded below as
+**resolved** for traceability.
 
 **Overall:** an exemplary untrusted renderer. The client holds **no game logic and no
 secrets by construction**, its core is a set of pure reducers that snapshot-test with
-neither a terminal nor a server, and it respects the secret boundary cleanly. The
-remaining gaps are a genuine protocol gap (Recall has no wire target) and the
-single-game lifecycle (relevant to the `group-model` change).
+neither a terminal nor a server, and it respects the secret boundary cleanly. The one
+remaining gap is a genuine protocol gap — Recall has no wire *target* (T4); the
+single-game lifecycle that this review flagged is now resolved by `group-model`'s
+play-again.
 
 ---
 
@@ -89,18 +92,21 @@ The example rendered three screens to stdout — all already asserted in
 no target field, so the chosen card can't be transmitted — the client sends the Recall
 card and toasts *"recall target not yet carried by the wire"* (`app.rs`). This is a
 **protocol-level gap**, not a client bug: `ClientMessage::CommitCard { card }`
-(`protocol/src/client.rs`) needs an optional Recall target, and the server must honor
-it. Until then, Recall (a designed §9 effect) is non-functional end-to-end. Track
-alongside the wire-protocol work in the `review-remediation` change (or a dedicated
-protocol change).
+(`protocol/src/client.rs`) still has no Recall-target field, and the server must honor
+it. `converge-game-loops` added D3 — the owner now learns their hand grew when a recall
+fires (a private `YourHand`) — but that is the *visibility* of an auto-chosen recall,
+not player-driven target *selection*; until `CommitCard` carries a target, Recall (a
+designed §9 effect) stays only partially playable end-to-end. Track as a dedicated
+wire-protocol change.
 
-### T5 — Single-game lifecycle *(observation — tracked by `group-model`)*
+### T5 — Single-game lifecycle *(RESOLVED by `group-model`)*
 
-At `GameOver` the client can only re-enter the queue or reset to the entry menu
-(`reset_for_new_game`, `app.rs`). There is no "play again with the same table." This
-matches today's one-game-per-room server model and is exactly what the **`group-model`**
-change proposes to revisit ("join a group, then go on games together"). No action here
-until that lands.
+The original review flagged that at `GameOver` the client could only re-enter the queue
+or reset to the entry menu — no "play again with the same table." **Resolved:**
+`group-model` made groups persist across games, and the client now opts in with
+`ClientMessage::PlayAgain` at `GameOver`, keeping the roster, identity, and group code
+(`app.rs` `reset_for_new_game` / the play-again path). A fresh game starts once the
+table re-readies.
 
 ### T6 — Minor notes *(low)*
 
@@ -109,8 +115,8 @@ until that lands.
 - `set_deathmatch`/`set_reconnecting` are test/mock-only helpers; real play drives
   both from `ServerMessage`s (`DeathmatchStarted` sets `vm.deathmatch` in
   `view.rs`), so the live paths are covered.
-- Display wording was updated room→group in this pass; the underlying protocol field
-  names (`RoomCode`, `room_code`) are intentionally unchanged pending `group-model`.
+- Display wording and the protocol field names are now uniformly **group** (`GroupCode`,
+  `group_code`) — `group-model` completed the room→group rename end to end.
 
 ### T7 — Readability pass: card faces, a live inspector, and a Codex *(addressed by `tui-readability-pass`)*
 
@@ -126,10 +132,11 @@ so the `TestBackend` snapshots stay deterministic.
 ## 5. Recommendations
 
 1. **Close T4 at the protocol layer** — add the Recall target to `CommitCard` and
-   honor it server-side, then wire the picker's choice through. Highest-value item:
-   it makes a designed effect actually playable.
-2. **Leave T5 to `group-model`** — don't bolt a rematch flow onto the single-game
-   model; let the group redesign drive it.
+   honor it server-side, then wire the picker's choice through. The one remaining
+   open item: it makes a designed effect fully playable. (D3 already gives the owner
+   visibility of an auto-chosen recall, so this is purely the target-selection wire.)
+2. ~~Leave T5 to `group-model`~~ — **done**: `group-model` landed and the client's
+   play-again flow keeps the table together across games.
 3. Keep new screens covered by `tests/snapshots.rs` (no `examples/`).
 
 ## 6. Constitution compliance
