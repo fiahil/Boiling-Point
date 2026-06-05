@@ -12,6 +12,7 @@ renderers (see the [constitution](../CLAUDE.md)).
 | Understand the system shape (crates, data flow, lifecycle) | [architecture/overview.md](architecture/overview.md) |
 | Know the rules, cards, scoring, and balance knobs | [game-design.md](game-design.md) |
 | See what's parked for after v1 | [roadmap.md](roadmap.md) |
+| Explore proposed core-depth adjustments (Vote/Spell, Brewers) | [depth-and-complexity.md](depth-and-complexity.md) |
 | Review code health and release-readiness | [reviews/](reviews/) |
 
 ## Map of the docs
@@ -22,6 +23,7 @@ docs/
 ├── getting-started.md         prerequisites, how to build / run / test / playtest
 ├── game-design.md             canonical game design (rules, cards, scoring, modifiers)
 ├── roadmap.md                 v2 / post-launch features and the seams left for them
+├── depth-and-complexity.md    PROPOSAL — core-depth adjustments (Vote/Spell, Brewers)
 ├── architecture/
 │   ├── overview.md            component map + lifecycle + state machine (ASCII diagrams)
 │   ├── server-architecture.md historical infra brainstorm (topology, rooms, persistence…)

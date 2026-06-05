@@ -8,7 +8,8 @@ TBD - created by archiving change admin-ui. Update Purpose after archive.
 The balance dashboard SHALL surface the Principle IV metrics over a selectable
 time window: at least explosion rate, round and game durations, cards per round,
 dominant-color (dominant-strategy) rate, turn/wave timeout rate, reconnection
-rate, and reshuffle frequency.
+rate, and reshuffle frequency. It SHALL also surface the live fleet: the number of
+**games in progress** and the number of **groups that exist**.
 
 #### Scenario: Explosion rate is observable against its target
 
@@ -21,6 +22,11 @@ rate, and reshuffle frequency.
 - **WHEN** the dashboard renders
 - **THEN** it includes explosion rate, round/game duration, cards per round,
   dominant-color rate, timeout rate, reconnection rate, and reshuffle frequency
+
+#### Scenario: Live games and groups are shown
+
+- **WHEN** an operator views the dashboard while games are being played
+- **THEN** it shows the current number of live games in progress and the current number of live groups
 
 ### Requirement: Metrics Derived From An Unsampled Source
 
