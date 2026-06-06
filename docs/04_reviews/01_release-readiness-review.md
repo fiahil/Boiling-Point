@@ -1,10 +1,10 @@
 # Boiling Point — Release-Readiness Review
 
 A cross-cutting assessment of what stands between today's codebase and a **public v1
-launch**, synthesizing the component reviews ([server](server-review.md),
-[tui-client](tui-client-review.md), [agent-harness](agent-harness-review.md)) against
-the [constitution](../../CLAUDE.md), [game design](../game-design.md), and
-[roadmap](../roadmap.md).
+launch**, synthesizing the component reviews ([server](02_server-review.md),
+[tui-client](03_tui-client-review.md), [agent-harness](04_agent-harness-review.md)) against
+the [constitution](../../CLAUDE.md), [game design](../02_game-design.md), and
+[roadmap](../05_roadmap.md).
 
 Assessed 2026-06-02 against `main`; **refreshed 2026-06-05** after `review-remediation`,
 `group-model`, `group-fill-and-standings`, `converge-game-loops`, and
@@ -52,7 +52,7 @@ be production-grade regardless.
 ## Acceptable for v1 / deliberately deferred
 
 - **No benchmarks or load testing** → capacity-per-box is unknown. Fine for a soft
-  launch; **measure before scaling**. Tracked as a v2 item ([roadmap](../roadmap.md)).
+  launch; **measure before scaling**. Tracked as a v2 item ([roadmap](../05_roadmap.md)).
 - **OTLP trace backend deferred** (no endpoint configured) — JSON logs + Prometheus
   metrics are sufficient for v1; the span pipeline is in place when a backend is added.
 - **Anonymous sessions, no accounts/rating** — by design for v1 (Principle III); the

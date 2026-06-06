@@ -1,9 +1,8 @@
 # Boiling Point — Game Design (Final)
 
-This is the **canonical game design** for Boiling Point. It supersedes the
-brainstorming documents ([v1](architecture/game-design-initial.md),
-[v2](architecture/game-design-v2.md)), which are retained as a historical
-record of how these decisions were reached.
+This is the **canonical game design** for Boiling Point — the single source of
+truth for the rules, cards, scoring, and balance knobs. It consolidates the
+earlier design brainstorms, which are not retained.
 
 Per the [constitution](../CLAUDE.md), every game mechanic, scoring value,
 threshold, and card effect is a **hypothesis until validated by playtesting**.
@@ -608,7 +607,7 @@ healthy explosion rate before human playtesting).
 
 ## 14. Groups, Matchmaking, Reconnection (Reference)
 
-Mostly per prior decisions; see [server-architecture.md](architecture/server-architecture.md).
+Mostly per prior decisions; see [server-infrastructure.md](03_architecture/02_server-infrastructure.md).
 
 - **Groups:** players **join a group** (by invite link) and then go on **games**
   together; **auto-start at exactly 4 ready players.** No host, no settings,
@@ -642,7 +641,7 @@ Mostly per prior decisions; see [server-architecture.md](architecture/server-arc
   seat) survives a socket drop.
 - **Deferred to v2:** player **rating** (FFA needs TrueSkill / Weng-Lin, not
   Elo), **persistent accounts**, and **skill-based matchmaking** that depends on
-  them. See [roadmap.md](roadmap.md).
+  them. See [05_roadmap.md](05_roadmap.md).
 - **Reconnection:** 60-second grace; a disconnected player **auto-passes (locked
   out)** each wave; full state snapshot on rejoin (only what they're allowed to
   know).
@@ -654,9 +653,7 @@ Mostly per prior decisions; see [server-architecture.md](architecture/server-arc
 **"Arcane Punk Alchemy"** — *Hearthstone* meets *Arcane*. A frantic, slightly
 dangerous workshop, not a dusty library. Dark brass/iron base; player colors
 (Ruby, Sapphire, Emerald, Amethyst) pop dramatically. Card readability priority:
-**Volatility > Color > Points > Effect.** See
-[v1 art direction](architecture/game-design-initial.md#conceptual-art-direction)
-for the full treatment.
+**Volatility > Color > Points > Effect.**
 
 **Key update for the final design:** with cues removed, **the cauldron has no
 "rumble" or "glow" states during play.** It must feel opaque and unpredictable
@@ -719,6 +716,6 @@ Conscious "not yet" decisions — out of scope **on purpose**, not by oversight.
 | **Cauldron-modifier expansions** | The 6 modifiers are the launch set. Add more once the stacking system is validated by playtesting. |
 
 Platform/post-launch deferrals (player rating, persistent accounts, skill-based
-matchmaking) live in [roadmap.md](roadmap.md). Free-text chat (§10) and
+matchmaking) live in [05_roadmap.md](05_roadmap.md). Free-text chat (§10) and
 3-player support (§2) are noted as out of v1 scope but aren't committed to a
 later version.

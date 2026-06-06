@@ -4,8 +4,8 @@ Boiling Point is a Rust cargo workspace plus one Node/TS harness, organized arou
 single principle: **the server is the only source of truth**. Everything else speaks
 to it through one narrow wire protocol and receives only what a player is allowed to
 see. (See the [constitution](../../CLAUDE.md) and, for the deeper infra rationale,
-[server-architecture.md](server-architecture.md) and
-[tech-stack-exploration.md](tech-stack-exploration.md).)
+[02_server-infrastructure.md](02_server-infrastructure.md) and
+[03_tech-stack-exploration.md](03_tech-stack-exploration.md).)
 
 ## Components
 
@@ -65,8 +65,8 @@ One process, cleanly separated modules (single-binary monolith — Principle III
 
    observability.rs   JSON logs + OTEL span bridge + Prometheus + admin span feed
    admin/*            operator-only read/control API (isolated from the player wire)
-   persistence.rs     Postgres schema + writers — BUILT, NOT WIRED at runtime
-                      (review finding F4; being reworked in `persistence-and-replays`)
+   persistence.rs     post-game Postgres writes (results + replay), wired on the live
+                      path; optional — a clean no-op without `DATABASE_URL`
 ```
 
 ## Connection & game lifecycle

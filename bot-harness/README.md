@@ -47,5 +47,5 @@ cargo test -p boiling-point-bot-harness
 divergence, and degenerate-strategy detection, across both transports.
 
 The harness is the primary tool for tuning the open balance knobs in
-[`docs/game-design.md §16`](../docs/game-design.md). The Layer-2 Claude-as-player
+[`docs/02_game-design.md §16`](../docs/02_game-design.md). The Layer-2 Claude-as-player
 harness lives in [`agent-harness/`](../agent-harness/README.md).

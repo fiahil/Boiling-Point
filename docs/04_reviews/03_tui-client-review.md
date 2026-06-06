@@ -3,7 +3,7 @@
 A review of the terminal client crate (`tui-client/`) — a [ratatui](https://ratatui.rs)
 renderer over the wire protocol — against the [constitution](../../CLAUDE.md)
 (especially §I server-authoritative and §II agent-driven) and the
-[game design](../game-design.md).
+[game design](../02_game-design.md).
 
 Reviewed 2026-06-02 against `main`; **refreshed 2026-06-05** after `group-model`,
 `tui-readability-pass`, and `converge-game-loops` landed. Tests green: 24 snapshot

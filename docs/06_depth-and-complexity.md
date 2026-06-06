@@ -3,7 +3,7 @@
 **Status: PROPOSAL — not canonical.** This document captures recommendations for
 growing Boiling Point from a tight one-game experience into a game with a higher
 skill ceiling and long-term replayability. It is **exploratory**; nothing here
-supersedes [`game-design.md`](game-design.md) until ratified and promoted into it.
+supersedes [`02_game-design.md`](02_game-design.md) until ratified and promoted into it.
 
 Per the [constitution](../CLAUDE.md): every value below is a **hypothesis until
 validated by playtesting** — explicit `[needs playtesting]` tags throughout — and
@@ -31,7 +31,7 @@ politics*. Where it is thin is everything **across** a single game:
 
 Two core adjustments attack the "thin" column **without** adding a meta-game,
 accounts, or a content treadmill (those — ranked/rating/seasons — are deliberately
-out of scope here; see [`roadmap.md`](roadmap.md)):
+out of scope here; see [`05_roadmap.md`](05_roadmap.md)):
 
 | # | Adjustment | What it deepens | Risk |
 |---|---|---|---|
@@ -132,7 +132,7 @@ and the already-tuned Peek economy, so let the **bot harness run it head-to-head
 against the canonical ruleset (explosion rate, Peek-fire rate, effect usage,
 degenerate strategies) before deciding whether it *becomes* the core. The seam is
 the same toggle Brewers will use (§B.4). If the data is healthy, promote it to core
-and fold it into game-design.md §3/§5/§9.
+and fold it into 02_game-design.md §3/§5/§9.
 
 ---
 
@@ -289,7 +289,7 @@ raises content volume but not the skill ceiling or player identity, which is whe
 
 ---
 
-## E. If adopted — impact on `game-design.md`
+## E. If adopted — impact on `02_game-design.md`
 
 A non-binding map of which canonical sections each adjustment would touch:
 
@@ -306,4 +306,4 @@ A non-binding map of which canonical sections each adjustment would touch:
    sharper core question; bot-harness can answer it fastest).
 2. Open an OpenSpec change (`openspec/changes/…`) with proposal + design + specs.
 3. Run the bot-harness comparison; let the data set the deck/Peek numbers.
-4. Promote validated rules into `game-design.md`; park the rest here.
+4. Promote validated rules into `02_game-design.md`; park the rest here.

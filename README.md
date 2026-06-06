@@ -6,9 +6,9 @@ secretly toss ingredient cards into a shared, unstable cauldron — push the bre
 its hidden boiling point and *everyone* eats the loss; stop in time and the dominant
 color scoops the pot.
 
-📖 **New here? Start with [docs/getting-started.md](docs/getting-started.md).** The
-full documentation hub is [docs/](docs/); the canonical rules are in
-[docs/game-design.md](docs/game-design.md).
+📖 **New here? Start with [docs/01_getting-started.md](docs/01_getting-started.md).**
+The full documentation hub is [docs/](docs/); the canonical rules are in
+[docs/02_game-design.md](docs/02_game-design.md).
 
 ## Workspace
 
@@ -23,8 +23,8 @@ openspec/       change proposals (changes/), resolved specs (specs/), archive
 scripts/        playtest.sh — one-command solo playtest launcher
 ```
 
-See [docs/architecture/overview.md](docs/architecture/overview.md) for how the pieces
-fit together.
+See [docs/03_architecture/01_overview.md](docs/03_architecture/01_overview.md) for how
+the pieces fit together.
 
 ## Development
 

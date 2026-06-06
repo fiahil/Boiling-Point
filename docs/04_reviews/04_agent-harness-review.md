@@ -2,7 +2,7 @@
 
 A review of the Claude-as-player harness (`agent-harness/`) — the Layer-2 testing
 harness from the constitution's §II — against the [constitution](../../CLAUDE.md) and
-the [game design](../game-design.md). It is a **Node/TypeScript** package (not a cargo
+the [game design](../02_game-design.md). It is a **Node/TypeScript** package (not a cargo
 crate) so it can use the Claude Agent SDK and bill against a Claude subscription.
 
 Reviewed 2026-06-02 against `main`; **refreshed 2026-06-05** (the hand-mirrored

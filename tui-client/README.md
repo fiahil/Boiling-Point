@@ -46,4 +46,4 @@ cargo test -p boiling-point-tui
   a screen — there are deliberately **no `examples/`**.
 - `tests/live_server.rs` — end-to-end against a real in-process server.
 
-See [`docs/reviews/tui-client-review.md`](../docs/reviews/tui-client-review.md).
+See [`docs/04_reviews/03_tui-client-review.md`](../docs/04_reviews/03_tui-client-review.md).
