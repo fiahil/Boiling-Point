@@ -11,7 +11,52 @@ every adjustment must respect Principle I (server-authoritative), Principle III
 (start simple, justify complexity), and Principle IV (data-informed balance via
 the bot harness).
 
-Explored 2026-06-05.
+Explored 2026-06-05. Extended 2026-06-06 (Ingredients / deck-building — §C).
+
+---
+
+## Executive summary — how Boiling Point grows from here
+
+Boiling Point is deep **within** a single game and thin **across** games (§0).
+Three core-adjustment directions attack that thin column. Each ships behind a
+toggle over the canonical symmetric shared-deck baseline (which stays the default
+and the future ranked baseline), and all three **compound** (§D).
+
+```
+   DIRECTION         DEEPENS                          THIN-COLUMN LINE IT FIXES
+   A · Vote/Spell     in-wave decision (1 card → 2)    (mostly within-game depth)
+   B · Brewers        player identity                  "every seat is identical"
+   C · Ingredients    pre-game strategic agency        "cards are pure luck"  ◄ only C
+```
+
+**Brewers + Ingredients** together are the *identity-&-agency* path — who you
+**are** (Brewer) and what you **bring** (your deck). They are the two highest
+depth-per-complexity moves for turning a tight indie game into one with a real
+skill ceiling, and — critically — they are **low-risk to the delicate
+Peek / blind-volatility economy** the canonical tuning rests on (§16). Vote/Spell
+is the sharpest *in-the-moment* deepener but is the one direction that can quietly
+break that Peek economy (A.4).
+
+**Personal recommendation** *(this revises the original §G "Vote/Spell first" call)*:
+
+```
+   1. BREWERS       Public disclosure, ~6 identities, 2-pick-1 draft.
+                    Highest depth/complexity; proven model (Cosmic Encounter).
+
+   2. INGREDIENTS   Procedural "Recipe" decks, COLOR-ANCHORED with a scarce
+                    off-color toolkit. Restores AND deepens the politics
+                    (the Loyalist↔Diplomat axis), kills the "pure luck" line,
+                    and needs no saved decks → no accounts (stays in v1 scope).
+
+   3. VOTE/SPELL    Ship as a bot-harness-vetted "Wild Brew" mode. Deepest, but
+                    the only one that threatens the tuned Peek knob — sequence it
+                    last, behind data, not as the thing you lead with.
+```
+
+Why the reorder: the goal here is restoring **political & strategic** depth and
+**player identity** — which weights squarely toward B + C, the two directions that
+*don't* endanger the canonical core. Vote/Spell stays valuable, but as the change
+you **de-risk with the harness**, not the one you open with.
 
 ---
 
@@ -37,9 +82,11 @@ out of scope here; see [`05_roadmap.md`](05_roadmap.md)):
 |---|---|---|---|
 | **A** | **Vote vs Spell** — every card is playable as its color *or* as wild | Per-card decision depth; effects gain opportunity cost | Threatens the Peek economy + adds decision load to fast waves |
 | **B** | **Brewers** — asymmetric player identities | Player identity, replayability, "read the person not just the cards" | Balance/readability vs §III |
+| **C** | **Ingredients** — players stock the personal deck they draw from | **Pre-game strategic agency** — converts color access from luck → choice; restores cross-color politics as a *budgeted* resource | Touches the shared-deck political pillar (§3); widens the balance surface |
 
-They **compound**: Vote/Spell creates a new rules surface that Brewers can bend
-(§C).
+They **compound** (§D): Vote/Spell creates a new rules surface that Brewers can
+bend, and Ingredients hands every player the lever that makes a Brewer identity
+*expressible* (build the deck that suits who you are).
 
 ---
 
@@ -258,29 +305,231 @@ Whether Brewers are known decides the feature's entire feel:
 
 ---
 
-## C. Why A and B compound
+## C. Ingredients — players stock the deck they draw from
 
-Vote/Spell (§A) creates a brand-new rules surface — *the color/effect toggle* —
-that Brewers (§B) can bend. Brewers that exist **only because** of Vote/Spell:
+### C.1 The rule
+
+Today every hand is a random draw from one shared shoe — so **pre-game agency is
+zero** (§0: "cards are pure luck"). Ingredients gives each player a **personal
+deck** — their *Pantry* — stocked before the game and drawn from only by them. The
+Pantry is **anchored in the player's own color**, but **budgets a scarce minority
+of off-color, wild, and effect cards**: its *toolkit*.
+
+```
+   A PANTRY  (one player's personal shoe, ~18–24 cards [needs playtesting])
+
+   ┌──────────────────────────────────────────────────────────┐
+   │  ~70–80%  your OWN color    → identity reads clearly,       │
+   │                               the Aggressor can finally     │
+   │                               COMMIT to red                 │
+   │  ~20–30%  TOOLKIT budget    → THE politics knob:            │
+   │            • off-color cards   (ally · kingmake · misdirect) │
+   │            • wilds             (pot inflators · go neutral)  │
+   │            • effects           (capped — protects Peek, §16) │
+   └──────────────────────────────────────────────────────────┘
+        Everyone gets an EQUAL construction budget → fair, like
+        TCG archetypes or MOBA picks (equivalent, not identical).
+```
+
+The pot, dominance, scoring, and explosion (§6/§7) are **untouched** — Ingredients
+only changes *what each player can draw*. Clean seam onto the existing core.
+
+### C.2 How it puts the politics back — and deepens them
+
+The naïve version ("you only ever draw your own color") **amputates** the political
+core: with 4 players = 4 colors, if you can only play your own color you can only
+ever help yourself — kingmaking, cross-color alliances, and misdirection all die
+(§3 calls these the central acts). The **color-anchored deck with a budgeted
+toolkit** does the opposite — it converts cross-color play from a *lucky draw* into
+a *pre-committed strategic resource*, which makes it **deeper**, not absent:
+
+**1 · Cross-color cards become pre-committed political capital.** You decide
+*before round 1* how much capital to pack. If decks are **public** (C.3, fork 4),
+the table reads your intent before a card drops — *"Red built a Cosmopolitan deck;
+they're not trying to win, they're trying to decide who does."* The metagame now
+starts at the draft.
+
+**2 · Scarcity makes every off-color play scream intent.** Three Blue cards drawn
+by luck are noise; one Blue card you *chose* to pack, out of only four off-color
+cards all game, is a loud, legible act. Misdirection and kingmaking become more
+deliberate **and** more readable — the Diplomat's craft (§12) with a sharper edge.
+
+**3 · Your deck is the one thing you can't lie about.** Every emote is non-binding
+(§10); the only binding promise was the Honest Broker Brewer. A *public* deck adds
+a second structural truth — it bounds your **capabilities**. But your individual
+plays stay hidden (blind volatility + hidden commits, §4/§5), so the table knows
+your **range**, never your **hand**. This is poker: it *raises* the reading skill
+instead of removing it.
+
+**4 · Card-counting upgrades to range-reading.** §10's "what's left in the shared
+shoe" becomes *"Red has burned both Peeks and the Shield — they're out of safety
+now, they're exposed."* The memory skill the design already rewards gets **deeper**.
+
+**5 · Alliances and sabotage gain a pre-game dimension.** A toolkit budget
+*telegraphs* an intended alliance you can then honor or betray; a high-volatility
+build is a *committed* Saboteur — though §7's shared-pain still makes blowing the
+pot hurt you too, so pure aggression stays self-limiting (the anti-degenerate
+guardrail holds).
+
+These collapse into a clean, legible **2×2 of strategic identities** — each one
+creating reads for the *whole table* (the same discipline test a Brewer must pass,
+§B.1):
+
+```
+                        AGGRESSIVE  (high vol · weapons · greedy points)
+                              │
+        The Warlord ──────────┼────────── The Provocateur
+        (mono-color, pushes   │        (off-color weapons — sows chaos
+         own color to win)    │         in others' pots; a built Saboteur)
+   ─────────────────────────  ┼  ─────────────────────────
+        LOYALIST              │              DIPLOMAT
+        (anchored, self-win)  │        (off-color + wild toolkit)
+                              │
+        The Fortress ─────────┼────────── The Kingmaker
+        (mono-color · Dampen/ │        (Copycat / Double Down / wilds —
+         Shield / Peek · endure)│        decides who wins, can't itself)
+                              │
+                        PROTECTIVE  (low vol · safety · information)
+```
+
+The **Loyalist ↔ Diplomat** axis *is* the politics knob — the dial deciding how
+much of your game is "win on my own color" vs "broker everyone else's outcome." It
+did not exist as a *choice* before; color access was pure luck. The
+**Aggressive ↔ Protective** axis is the original idea (build to push or to endure).
+Together they make a deck a **strategic identity**, not a stat lead.
+
+### C.3 The four forks (your open questions)
+
+**Fork 1 — Shared shoe vs personal draw** *(your Q1 "shuffle all together" + Q2
+"only draw your own color" are the same axis):*
+
+| Model | What happens | Verdict |
+|---|---|---|
+| **Personal deck, personal draw** | Each player draws only their own stocked shoe | ✅ **Recommended.** Decks *mean* something; identity is legible. |
+| **Shuffle all together, blind draw** | You may draw cards an *opponent* stocked | ⚠️ Anti-synergy — a strong deck *feeds your enemies*. Avoid unless you want exactly that chaos. |
+| **Shuffle together, owner-tagged** | One physical pile, but you still only draw *yours* | = personal draw; a pure implementation detail, no design difference. |
+
+Note the trap in "only draw your own **color**" ≠ "draw your own **deck**." The
+former amputates politics (C.2); the latter, anchored, *restores* them.
+
+**Fork 2 — Construction method** *(your Q4: pick cards vs. set randomizer
+parameters)* — Principle III has strong opinions here:
+
+```
+SIMPLEST ──────────────────────────────────────────────────────► MOST COMPLEX
+Preset archetypes      RECIPE dials             Constrained        Freeform
+(2–4 fixed decks:      (Posture: Aggro↔Protect; draft (pick N        deckbuilder
+ Warlord / Fortress /  Allegiance: Loyalist↔     from a pool         (Hearthstone)
+ Kingmaker …)          Diplomat; +capped Tooling within a budget)
+                       → PROCEDURAL deck,
+                         novel every game
+   ▲ fine v0               ▲ RECOMMENDED                              ▲
+                       novelty + agency + bounded                 saved decks →
+                       (generator enforces caps,                  accounts → OUT
+                        so no degenerate min-max)                 of v1 scope (§14)
+```
+
+Your "set the parameters of a randomizer that builds a novel deck each game"
+instinct is the sweet spot: **more replayable** than fixed presets, **far safer**
+than freeform (the generator *enforces* the balance caps, so no degenerate
+min-maxing), and there is **nothing to save** — which keeps the whole feature
+inside the anonymous-session world (§14). Freeform is a trap: it drags in saved
+decks → accounts → a content treadmill, all explicitly out of scope.
+
+**Fork 3 — Ordering vs the Brewer pick** *(your Q3):*
+
+```
+   BREWER → DECK     build to suit the identity (the synergy hunt) — richest skill
+                     expression; RECOMMENDED.
+   DECK → BREWER     the Brewer is a wildcard topping.
+   BUNDLED "KIT"     Brewer + signature deck as ONE pick — Hearthstone-class,
+                     simplest & most legible; a fine v0.
+```
+
+**Fork 4 — Disclosure** *(mirrors the Brewer fork, §B.3):*
+
+```
+   PUBLIC             LEAKED                       SECRET
+   deck comp known    hidden; the depile reveals   nobody knows; deduced over
+   from the draft.    it over the game (weaponizes  5 rounds (a deduction game
+   Richest legible    the depile — the uniquely     bolted on top).
+   reads; RECOMMEND.  Boiling-Point variant).      Highest risk, most vs §III.
+```
+
+Public is the recommended launch — it is what makes C.2's pre-game reads exist at
+all. Leaked is the v-next evolution (same move the doc recommends for Brewers).
+
+### C.4 Risks & open forks
+
+1. **The Peek / effect economy.** §16 names Peek count (4) as *the* balance knob.
+   Letting players stock their own effects ("2 Peeks + a Shield") is the spiciest
+   lever and the biggest risk to blind-volatility tuning. Mitigation: the Recipe
+   generator **caps effect density per deck** (freeform can't) — a bot-harness
+   target. `[needs playtesting]`
+2. **Determinism worry.** Color-anchored decks could make dominance predictable
+   ("whoever pushes their own color hardest wins"). Counter: the off-color toolkit,
+   wilds, Copycat/Double Down, **Reversal** (which swings *harder* when fewer colors
+   are present — same logic the doc notes for Spells, A.3), and the existing hidden
+   commits / blind volatility all keep the pot's color outcome live. `[needs playtesting]`
+3. **The pre-game phase vs the lobby.** §14 is "no settings, auto-start at exactly
+   4, ~5–10 min." A 2-pick-1 draft or a few dial-twists survives that ethos; a
+   freeform builder does not. Keep the build step **fast**.
+4. **Saved decks = accounts = out of scope.** Presets and procedural Recipes have
+   nothing to persist — a major Principle-III point for the procedural route.
+5. **Balance surface.** Ingredients widens the harness matrix to **persona ×
+   Brewer × deck-archetype** — large but *bounded* by the procedural caps. This is
+   exactly the bot harness's job (§IV).
+
+### C.5 Recommendation
+
+Ship Ingredients as the **procedural "Recipe"** route: a few dials
+(**Posture** Aggressive↔Protective, **Allegiance** Loyalist↔Diplomat, plus a capped
+Tooling slider) that seed a **novel, color-anchored personal deck** each game,
+chosen **after the Brewer**, with **public** deck composition, behind the **same
+toggle** as Brewers and Vote/Spell. This restores *and deepens* the politics
+(C.2), directly fixes the "cards are pure luck" line (§0), needs **no accounts**,
+and hands the harness a bounded surface to tune. All values `[needs playtesting]`.
+
+---
+
+## D. Why A, B, and C compound
+
+These are not parallel features; they **multiply**.
+
+**A × B — Vote/Spell creates a rules surface Brewers can bend.** Brewers that exist
+**only because** of Vote/Spell (§A):
 
 | Brewer | One-line rule |
 |---|---|
 | **The Polymath** 🌶️ | Your effects fire in **color mode too** — you never sacrifice the vote. |
 | **The Witch** | Your Spells still count their color at **half** points — a half-vote *and* a spell at once. |
 
-And the **Echo** Brewer (effect resolves twice) gets sharper under Vote/Spell,
-because each fire already costs more. The two proposals are not parallel features;
-they multiply.
+The **Echo** Brewer (effect resolves twice) also sharpens under Vote/Spell, because
+each fire already costs more.
+
+**B × C — your Brewer makes your deck, your deck expresses your Brewer.** Ingredients
+is the lever that turns a Brewer from a *stat bent* into a *build*:
+
+| Pairing | Why it deepens |
+|---|---|
+| **Brewer + deck = "class + loadout"** | Pick the Echo Brewer, then stock an effect-rich deck to abuse the double-fire — the synergy hunt is the skill ceiling. |
+| **Deck-economy Brewers get teeth** | The Forager (look at top 2, swap one) and Magpie (refill to 6) are far richer when you *know your own deck* — look-ahead becomes a real plan, not a coin flip. |
+| **De-dup needed** | The Diviner (start holding a Peek) overlaps with "just stock a Peek." Re-point or cut such Brewers, or make them *deck-archetype enablers* instead. |
+
+**A × C — Vote/Spell doubles the utility of every toolkit card.** Under Vote/Spell,
+your scarce off-color card can be played as a colored **Vote** (kingmake) *or* a
+colorless **Spell** (just the effect) — so the Allegiance dial (C.2) and the
+color/effect toggle (A.1) interact: even a Loyalist deck can "go neutral" on demand.
 
 ---
 
-## D. Constitution check
+## E. Constitution check
 
 | Principle | This proposal |
 |---|---|
-| **I — Server-authoritative** | Card mode (Vote/Spell), Brewer identity, and all effect resolution are computed and validated **server-side**. The client renders a mode toggle and sends an intent; it never decides outcomes. |
-| **III — Start simple** | Both ship **behind a toggle**, leaving the canonical symmetric ruleset as the untouched default. Vote/Spell ships as a *mode* before any core replacement. Brewers launch as a *small* pool, Public disclosure (the simplest), before the spicier Leaked variant. |
-| **IV — Playtest-driven** | Every number is `[needs playtesting]`. The bot harness runs Vote/Spell head-to-head vs. canonical, and the persona × Brewer matrix, **before** human playtests. The Peek-economy risk (A.4) is an explicit data target. |
+| **I — Server-authoritative** | Card mode (Vote/Spell), Brewer identity, deck construction, and all effect resolution are computed and validated **server-side**. The server builds the Pantry from the chosen Recipe, owns the deck, and deals; the client renders a mode toggle / dial UI and sends intents, never deciding outcomes. |
+| **III — Start simple** | All three ship **behind a toggle**, leaving the canonical symmetric shared-deck ruleset as the untouched default. Vote/Spell ships as a *mode* before any core replacement. Brewers launch as a *small* Public pool before the spicier Leaked variant. Ingredients ships as **procedural Recipes** (no saved decks → no accounts) before any freeform builder, and **color-anchored** so the shared-deck political pillar (§3) is restored, not removed. |
+| **IV — Playtest-driven** | Every number is `[needs playtesting]`. The bot harness runs Vote/Spell head-to-head vs. canonical, the persona × Brewer matrix, and the persona × Brewer × deck-archetype matrix **before** human playtests. The Peek-economy risk (A.4 / C.4) is an explicit data target for both Vote/Spell *and* Ingredients' effect-density caps. |
 
 **Rejected simpler alternative:** deepen the game purely by adding more modifiers
 and effect cards (the "natural growth" path). Rejected as the *primary* lever — it
@@ -289,7 +538,7 @@ raises content volume but not the skill ceiling or player identity, which is whe
 
 ---
 
-## E. If adopted — impact on `02_game-design.md`
+## F. If adopted — impact on `02_game-design.md`
 
 A non-binding map of which canonical sections each adjustment would touch:
 
@@ -297,13 +546,18 @@ A non-binding map of which canonical sections each adjustment would touch:
 |---|---|
 | **Vote/Spell** | §3 (the card — add the mode), §5 (turn structure — the play gesture), §6 (scoring — colorless Spell points), §9 (effects — fire-on-Spell + Double Down/Copycat clauses), §13 (deck — rebalance effect-card share), §16 (balance knobs — Peek-fire rate). |
 | **Brewers** | New section (player identities), §2 (format), §11 (Deathmatch — per-Brewer tiebreaker value), §12 (archetypes — Brewers vs personas). |
+| **Ingredients** | §3 (any-color-from-shared-deck → color-anchored personal deck + toolkit), §13 (deck composition → per-player Pantry sizing, reshuffle, effect caps), §10 (card-counting → per-opponent range-reading), §12 (archetypes — the deck-identity 2×2), §14 (a fast pre-game Recipe step in the lobby flow), §16 (new knobs — toolkit %, effect caps, deck size). |
 
 ---
 
-## F. Next steps (when ready to leave explore mode)
+## G. Next steps (when ready to leave explore mode)
 
-1. Pick the **first** target — recommend **Vote/Spell as a "Wild Brew" mode** (the
-   sharper core question; bot-harness can answer it fastest).
-2. Open an OpenSpec change (`openspec/changes/…`) with proposal + design + specs.
-3. Run the bot-harness comparison; let the data set the deck/Peek numbers.
+1. Pick the **first** target. The original call here was Vote/Spell; the
+   **Executive summary** (top of page) revises that to **Brewers first, then
+   Ingredients, then Vote/Spell** — leading with the two identity-&-agency
+   directions that *don't* threaten the tuned Peek economy.
+2. Open an OpenSpec change (`openspec/changes/…`) per target, with proposal +
+   design + specs. (Brewers and Ingredients can share the pre-game-setup seam.)
+3. Run the bot-harness comparison; let the data set the deck / Peek / toolkit
+   numbers and validate the persona × Brewer × deck-archetype matrix.
 4. Promote validated rules into `02_game-design.md`; park the rest here.

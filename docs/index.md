@@ -16,7 +16,7 @@ folder has its own `index.md`.
 | Understand the system shape (crates, data flow, lifecycle) | [03_architecture/](03_architecture/index.md) |
 | Review code health and release-readiness | [04_reviews/](04_reviews/index.md) |
 | See what's parked for after v1 | [05_roadmap.md](05_roadmap.md) |
-| Explore proposed core-depth adjustments (Vote/Spell, Brewers) | [06_depth-and-complexity.md](06_depth-and-complexity.md) |
+| Explore proposed core-depth adjustments (Vote/Spell, Brewers, Ingredients) | [06_depth-and-complexity.md](06_depth-and-complexity.md) |
 
 ## Map of the docs
 
@@ -38,7 +38,7 @@ docs/
 │   ├── 03_tui-client-review.md        terminal client review
 │   └── 04_agent-harness-review.md     Claude-as-player harness review
 ├── 05_roadmap.md                  v2 / post-launch features and the seams left for them
-├── 06_depth-and-complexity.md     PROPOSAL — core-depth adjustments (Vote/Spell, Brewers)
+├── 06_depth-and-complexity.md     PROPOSAL — core-depth adjustments (Vote/Spell, Brewers, Ingredients)
 └── 99_archive/                    resolved / superseded notes, kept for history
     ├── index.md
     └── naming-ideas.md
