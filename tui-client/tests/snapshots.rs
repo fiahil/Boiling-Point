@@ -30,6 +30,24 @@ fn assert_lacks(s: &str, needle: &str) {
     );
 }
 
+/// Regression: the keep-alive heartbeat must stay gated until the client has
+/// entered. A fresh app sits on the entry menu and has *not* entered, so the
+/// event loop must not send a `Heartbeat` yet; once it has joined a group it
+/// has. (Without this gate, `tokio::time::interval`'s immediate first tick fires
+/// a `Heartbeat` as the socket's very first frame, which the server rejects —
+/// "expected CreateGroup, JoinGroup, or EnqueueMatch" — and drops the socket,
+/// so quick match never connects.)
+#[test]
+fn heartbeat_gated_until_entered() {
+    let mut app = App::new();
+    assert!(
+        !app.has_entered(),
+        "the entry menu must not send heartbeats"
+    );
+    app.on_server(&fixtures::group_joined());
+    assert!(app.has_entered(), "after entering, keep-alives may flow");
+}
+
 #[test]
 fn lobby_shows_seats_and_code() {
     let mut app = App::new();

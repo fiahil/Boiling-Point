@@ -205,6 +205,18 @@ impl App {
         self.should_quit = true;
     }
 
+    /// Whether the client has entered — i.e. sent an entry message
+    /// (`EnqueueMatch`/`CreateGroup`/`JoinGroup`) and so opened the server
+    /// handshake. The keep-alive heartbeat must not fire before this: the
+    /// server requires a connection's *first* frame to be an entry message, so a
+    /// premature heartbeat from the entry menu is rejected ("expected
+    /// CreateGroup, JoinGroup, or EnqueueMatch") and the socket is dropped.
+    /// `Phase::Entry` (the menu) and `Phase::JoinCode` (typing an invite code)
+    /// are the only pre-entry phases.
+    pub fn has_entered(&self) -> bool {
+        !matches!(self.phase, Phase::Entry | Phase::JoinCode)
+    }
+
     /// Pre-fill the display-name field (from a `--name` argument).
     pub fn set_name(&mut self, name: String) {
         self.name_input = name;

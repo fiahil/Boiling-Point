@@ -244,3 +244,26 @@ async fn live_full_game_reaches_game_over() {
         "expected a game-over screen after a full real game; got:\n{final_screen}"
     );
 }
+
+/// Regression (entry handshake): the server requires a connection's *first* frame
+/// to be an entry message, so a keep-alive `Heartbeat` sent before entering is
+/// rejected and the socket dropped. This is exactly the failure a TUI hit when
+/// its heartbeat `interval` fired its immediate first tick on the entry menu,
+/// poisoning the socket before the user could pick "quick match"; the client now
+/// gates the heartbeat behind `App::has_entered()`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn heartbeat_before_entering_is_rejected() {
+    let url = start_server().await;
+    let mut ws = connect(&url).await;
+    // A client still on the entry menu sends a keep-alive as its first frame.
+    send(&mut ws, &ClientMessage::Heartbeat).await;
+    match recv(&mut ws).await {
+        Some(ServerMessage::Error { message, .. }) => assert!(
+            message.contains("CreateGroup"),
+            "expected the entry-handshake error, got: {message}"
+        ),
+        other => panic!("expected an entry-handshake Error before join, got {other:?}"),
+    }
+    // And a fresh client is on the menu (not entered), so it would not send it.
+    assert!(!App::new().has_entered());
+}

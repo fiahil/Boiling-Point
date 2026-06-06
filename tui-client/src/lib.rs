@@ -260,7 +260,14 @@ async fn event_loop(
                 // Keep-alive so the server's idle timeout never drops a quiet seat
                 // (passed/locked-out or just watching). Sent straight to the socket,
                 // not through on_key, so it stays out of the debug message log.
-                if let Some(tx) = &intent_tx {
+                //
+                // Only once we've entered: the server's first frame MUST be an entry
+                // message, and `interval`'s first tick fires immediately, so an
+                // un-gated heartbeat would beat the user's menu choice onto the wire
+                // and the server would reject it and drop the socket.
+                if app.has_entered()
+                    && let Some(tx) = &intent_tx
+                {
                     let _ = tx.send(ClientMessage::Heartbeat).await;
                 }
             }
