@@ -20,7 +20,7 @@ use boiling_point_protocol::vocab::{CardView, Color, HandCard, ModifierKind};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
-use crate::persistence::{GameResult, PlayerResult, RoundResult};
+use crate::persistence::{CompletedGame, GameStats, PlayerOutcome, StoredReplay};
 
 use super::card::Card;
 use super::deathmatch::{DeathmatchResult, run_deathmatch};
@@ -220,21 +220,25 @@ fn pot_contributions(round: &Round, players: &[Player]) -> Vec<Contribution> {
         .collect()
 }
 
-/// Build a persistable [`GameResult`] from the parts both game loops hold (the
-/// in-process [`Game`] and the async `session::run_game`). Finishing positions
-/// rank by descending final score. Shared so both paths persist identically
-/// (review-remediation F2: the two loops converge on one result shape).
+/// Build a persistable [`CompletedGame`] from the parts both game loops hold (the
+/// in-process [`Game`] and the async `session::run_game`) plus the encoded
+/// `replay`. Finishing positions rank by descending final score; the `stats_*`
+/// summary and the deathmatch flag (a tie for the lead) are derived here. Shared
+/// so both paths persist identically (review-remediation F2: the two loops
+/// converge on one result shape).
 #[allow(clippy::too_many_arguments)]
-pub fn build_game_result(
-    players: impl IntoIterator<Item = (PlayerId, String)>,
+pub fn build_completed_game(
+    players: impl IntoIterator<Item = (PlayerId, Color, String)>,
     scores: &HashMap<PlayerId, i32>,
     cards_played: &HashMap<PlayerId, u32>,
     rounds: &[RoundLog],
+    winners: &[PlayerId],
     game_id: Uuid,
     started_at: DateTime<Utc>,
     ended_at: DateTime<Utc>,
-) -> GameResult {
-    let players: Vec<(PlayerId, String)> = players.into_iter().collect();
+    replay: StoredReplay,
+) -> CompletedGame {
+    let players: Vec<(PlayerId, Color, String)> = players.into_iter().collect();
 
     // Finishing positions by descending score.
     let mut ranked: Vec<(PlayerId, i32)> = scores.iter().map(|(p, s)| (*p, *s)).collect();
@@ -245,35 +249,41 @@ pub fn build_game_result(
         .map(|(i, (p, _))| (*p, (i + 1) as i16))
         .collect();
 
-    let player_results = players
+    let player_outcomes: Vec<PlayerOutcome> = players
         .iter()
-        .map(|(id, display_name)| PlayerResult {
+        .map(|(id, color, display_name)| PlayerOutcome {
             player_id: id.0,
             display_name: display_name.clone(),
+            color: *color,
             final_score: scores[id],
             finish_position: position[id],
-            cards_played_total: *cards_played.get(id).unwrap_or(&0) as i16,
+            cards_played: *cards_played.get(id).unwrap_or(&0) as i16,
         })
         .collect();
 
-    let round_results = rounds
-        .iter()
-        .map(|r| RoundResult {
-            round_number: r.round_number as i16,
-            threshold: r.effective_boiling_point as i16,
-            exploded: r.exploded,
-            volatility_total: r.final_volatility as i16,
-            cards_played: r.cards_played as i16,
-        })
-        .collect();
+    let high_score = scores.values().copied().max().unwrap_or(0);
+    let low_score = scores.values().copied().min().unwrap_or(0);
+    // A deathmatch ran iff the lead was tied at game end.
+    let leaders = scores.values().filter(|s| **s == high_score).count();
+    let stats = GameStats {
+        round_count: rounds.len() as i16,
+        player_count: players.len() as i16,
+        explosions: rounds.iter().filter(|r| r.exploded).count() as i16,
+        cards_played: cards_played.values().sum::<u32>() as i32,
+        high_score,
+        low_score,
+        deathmatch: leaders > 1,
+    };
 
-    GameResult {
+    CompletedGame {
         game_id,
         started_at,
         ended_at,
-        round_count: rounds.len() as i16,
-        players: player_results,
-        rounds: round_results,
+        player_ids: players.iter().map(|(id, _, _)| id.0).collect(),
+        winner_ids: (!winners.is_empty()).then(|| winners.iter().map(|p| p.0).collect()),
+        players: player_outcomes,
+        stats,
+        replay,
     }
 }
 
@@ -880,23 +890,29 @@ impl<'a> Game<'a> {
             .collect()
     }
 
-    /// Build a persistable result for this completed game (delegates to the
-    /// shared [`build_game_result`] so the async loop produces an identical shape).
-    pub fn to_game_result(
+    /// Build a persistable record for this completed game (delegates to the
+    /// shared [`build_completed_game`] so the async loop produces an identical
+    /// shape), given its encoded `replay`.
+    pub fn to_completed_game(
         &self,
         outcome: &GameOutcome,
+        replay: StoredReplay,
         game_id: Uuid,
         started_at: DateTime<Utc>,
         ended_at: DateTime<Utc>,
-    ) -> GameResult {
-        build_game_result(
-            self.players.iter().map(|p| (p.id, p.display_name.clone())),
+    ) -> CompletedGame {
+        build_completed_game(
+            self.players
+                .iter()
+                .map(|p| (p.id, p.color, p.display_name.clone())),
             &outcome.scores,
             &outcome.cards_played,
             &outcome.rounds,
+            &outcome.winners,
             game_id,
             started_at,
             ended_at,
+            replay,
         )
     }
 }
@@ -966,34 +982,55 @@ mod tests {
         }
     }
 
-    /// The orchestration core carries the per-player and per-round analytics that
-    /// feed a persistable [`GameResult`] — the data the pre-convergence async path
-    /// dropped. Both paths drive this same `Game`, so the converged async loop now
-    /// has it too (converge-game-loops 2.3).
+    /// The orchestration core carries the per-player analytics and the summary
+    /// stats that feed a persistable [`CompletedGame`] — the data the
+    /// pre-convergence async path dropped. Both paths drive this same `Game`, so
+    /// the converged async loop now has it too (converge-game-loops 2.3).
     #[test]
-    fn game_result_carries_per_player_and_per_round_analytics() {
+    fn completed_game_carries_per_player_analytics_and_stats() {
         let (reg, cfg) = registry_and_config();
-        let mut game = Game::new(&reg, &cfg, four_players(), 2024);
+        let roster = four_players();
+        let mut game = Game::new(&reg, &cfg, roster.clone(), 2024);
         let mut decider = eager();
         let outcome = game.play_out(&mut decider);
 
         let now = chrono::Utc::now();
-        let result = game.to_game_result(&outcome, Uuid::new_v4(), now, now);
+        let game_id = Uuid::new_v4();
+        let replay = crate::replay::encode_replay(
+            game_id,
+            outcome.seed,
+            &cfg,
+            roster
+                .iter()
+                .map(|p| (p.id, p.color, p.display_name.clone())),
+            &outcome.action_log,
+            &[],
+        )
+        .expect("encode");
+        let completed = game.to_completed_game(&outcome, replay, game_id, now, now);
 
-        // Per-round analytics for every round.
-        assert_eq!(result.rounds.len(), ROUND_COUNT as usize);
+        // Summary stats: five rounds, four players.
+        assert_eq!(completed.stats.round_count, ROUND_COUNT as i16);
+        assert_eq!(completed.stats.player_count, 4);
         // Every player has a result line, and cards committed are tracked (the eager
         // decider plays whenever it holds a card).
-        assert_eq!(result.players.len(), 4);
-        let total_cards: i16 = result.players.iter().map(|p| p.cards_played_total).sum();
+        assert_eq!(completed.players.len(), 4);
+        let total_cards: i16 = completed.players.iter().map(|p| p.cards_played).sum();
         assert!(
             total_cards > 0,
             "the converged analytics tracked cards played"
         );
+        assert_eq!(completed.stats.cards_played, total_cards as i32);
         // Finishing positions are a permutation of 1..=4.
-        let mut positions: Vec<i16> = result.players.iter().map(|p| p.finish_position).collect();
+        let mut positions: Vec<i16> = completed
+            .players
+            .iter()
+            .map(|p| p.finish_position)
+            .collect();
         positions.sort();
         assert_eq!(positions, vec![1, 2, 3, 4]);
+        // The winner(s) are recorded.
+        assert!(completed.winner_ids.is_some_and(|w| !w.is_empty()));
     }
 
     #[test]
@@ -1058,7 +1095,6 @@ mod tests {
 
         let game_id = Uuid::new_v4();
         let now = chrono::Utc::now();
-        let result = game.to_game_result(&outcome, game_id, now, now);
         let replay = crate::replay::encode_replay(
             game_id,
             outcome.seed,
@@ -1067,8 +1103,10 @@ mod tests {
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
             &outcome.action_log,
+            &[],
         )
         .expect("encode replay");
+        let completed = game.to_completed_game(&outcome, replay, game_id, now, now);
 
         let url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgres://postgres@localhost:5432/boiling_point".to_string());
@@ -1076,8 +1114,8 @@ mod tests {
         crate::persistence::run_migrations(&pool)
             .await
             .expect("migrate");
-        // One completion write: game + per-player + per-round + replay rows.
-        crate::persistence::persist_game(&pool, &result, Some(&replay))
+        // One completion write: the consolidated game_replays row (+ player records).
+        crate::persistence::persist_game(&pool, &completed)
             .await
             .expect("persist");
 
