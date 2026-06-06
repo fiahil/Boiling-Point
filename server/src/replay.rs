@@ -357,9 +357,7 @@ mod tests {
             TimedInput {
                 player: roster[1].id,
                 at_ms: 340,
-                input: RecordedInput::Emote {
-                    emote: EmoteId(2),
-                },
+                input: RecordedInput::Emote { emote: EmoteId(2) },
             },
             TimedInput {
                 player: roster[2].id,

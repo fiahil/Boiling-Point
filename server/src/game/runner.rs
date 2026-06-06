@@ -1022,8 +1022,11 @@ mod tests {
         );
         assert_eq!(completed.stats.cards_played, total_cards as i32);
         // Finishing positions are a permutation of 1..=4.
-        let mut positions: Vec<i16> =
-            completed.players.iter().map(|p| p.finish_position).collect();
+        let mut positions: Vec<i16> = completed
+            .players
+            .iter()
+            .map(|p| p.finish_position)
+            .collect();
         positions.sort();
         assert_eq!(positions, vec![1, 2, 3, 4]);
         // The winner(s) are recorded.
