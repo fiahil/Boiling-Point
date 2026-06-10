@@ -174,7 +174,7 @@ get **one "reserve" per grimoire** to lock a single *named* spell (e.g. *Redirec
 not "a Ward"). Certainty for one card, breadth for the rest. Grimoire only — the
 pantry is always pure-roll. `[needs playtesting]`
 
-### Pantry buckets (pick 2–3 of 12) — fixed ~20-card shoe
+### Pantry buckets (pick 2–3 of 12) — fixed **30-card** shoe
 
 | Group | Bucket | Eligible flavor it unlocks |
 |---|---|---|
@@ -191,7 +191,7 @@ pantry is always pure-roll. `[needs playtesting]`
 | Specialist | 🌱 Hellebore | ultra-low-vol "tiptoe" cards (dodge detonator liability) |
 | | 🌶️ Embercap | escalating cards — volatility climbs the longer they sit |
 
-### Grimoire buckets (pick 2–3 of 8) — fixed ~10-spell hoard
+### Grimoire buckets (pick 2–3 of 8) — fixed **20-spell** hoard
 
 | Group | Bucket | Spells it makes eligible |
 |---|---|---|
@@ -253,10 +253,14 @@ pairs → unique table).
   stronger fold-to-safety / Vulture dynamic than whole-pot would give, accepted in
   exchange for sharper per-wave decisions and immediate causality). **The depile
   sorts by volatility on *every* round, boom or safe** (O1.2) — the consistent
-  "fuse climb" presentation; on a safe brew it climbs and stops short. Open:
-  printed vs effective (post-compounding, O3) volatility for the sort; whether to
-  reveal the boiling point on safe brews now that the climb is always shown
-  (§10 currently hides it).
+  "fuse climb" presentation; on a safe brew it climbs and stops short. **Resolved:**
+  (a) the sort uses **effective** (post-compounding) *per-card* volatility —
+  consistent with the trigger math; cauldron-level modifiers (Surge/Dampen) sit in
+  the running total, not the per-card sort. (b) The **boiling point is revealed at
+  the depile every round** (boom *and* safe) — the always-climb depile lands its
+  line, so a safe brew gets the near-miss payoff ("22 — the line was 24"). This
+  **changes §10** (which hid B on safe brews); Peek is unharmed — its value is
+  in-round, the depile is post-round.
 - **O2 — Spell economy. DECIDED.** Each wave you **must play an ingredient or
   pass** (pass = locked out, as §5); **playing a spell is optional**, up to **1
   per wave**, layered on an active turn — a spell never substitutes for the
@@ -298,6 +302,35 @@ pairs → unique table).
   text — and the §B.1 bar (*one sentence, instantly readable*) must hold in every
   shipped language, so naming/wording review happens per-language at design time,
   not as a post-hoc pass.
+
+---
+
+## Starting numbers (first harness targets — all `[needs playtesting]`)
+
+Internally-coherent starting points, **not decisions** — the bot harness (IV) owns
+the real values and re-derives the blind-volatility economy from scratch.
+
+| Knob | Start | Note / coupling |
+|---|---|---|
+| Volatility / card | **0–7**, skewed low (mean ~3) | high-vol 5–7 = rare Nightshade weapons |
+| Boiling-point range | **20–32** (mid ~26) | ~2× the old 8–14: higher mean vol **+** up-to-4-card waves; **the load-bearing dial** |
+| Points / card | **0–3**, colored votes only | → typical pot **P ≈ 10**, a fat one ~18–20 |
+| Rounds / game | **5** | the main length lever |
+| Wave timer | **~25s** wave 1, **~15s** after | deeper decisions than the old 10s |
+| Game length | ~90s draft + 5×~2.5min ≈ **15–18 min** | hits the C2 target |
+| Explosion-rate target | **~45%** of rounds | *higher* than the old 30–40% — only the detonator(s) suffer |
+| **Pantry** | **30 cards** | own ~75% (~22) · toolkit ≤25% (~7) · Treasure ≤3 |
+| **Grimoire** | **20 spells** | god-tier ≤2 · 1 reserve |
+| Ingredient top-up | **3** / wave | (decided, O2) |
+| Spells drawn | **3** / round-start *(bumped for the 20-card grimoire)* | open (O2): ~15 drawn over the game; Forage +2 |
+| Dampen / Surge | **−3 / +3** vol | scaled to the wider range |
+| Cap / Halve / Redirect | **≤3 / −½P / full −P→target** | Cap is strong when P≈10 |
+| Hex / Harvest | **+5 on boom / +3 on win** | the punish & the cash-in |
+| Honey / Bramble | **+1 pt per card past the 5th / +2 when paired** | count-threshold & combo (O3) |
+
+**Premium caps stay absolute** (Treasure ≤3, god-tier ≤2) — bigger decks add
+*commons*, not more premium; in the 20-card grimoire god-tier is now proportionally
+rarer (~10%), and the **reserve** guarantees ≥1 god-tier spell if you want it.
 
 ---
 
