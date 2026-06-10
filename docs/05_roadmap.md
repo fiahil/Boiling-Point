@@ -56,6 +56,66 @@ page in parallel.
 
 ---
 
+## Localization (i18n)
+
+v1 ships **English only**, but the architecture is already language-neutral and v2
+makes that pay off: the wire protocol carries **enums and IDs, never display
+strings** (Principle I — the server sends state, not prose), so localization is
+purely a **client-side concern**. The server never knows what language a player
+reads; a French, a Spanish and an English player share a table with zero server
+involvement, and emotes are already language-neutral by design
+([02_game-design.md — Table Talk](02_game-design.md)).
+
+**Launch languages: English, French, Spanish, German, Italian** (the classic
+**EFIGS** set) — **plus Latin as a flavor locale.**
+
+| Tier | Languages | Note |
+|---|---|---|
+| **v2 launch** | English (source) · French · Spanish · German · Italian | EN as the source-of-truth strings; ES kept neutral (readable for both es-ES and es-419). All Latin script, one plural model — EFIGS rides a single rendering path. |
+| **Flavor locale** | Latin 🏺 | A thematic bonus for a potion-brewing game — grimoires, wards and hexes *want* to read in Latin, and half the herb names already are (*Belladonna*, *Helleborus*). Same file format, same CI gate, zero engine cost; translations reviewed for *readability and fun*, not classical purity. No support promise. |
+| Next (cheap) | Portuguese (BR) | Latin script, similar plural rules — adding it is "add one file". Driven by demand, not committed. |
+| Deferred | CJK (ja / ko / zh) · RTL (ar / he) | Real engine cost, not just translation: CJK needs font loading / glyph handling in the Pixi canvas, RTL needs layout mirroring. Not until a market case exists. |
+
+**The design (Principle III — simplest viable, seams documented):**
+
+- **Client-side string tables, keyed by stable IDs.** One locale file per language
+  (`en.json`, `fr.json`, `es.json`) mapping protocol enums (colors, effects/spells,
+  Brewers, buckets, modifiers, error codes) plus client UI keys → display strings.
+  Plain agent-writable JSON (Principle II), flat keys with `{placeholder}`
+  interpolation. *Rejected (deferred) alternative:* Fluent / ICU MessageFormat —
+  full plural/gender grammar machinery isn't justified while every string is a
+  short label or a one-sentence rule text; revisit if a string genuinely needs it.
+- **One canonical source, both clients.** Same pattern as the wire types (TS
+  generated from the Rust `protocol` crate so the client cannot drift): locale
+  files live in one shared place, consumed by `web-client/` and `tui-client/`,
+  with a CI check that every protocol enum variant has a key in **every** locale —
+  a new spell that lands without its translations fails the build.
+- **Server errors become codes, not prose.** Today `Error` carries an `ErrorCode`
+  *plus* a hardcoded English `message` (`server/src/session.rs`). v2 clients
+  render the localized string from the code (+ structured params where needed);
+  the English `message` is demoted to a debug fallback. This is the only protocol
+  touch the whole feature needs.
+- **Locale is a client preference.** Default from the browser/system language,
+  in-client switcher, persisted locally — no account required (fits the
+  anonymous-session ethos, [02 §14](02_game-design.md)).
+- **Flavor names are translated, not transliterated.** Brewers, buckets and spells
+  read in the player's language (Nightshade → Belladone / Belladona); the stable
+  English identifiers remain in code, telemetry, and the harnesses.
+
+**Testing (Principle II):** French, Spanish and Italian run ~15–30% longer than
+English, and German compounds can stretch a single *word* past a button's width —
+layouts must tolerate both. Add a **pseudo-locale** (expanded, accented strings)
+for layout stress, and run the Playwright visual suite per shipped locale.
+
+**The v2-core tie-in:** the core rework
+([07_toward-a-v2-core.md](07_toward-a-v2-core.md)) multiplies the translation
+surface — 12 Brewers, 15 spells, and 20 Apothecary buckets, each with a name and a
+one-line rule text. The §B.1 bar (*one sentence, instantly readable*) must hold in
+**every shipped language**, so translation is part of content design review, not a
+post-hoc pass.
+
+---
+
 ## Other Post-V1 Candidates
 
 These also sit beyond v1. (Some overlap with the design-side deferrals in
@@ -98,5 +158,7 @@ So the v2 work is a swap, not a rewrite:
   replays/spectating).
 - **Delivery:** CI gate now (`fmt`/`clippy`/unit) → fuller test layers + CD later
   (additive; the Makefile targets and bot/agent harnesses are the seams).
+- **Text:** hardcoded English strings now → ID-keyed locale tables later (the
+  wire is already language-neutral — the protocol enums *are* the seam).
 - **Hosting:** single local binary + local Postgres now → managed container +
   managed Postgres later (same monolith, one container).
