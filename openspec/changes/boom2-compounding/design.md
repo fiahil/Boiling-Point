@@ -1,6 +1,6 @@
 ## Context
 
-Compounding is the O3 decision in [docs/07](../../../docs/07_toward-a-v2-core.md): ship count-threshold + named-combo content, keep it legible, and don't overload the hidden pot. It depends on `boom2-combat-core` (effective-volatility feed; the Bramble/Honey buckets' *effects*) and `boom2-apothecary` (those buckets' *availability*). It is sequenced **last** because it's the spiciest for the hidden-pot legibility and the harness.
+Compounding is the O3 decision in [docs/06_boom2/02](../../../docs/06_boom2/02_toward-a-v2-core.md): ship count-threshold + named-combo content, keep it legible, and don't overload the hidden pot. It depends on `boom2-combat-core` (effective-volatility feed; the Bramble/Honey buckets' *effects*) and `boom2-apothecary` (those buckets' *availability*). It is sequenced **last** because it's the spiciest for the hidden-pot legibility and the harness.
 
 ## Goals / Non-Goals
 

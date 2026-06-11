@@ -1,6 +1,6 @@
 ## Why
 
-Ingredients in the combat core are independent atoms. The "brewing recipes" fantasy — and the depth the Bramble/Honey buckets promise — comes from letting ingredients **interact in the pot** ([docs/07](../../../docs/07_toward-a-v2-core.md), O3). This change adds **compounding**: count-threshold ingredients and named-ingredient combos, on top of `boom2-combat-core` and `boom2-apothecary`.
+Ingredients in the combat core are independent atoms. The "brewing recipes" fantasy — and the depth the Bramble/Honey buckets promise — comes from letting ingredients **interact in the pot** ([docs/06_boom2/02](../../../docs/06_boom2/02_toward-a-v2-core.md), O3). This change adds **compounding**: count-threshold ingredients and named-ingredient combos, on top of `boom2-combat-core` and `boom2-apothecary`.
 
 ## What Changes
 

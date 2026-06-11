@@ -16,8 +16,8 @@ folder has its own `index.md`.
 | Understand the system shape (crates, data flow, lifecycle) | [03_architecture/](03_architecture/index.md) |
 | Review code health and release-readiness | [04_reviews/](04_reviews/index.md) |
 | See what's parked for after v1 | [05_roadmap.md](05_roadmap.md) |
-| Explore proposed core-depth adjustments (Vote/Spell, Brewers, Ingredients) | [06_depth-and-complexity.md](06_depth-and-complexity.md) |
-| Track the committed v2 core rework (decision log) | [07_toward-a-v2-core.md](07_toward-a-v2-core.md) |
+| Dive into the **boom2** (v2 core) rework — rationale + decision log behind the OpenSpec saga | [06_boom2/](06_boom2/index.md) |
+| Build UI to the locked visual direction (Apothecary Ink) | [07_design-system.md](07_design-system.md) |
 
 ## Map of the docs
 
@@ -39,8 +39,11 @@ docs/
 │   ├── 03_tui-client-review.md        terminal client review
 │   └── 04_agent-harness-review.md     Claude-as-player harness review
 ├── 05_roadmap.md                  v2 / post-launch features and the seams left for them
-├── 06_depth-and-complexity.md     PROPOSAL — core-depth adjustments (Vote/Spell, Brewers, Ingredients)
-├── 07_toward-a-v2-core.md         DECISION LOG — the committed v2 core rework (deeper/strategic/political)
+├── 06_boom2/                      the boom2 (v2 core) rework — design corpus behind the boom2 OpenSpec saga
+│   ├── index.md                   chapter hub: design docs ↔ the 7 boom2 OpenSpec changes
+│   ├── 01_depth-and-complexity.md  PROPOSAL — core-depth adjustments (Vote/Spell, Brewers, Ingredients)
+│   └── 02_toward-a-v2-core.md      DECISION LOG — the committed v2 core rework (deeper/strategic/political)
+├── 07_design-system.md            Apothecary Ink — the locked visual direction (tokens, type, card, motion)
 └── 99_archive/                    resolved / superseded notes, kept for history
     ├── index.md
     └── naming-ideas.md

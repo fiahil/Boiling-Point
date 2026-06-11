@@ -1,6 +1,6 @@
 ## Why
 
-Playtesting found the v1 "light" game **too simple** ([docs/07_toward-a-v2-core.md](../../../docs/07_toward-a-v2-core.md)). The committed direction is a deeper, more strategic, more political **v2 core** where the deep game *is* the product (not an opt-in mode). This change lands the **combat core** — the new card model, the detonator-only explosion, the wave loop, and the 15-spell grimoire — the foundation every other `boom2-` change builds on.
+Playtesting found the v1 "light" game **too simple** ([docs/06_boom2/02_toward-a-v2-core.md](../../../docs/06_boom2/02_toward-a-v2-core.md)). The committed direction is a deeper, more strategic, more political **v2 core** where the deep game *is* the product (not an opt-in mode). This change lands the **combat core** — the new card model, the detonator-only explosion, the wave loop, and the 15-spell grimoire — the foundation every other `boom2-` change builds on.
 
 It ships **first** and on **simple fixed color-anchored decks** (no drafting yet), so the rebuilt blind-volatility economy can be harness-validated in isolation before Brewers, the Apothecary draft, and compounding layer on (Principle III — phase the rework, don't big-bang it).
 

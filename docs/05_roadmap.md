@@ -108,7 +108,7 @@ layouts must tolerate both. Add a **pseudo-locale** (expanded, accented strings)
 for layout stress, and run the Playwright visual suite per shipped locale.
 
 **The v2-core tie-in:** the core rework
-([07_toward-a-v2-core.md](07_toward-a-v2-core.md)) multiplies the translation
+([06_boom2/02_toward-a-v2-core.md](06_boom2/02_toward-a-v2-core.md)) multiplies the translation
 surface — 12 Brewers, 15 spells, and 20 Apothecary buckets, each with a name and a
 one-line rule text. The §B.1 bar (*one sentence, instantly readable*) must hold in
 **every shipped language**, so translation is part of content design review, not a

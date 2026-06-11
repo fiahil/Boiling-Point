@@ -3,9 +3,9 @@
 **Status: PROPOSAL — not canonical.** This document captures recommendations for
 growing Boiling Point from a tight one-game experience into a game with a higher
 skill ceiling and long-term replayability. It is **exploratory**; nothing here
-supersedes [`02_game-design.md`](02_game-design.md) until ratified and promoted into it.
+supersedes [`02_game-design.md`](../02_game-design.md) until ratified and promoted into it.
 
-Per the [constitution](../CLAUDE.md): every value below is a **hypothesis until
+Per the [constitution](../../CLAUDE.md): every value below is a **hypothesis until
 validated by playtesting** — explicit `[needs playtesting]` tags throughout — and
 every adjustment must respect Principle I (server-authoritative), Principle III
 (start simple, justify complexity), and Principle IV (data-informed balance via
@@ -76,7 +76,7 @@ politics*. Where it is thin is everything **across** a single game:
 
 Two core adjustments attack the "thin" column **without** adding a meta-game,
 accounts, or a content treadmill (those — ranked/rating/seasons — are deliberately
-out of scope here; see [`05_roadmap.md`](05_roadmap.md)):
+out of scope here; see [`05_roadmap.md`](../05_roadmap.md)):
 
 | # | Adjustment | What it deepens | Risk |
 |---|---|---|---|

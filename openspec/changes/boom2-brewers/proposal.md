@@ -1,6 +1,6 @@
 ## Why
 
-In the v1 game every seat is mechanically identical — there is no **player identity** and no **pre-game agency** ([docs/07](../../../docs/07_toward-a-v2-core.md), C3). Brewers give each player a public, asymmetric identity with one bent rule — the *Cosmic Encounter* move, the highest depth-per-complexity addition available to a symmetric political FFA. This change adds the **12 Brewers** and the pre-game brewer pick, on top of `boom2-combat-core`.
+In the v1 game every seat is mechanically identical — there is no **player identity** and no **pre-game agency** ([docs/06_boom2/02](../../../docs/06_boom2/02_toward-a-v2-core.md), C3). Brewers give each player a public, asymmetric identity with one bent rule — the *Cosmic Encounter* move, the highest depth-per-complexity addition available to a symmetric political FFA. This change adds the **12 Brewers** and the pre-game brewer pick, on top of `boom2-combat-core`.
 
 ## What Changes
 

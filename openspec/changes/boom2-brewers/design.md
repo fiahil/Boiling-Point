@@ -1,6 +1,6 @@
 ## Context
 
-Brewers are committed in [docs/07](../../../docs/07_toward-a-v2-core.md) (C3) with the catalog and discipline fixed. This change adds them on top of `boom2-combat-core`, whose systems (the detonator sort, wards, grimoire, wave loop, dealing) are exactly what the 12 Brewers bend.
+Brewers are committed in [docs/06_boom2/02](../../../docs/06_boom2/02_toward-a-v2-core.md) (C3) with the catalog and discipline fixed. This change adds them on top of `boom2-combat-core`, whose systems (the detonator sort, wards, grimoire, wave loop, dealing) are exactly what the 12 Brewers bend.
 
 ## Goals / Non-Goals
 

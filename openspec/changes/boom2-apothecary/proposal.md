@@ -1,6 +1,6 @@
 ## Why
 
-`boom2-combat-core` ships on **fixed** decks, so pre-game agency is still zero ([docs/07](../../../docs/07_toward-a-v2-core.md), C5/O4). The Apothecary replaces fixed decks with a **fast, procedural, owner-unknown** draft: players curate a small set of named buckets, and a realizer rolls a novel deck they learn as they play. This is the lever that turns a Brewer identity into a *build*, and it converts color access from luck into pre-committed strategy without saved decks or accounts.
+`boom2-combat-core` ships on **fixed** decks, so pre-game agency is still zero ([docs/06_boom2/02](../../../docs/06_boom2/02_toward-a-v2-core.md), C5/O4). The Apothecary replaces fixed decks with a **fast, procedural, owner-unknown** draft: players curate a small set of named buckets, and a realizer rolls a novel deck they learn as they play. This is the lever that turns a Brewer identity into a *build*, and it converts color access from luck into pre-committed strategy without saved decks or accounts.
 
 ## What Changes
 

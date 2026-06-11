@@ -1,6 +1,6 @@
 ## Context
 
-The Apothecary is fully specified in [docs/07](../../../docs/07_toward-a-v2-core.md) (the "Deck-building — The Apothecary" section + O4). It replaces `boom2-combat-core`'s fixed-deck placeholder and depends on `boom2-brewers` for ordering (draft runs after the Brewer pick) and for the Connoisseur/Reservist hooks.
+The Apothecary is fully specified in [docs/06_boom2/02](../../../docs/06_boom2/02_toward-a-v2-core.md) (the "Deck-building — The Apothecary" section + O4). It replaces `boom2-combat-core`'s fixed-deck placeholder and depends on `boom2-brewers` for ordering (draft runs after the Brewer pick) and for the Connoisseur/Reservist hooks.
 
 ## Goals / Non-Goals
 

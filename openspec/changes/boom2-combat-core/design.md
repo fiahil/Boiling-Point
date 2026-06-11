@@ -1,6 +1,6 @@
 ## Context
 
-The full v2 design is locked in [docs/07_toward-a-v2-core.md](../../../docs/07_toward-a-v2-core.md) (rationale in [docs/06](../../../docs/06_depth-and-complexity.md)). This change implements the **combat core** only — the new card model, explosion, wave loop, and grimoire — on **fixed color-anchored decks**, so the rebuilt blind-volatility economy is harness-validated before Brewers (`boom2-brewers`), drafting (`boom2-apothecary`), and compounding (`boom2-compounding`) layer on. The server stays the single source of truth (§I); clients render the new states.
+The full v2 design is locked in [docs/06_boom2/02_toward-a-v2-core.md](../../../docs/06_boom2/02_toward-a-v2-core.md) (rationale in [docs/06_boom2/01](../../../docs/06_boom2/01_depth-and-complexity.md)). This change implements the **combat core** only — the new card model, explosion, wave loop, and grimoire — on **fixed color-anchored decks**, so the rebuilt blind-volatility economy is harness-validated before Brewers (`boom2-brewers`), drafting (`boom2-apothecary`), and compounding (`boom2-compounding`) layer on. The server stays the single source of truth (§I); clients render the new states.
 
 ## Goals / Non-Goals
 

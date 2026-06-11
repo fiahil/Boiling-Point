@@ -3,16 +3,16 @@
 **Status: DECISION LOG (committing direction, pre-implementation).**
 
 This file tracks the **v2 core rework** — the deliberate move from the tight
-"light" game ([`02_game-design.md`](02_game-design.md)) toward a deeper, more
+"light" game ([`02_game-design.md`](../02_game-design.md)) toward a deeper, more
 strategic, more political game. It is the live record of what is **committed**,
 what is **leaning**, and what is **open**.
 
 Exploratory rationale for each direction lives in
-[`06_depth-and-complexity.md`](06_depth-and-complexity.md) — §A (Vote/Spell),
+[`06_depth-and-complexity.md`](01_depth-and-complexity.md) — §A (Vote/Spell),
 §B (Brewers), §C (Ingredients). When a decision here is validated and built, it
-gets promoted into [`02_game-design.md`](02_game-design.md) and this log notes it.
+gets promoted into [`02_game-design.md`](../02_game-design.md) and this log notes it.
 
-Per the [constitution](../CLAUDE.md): every value is `[needs playtesting]`; the
+Per the [constitution](../../CLAUDE.md): every value is `[needs playtesting]`; the
 bot harness (Principle IV) **re-derives the whole balance economy** for the new
 core — the old tuning (boiling point 8–14, Peek count 4, vol 1–3) does not carry
 over unexamined.
@@ -296,7 +296,7 @@ pairs → unique table).
 - The **pre-game phase** (Brewer pick + recipe build) must fit a fast lobby with
   sensible defaults (§14 ethos), even at the new longer session length.
 - Harness matrix grows to **persona × Brewer × deck-archetype × explosion-model**.
-- **Localization lands with v2** ([05_roadmap.md — Localization](05_roadmap.md):
+- **Localization lands with v2** ([05_roadmap.md — Localization](../05_roadmap.md):
   EN/FR/ES/DE/IT + Latin flavor locale). The v2 content *is* the translation
   surface — 12 Brewers, 15 spells, 20 buckets, each a name + one-sentence rule
   text — and the §B.1 bar (*one sentence, instantly readable*) must hold in every
@@ -336,6 +336,6 @@ rarer (~10%), and the **reserve** guarantees ≥1 god-tier spell if you want it.
 
 ## Pointers
 
-- Rationale & alternatives: [`06_depth-and-complexity.md`](06_depth-and-complexity.md)
-- Canonical (current) rules this reworks: [`02_game-design.md`](02_game-design.md)
-- Parked platform work (accounts, ranked): [`05_roadmap.md`](05_roadmap.md)
+- Rationale & alternatives: [`06_depth-and-complexity.md`](01_depth-and-complexity.md)
+- Canonical (current) rules this reworks: [`02_game-design.md`](../02_game-design.md)
+- Parked platform work (accounts, ranked): [`05_roadmap.md`](../05_roadmap.md)
