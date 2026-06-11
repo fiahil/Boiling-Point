@@ -79,9 +79,21 @@ drift, mirroring the protocol-codegen philosophy.
 | `lapis` | `#2F5AA8` | lapis ultramarine — illuminated grounds (volatility plaque) |
 | `lapis-deep` | `#1C3C78` | lapis shadow |
 | `vert` | `#2C7D4F` | verdigris green — the brew's surface |
+| `azurite` | `#4E86C6` | the second blue — skies, washes, cool ornament in miniatures & marginalia |
+| `indigo` | `#2B3A55` | woad-dark blue — night grounds, deep shading, the cool counter to `ink` |
+| `murex` | `#7A3F62` | Tyrian plum — robes, beasts, rich ornament |
+| `madder` | `#C4727F` | rose lake — blooms, ribbons, soft warm accents |
 
 Gilt anything = the 3-stop gradient `gold-pale → gold → gold-deep` (vertical),
 stroked in `gold-deep`.
+
+The last four rows are the **decorative pigment box** — they exist so illustration
+never collapses to monochrome-plus-gold. Miniatures, drolleries, and borders may
+range across them (and `lapis`/`vert`) freely, and the box may grow as the
+illustration work demands. Two painters' rules: decorative pigments never identify
+a player, and near jewel UI prefer the non-colliding neighbor — `azurite` rather
+than sapphire's blue, `murex` rather than amethyst's purple, `madder` rather than
+ruby's red.
 
 ### 3.3 The four jewels (brand constant, re-tinted)
 
@@ -149,6 +161,9 @@ These mappings are law; semantic colors do not cross roles:
 - **`boom` = the explosion.** Only ever seen when a pot tips or in its aftermath.
 - **Jewel colors = card/player identity.** Never used decoratively.
 - **`lapis`/`vert`** are grounds (illuminated plaques, the brew surface), not signals.
+- **The decorative pigment box carries no meaning.** `azurite`, `indigo`, `murex`,
+  `madder` are for illustration variety only — never promoted to signals, states,
+  or player identification.
 
 ## 6. The components
 
@@ -167,32 +182,41 @@ frame with **gold bezants** at the four edge midpoints.
 
 Art sits in a **gilt roundel** (circular miniature) centre-card; name in IM Fell
 English SC below it; type line in EB Garamond italic in `wax`. A slow gold-leaf
-sheen may sweep the frame of a *selected/playable* card.
+sheen may sweep the frame of a *selected/playable* card. Within this anatomy,
+ornament is free — the four stations and their loudness order are not.
 
-Companion faces:
+Companion faces (briefs, not finished designs):
 
-- **Scribe face ("the Chancery Hand")** — double ink rule, rubricated blackletter
-  volatility numeral, flat tempera seal, woodcut roundel, inked points. For cheap
-  contexts: wide hand fans, history lists, tiny sizes.
-- **Conjurer face ("Rota Fortunæ")** — the medieval Wheel of Fortune *as* the card
-  frame: the wheel slowly turns, a horned imp rides the rim, volatility waits at
-  the still hub. Deluxe/promo/signature contexts only. **Deferred** (see §11).
+- **Scribe face** — an all-ink economy face for cheap contexts (wide hand fans,
+  history lists, tiny sizes): ink rules in place of gilt, a rubricated volatility
+  numeral, a flat seal, inked points. Execution open; the law (§9.2) is not.
+- **Conjurer face** — a deluxe/promo/signature face that makes push-your-luck
+  literal in the frame itself. (One drafted concept: a slowly turning Wheel of
+  Fortune, volatility waiting at the still hub.) **Deferred** (see §11).
 
-### 6.2 Asset register (the starred picks)
+### 6.2 Asset briefs — slots, not drawings
 
-Each asset has a setting per hand; the ★ pick is the brand workhorse.
+The system fixes **slots, registers, and materials**; it does not fix drawings.
+Subjects, creatures, and compositions are the illustrator's to invent inside the
+period vocabulary — manuscript line, gilt and pigment, marginal humor. The first
+exploration round produced drafts (a pot-hugging imp, a snail-herald, a
+knight-vs-snail joust, an orrery-framed cauldron, a Wheel-of-Fortune card frame);
+treat them as **precedent, not prescription** — redraw, replace, or invent freely.
 
-| Asset | ✒ Scribe | ❦ Illuminator ★ | ✴ Conjurer |
-|---|---|---|---|
-| **Cauldron mark** | Woodcut Line — self-drawing outline; doubles as the loading spinner | **Gilt Silhouette** — burnished gold belly, lapis-bead boil; the logo from app icon to favicon | Alchemical Orrery — counter-rotating elemental rings; the menu mark |
-| **Initial "B"** | Rubricated B — blackletter + red cadel penwork; chapter headings, settings, rulebook | **Inhabited Initial** — gold letter on lapis diaper; a cauldron simmers in the top counter, an imp blinks below; the storybook logo | Zoomorphic Knotwork — Kells-style interlace ending in beasts; draws itself on load |
-| **Mascot / drolleries** | Snail-Herald — line snail bearing a banner (tints to any faction) | **The Pot-Imp** — copper-skinned imp hugging a gilt pot; *the* mascot, sticker-grade | Knight-vs-Snail Joust — the 600-year-old gag, animated; lobby waits & between rounds |
-| **Border / frame** | Rinceaux Penwork — thin ivy scroll + red berries; edges of dense UI panels | **Acanthus & Bezant** — bold leaves on a double gilt rule, bezant terminals; the system default frame, tiles to any length | Self-Growing Vine — stem draws on, leaves unfurl, the snail arrives last; big reveals |
-| **Faction device** | Wax Seal — pressed disc, dashed-ring emboss; chat, letters, system notices | **Heraldic Shield** — jewel field, gilt edge, `gold-pale` charge; seat markers, score ledger, player lists | Faceted Gem — cut stone with sparkle; victory screens, the pot-scoop |
+Five slots must exist; each gets a setting per hand, and the ❦ Illuminator
+setting is the brand workhorse:
 
-All assets are **hand-drafted inline SVG**, authored fresh against the descriptions
-above as individual `.svg` files in the client. No raster art, no binary assets
-(constitution §II: everything agent-writable).
+| Slot | The job | The three settings |
+|---|---|---|
+| **Cauldron mark** | the hero glyph of the whole game; must read from app icon down to favicon | ✒ a self-drawing line cut that doubles as the loading spinner · ❦ a gilt form with a dark mouth — the logo · ✴ an animated set-piece for the menu |
+| **Opening initial** | a capital **B** that opens the book — menu, loading, chapter heads | ✒ rubricated blackletter for text screens & the rulebook · ❦ an illuminated letter with story living inside it · ✴ a showpiece that draws itself on load |
+| **Drolleries & companions** | marginalia creatures that loiter at page edges and react to play — the natural carrier for a game of bluff & betrayal | ✒ pure-line idlers, tintable to any faction · ❦ one painted mascot, sticker-grade · ✴ animated gags for lobby waits & between rounds. The margins are where the book is funny — period in spirit, free in subject |
+| **Border / frame** | the repeating motif that edges screens & cards | ✒ thin penwork for dense panels · ❦ a bold design on a gilt rule that tiles to any length — the system default · ✴ a frame that assembles or grows in for big reveals |
+| **Faction device** | a jewel's identity at seat-marker size; the glyph charges (▲ ♥ ● ■) are fixed, the vessel is not | ✒ a pressed-seal disc for chat & system notices · ❦ a gilt-edged, charge-bearing form (shield, medallion, escutcheon…) for seats & ledgers · ✴ a light-catching treatment for victory & the pot-scoop |
+
+All assets are **hand-drafted inline SVG**, authored as individual `.svg` files in
+the client. No raster art, no binary assets (constitution §II: everything
+agent-writable).
 
 ### 6.3 Table chrome
 
@@ -210,7 +234,7 @@ above as individual `.svg` files in the client. No raster art, no binary assets
   in `wax`); the tipping card gets a `boom` ring, crack shadow, and an italic
   "✦ tipped" annotation.
 
-## 7. The screens (starred layouts)
+## 7. The screens
 
 The chosen arrangement per screen (alternates were considered and dropped):
 
@@ -236,7 +260,7 @@ The chosen arrangement per screen (alternates were considered and dropped):
 
 Micro-behaviors used inside Conjurer compositions (not standalone verbs): `unfurl`
 (1.1s overshoot bezier `.2,1.4,.5,1`), `sway`, `breathe`, `twinkle`, `sparkle`,
-slow `spin` (30–60s — the orrery and the Rota). Easing default: `ease-in-out`;
+slow `spin` (30–60s). Easing default: `ease-in-out`;
 nothing snappier than the unfurl overshoot.
 
 **`prefers-reduced-motion: reduce`** kills *all* animation and resolves drawn
@@ -293,14 +317,14 @@ Per constitution §III, the minimum implementable set is everything the *game*
 needs; the Conjurer's showpieces are deliberate later-polish.
 
 **v1 set** — tokens & texture; the four type roles; the Illuminator card face +
-Scribe card face; Gilt Silhouette cauldron (logo/icon) + Woodcut Line (loading);
-Heraldic Shield devices; Acanthus & Bezant border; table chrome (§6.3); the three
-starred screen layouts; all five motion verbs.
+Scribe card face; the cauldron mark in its Scribe and Illuminator settings; the
+faction devices (Scribe + Illuminator settings); the default border; table chrome
+(§6.3); the three screen layouts (§7); all five motion verbs.
 
-**Deferred flourishes** — the Rota Fortunæ deluxe face; the Alchemical Orrery
-menu mark; the Knight-vs-Snail joust; the Self-Growing Vine reveal; the Inhabited
-Initial's animated counters; carpet-page treatments. Each is described in §6 and
-composes from the §8 verbs; draft them when wanted.
+**Deferred flourishes** — the Conjurer's column, more or less: the deluxe card
+face, the animated menu mark, the lobby-wait gags, the assembling frame, animated
+initials, carpet-page treatments. Invent them when wanted, composed from the
+§8 verbs.
 
 ## Forward hooks (boom2)
 
