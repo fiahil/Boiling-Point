@@ -21,7 +21,9 @@ canonical [`02_game-design.md`](../02_game-design.md).
 
 Reading order: skim **01** for the direction and the alternatives, then **02** for the
 committed design. Everything in 02 is tagged `[needs playtesting]` — the bot harness
-re-derives the balance economy.
+re-derives the balance economy. (Since `retire-v1-harnesses`, 2026-06-11, the bot
+harness lives in [`archive/bot-harness/`](../../archive/README.md); constitution
+v2.0.0 §IV requires reviving it for these at-scale runs before boom2 balance ships.)
 
 ## Design → the boom2 core changes
 

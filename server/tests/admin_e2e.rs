@@ -1,6 +1,7 @@
 //! End-to-end validation of the admin surface against a real running game loop
-//! (`admin-ui` tasks 9.1 and 9.2). This is the in-repo stand-in for a bot-harness
-//! session: it registers the admin projection as the span-lifecycle consumer,
+//! (`admin-ui` tasks 9.1 and 9.2). This is the in-repo stand-in for a headless
+//! bot session (the v1 bot harness is archived — `archive/bot-harness/`): it
+//! registers the admin projection as the span-lifecycle consumer,
 //! drives a full four-player game through the authoritative group/game loop, and
 //! asserts the inspector reflects the live group, the reveal matches authoritative
 //! hidden state, the balance figures count every completed round, and an operator

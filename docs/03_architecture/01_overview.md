@@ -1,9 +1,10 @@
 # Architecture Overview
 
-Boiling Point is a Rust cargo workspace plus one Node/TS harness, organized around a
-single principle: **the server is the only source of truth**. Everything else speaks
-to it through one narrow wire protocol and receives only what a player is allowed to
-see. (See the [constitution](../../CLAUDE.md) and, for the deeper infra rationale,
+Boiling Point is a Rust cargo workspace (`protocol/` + `server/`) plus the PixiJS web
+client (`clients/web/`, in progress), organized around a single principle: **the
+server is the only source of truth**. Everything else speaks to it through one narrow
+wire protocol and receives only what a player is allowed to see. (See the
+[constitution](../../CLAUDE.md) and, for the deeper infra rationale,
 [02_server-infrastructure.md](02_server-infrastructure.md) and
 [03_tech-stack-exploration.md](03_tech-stack-exploration.md).)
 
@@ -19,27 +20,27 @@ nothing else couples directly.
               │   codec  (MessagePack on the wire, JSON for debugging) │
               │   — no game logic, no secrets —                        │
               └───────────────────────────────────────────────────────┘
-                 ▲              ▲                ▲               ▲
-   depends on ───┘              │                │               └─── depends on
-                                │                │
-   ┌───────────────┐   ┌────────┴────────┐   ┌───┴─────────────┐   ┌─────────────────┐
-   │  tui-client/  │   │     server/     │   │  bot-harness/   │   │  agent-harness/ │
-   │ ratatui       │   │ AUTHORITATIVE   │   │ headless bots   │   │ Node/TS         │
-   │ renderer      │   │ engine + state  │   │ seeded batches  │   │ Claude-as-player│
-   │ (untrusted)   │   │ (owns secrets)  │   │ balance stats   │   │ (untrusted)     │
-   └───────┬───────┘   └────────┬────────┘   └───┬─────────────┘   └────────┬────────┘
-           │ WebSocket          │                │ in-process OR             │ WebSocket
-           │ (MessagePack)      │                │ WebSocket                 │ (MessagePack)
-           └────────────────────┴────────────────┴───────────────────────────┘
-                          all clients are untrusted; the server validates every action
+                        ▲                              ▲
+          depends on ───┘                              └─── TS types generated from
+                                                            (adopt-pixi-client)
+              ┌──────────────────┐           ┌─────────────────────────┐
+              │     server/      │           │      clients/web/       │
+              │  AUTHORITATIVE   │           │  PixiJS + TypeScript    │
+              │  engine + state  │           │  pure renderer          │
+              │  (owns secrets)  │           │  (untrusted; in progress)│
+              └────────┬─────────┘           └────────────┬────────────┘
+                       │         WebSocket (MessagePack)  │
+                       └──────────────────────────────────┘
+                  all clients are untrusted; the server validates every action
 
    server/ also exposes, on isolated ports:  admin API (8081) · Prometheus metrics (9090)
 ```
 
-Why this shape: clients (TUI, bots, Claude agents) hold **no game logic** and cannot
-represent a secret (boiling point, opponents' hands, the deck) — leakage is prevented
-by construction, not by discipline. The bot and agent harnesses are the two testing
-layers the constitution requires (headless balance bots; Claude-as-player).
+Why this shape: clients hold **no game logic** and cannot represent a secret (boiling
+point, opponents' hands, the deck) — leakage is prevented by construction, not by
+discipline. The retired v1 clients and harnesses (TUI renderer, headless balance
+bots, Claude-as-player) validated this shape over the same protocol and live in
+[`archive/`](../../archive/README.md), revivable per constitution v2.0.0.
 
 ## Server internals
 
@@ -103,11 +104,12 @@ Secret discipline: the server **never** sends a value a player shouldn't have. T
 boiling point is disclosed only via a Peek the player made, or revealed at an
 explosion depile; opponents' hands and the deck never cross the wire.
 
-## Client phase state machine (TUI)
+## Client phase state machine (reference — from the archived TUI)
 
-The terminal client is a pure reducer over server messages — each `ServerMessage`
-folds into the view model and advances a phase, and every screen is a pure function
-of that state (so it snapshot-tests with no terminal and no server):
+This machine is protocol truth any client reimplements (the web client included); it
+was proven by the retired terminal client (`archive/tui-client/`), a pure reducer
+over server messages — each `ServerMessage` folds into the view model and advances a
+phase, and every screen is a pure function of that state:
 
 ```
    Entry ──pick──▶ Connecting ─┐

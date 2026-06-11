@@ -15,12 +15,12 @@ The full documentation hub is [docs/](docs/); the canonical rules are in
 ```
 protocol/       wire messages + MessagePack/JSON codec (no game logic, no secrets)
 server/         authoritative game engine, content/config, game loop, admin + metrics
-tui-client/     terminal client — an untrusted ratatui renderer over the protocol
-bot-harness/    headless balance bots + seeded batch runner (Layer-1 testing)
-agent-harness/  Claude-as-player harness (Node/TS, Layer-2 testing)
+clients/
+└── web/        graphical client — TypeScript + PixiJS (lands with adopt-pixi-client)
+archive/        retired v1 components — tui-client, bot-harness, agent-harness,
+                playtest.sh (revivable, not deleted; see archive/README.md)
 docs/           architecture, game design, roadmap, and code reviews
 openspec/       change proposals (changes/), resolved specs (specs/), archive
-scripts/        playtest.sh — one-command solo playtest launcher
 ```
 
 See [docs/03_architecture/01_overview.md](docs/03_architecture/01_overview.md) for how
@@ -32,10 +32,9 @@ the pieces fit together.
 make check    # fmt + clippy (-D warnings) + tests — the CI gate
 make run      # boot the server (loads & validates the default content config)
 make test     # cargo test --workspace
-make playtest # server + agent opponents + terminal client (see getting-started)
 ```
 
-Each binary has `--help` (clap). Balance/content lives in
+The server binary has `--help` (clap). Balance/content lives in
 [`server/content.toml`](server/content.toml) and is validated at startup; an
 inconsistent config fails the boot, not a game.
 

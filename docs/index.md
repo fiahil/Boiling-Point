@@ -24,7 +24,7 @@ folder has its own `index.md`.
 ```
 docs/
 ├── index.md                       ← you are here (hub)
-├── 01_getting-started.md          prerequisites, how to build / run / test / playtest
+├── 01_getting-started.md          prerequisites, how to build / run / test
 ├── 02_game-design.md              canonical game design (rules, cards, scoring, modifiers)
 ├── 03_architecture/               how the system is built
 │   ├── index.md
@@ -35,9 +35,7 @@ docs/
 ├── 04_reviews/                    code health & launch readiness
 │   ├── index.md
 │   ├── 01_release-readiness-review.md cross-cutting v1-launch gate (start here)
-│   ├── 02_server-review.md            server code review
-│   ├── 03_tui-client-review.md        terminal client review
-│   └── 04_agent-harness-review.md     Claude-as-player harness review
+│   └── 02_server-review.md            server code review
 ├── 05_roadmap.md                  v2 / post-launch features and the seams left for them
 ├── 06_boom2/                      the boom2 (v2 core) rework — design corpus behind the boom2 OpenSpec saga
 │   ├── index.md                   chapter hub: design docs ↔ the 7 boom2 OpenSpec changes
@@ -46,7 +44,9 @@ docs/
 ├── 07_design-system.md            Apothecary Ink — the locked visual direction (tokens, type, card, motion)
 └── 99_archive/                    resolved / superseded notes, kept for history
     ├── index.md
-    └── naming-ideas.md
+    ├── naming-ideas.md
+    ├── tui-client-review.md       review of the retired TUI (component in archive/)
+    └── agent-harness-review.md    review of the retired agent harness (in archive/)
 ```
 
 ## Related, outside `docs/`
@@ -58,5 +58,6 @@ docs/
   `openspec/specs/`; shipped work is in `openspec/changes/archive/` (ordered by
   ISO-date prefix). These are the authoritative requirements; `docs/` is the
   human-facing rationale and overview.
-- Per-crate READMEs in `protocol/`, `server/`, `tui-client/`, `bot-harness/`, and
-  `agent-harness/`, plus `ops/` for the admin surface and balance dashboard.
+- Per-crate READMEs in `protocol/` and `server/`, plus `ops/` for the admin surface
+  and balance dashboard. Retired v1 components keep their READMEs under `archive/`
+  (inventory + revival recipe in [`archive/README.md`](../archive/README.md)).

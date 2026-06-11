@@ -41,9 +41,9 @@ project into a continuously deployed, publicly reachable service.
 
 | Feature | Why it's v2 | Dependency / note |
 |---|---|---|
-| **Landing page** | v1 distributes via invite links to people who already know the game; no acquisition surface is needed to validate the core loop. | Static marketing page (what the game is, screenshots/trailer, a "play now" → create/join room CTA). Sits alongside or in front of the PixiJS `web-client/`, which is the "play" target. |
-| **Fuller tests in CI** | v1 CI gates `fmt` + `clippy` + **unit** tests only; `make test-unit` deliberately skips the transport tests that boot an in-process server. | Extend CI to the three Principle II testing layers: transport/integration tests, the **bot-harness** balance runs (seeded, deterministic), an **agent-harness** Claude-as-player smoke, and **web-client** build + Playwright visual tests once the Pixi client lands. |
-| **Continuous deployment pipeline** | v1 has a CI gate but no deploy step — releases are manual/local. | CD layered on the existing CI: build + publish the server container and web-client bundle, run DB migrations, and promote on green `main`. Gated behind the fuller test suite above. |
+| **Landing page** | v1 distributes via invite links to people who already know the game; no acquisition surface is needed to validate the core loop. | Static marketing page (what the game is, screenshots/trailer, a "play now" → create/join room CTA). Sits alongside or in front of the PixiJS client (`clients/web/`), which is the "play" target. |
+| **Fuller tests in CI** | v1 CI gates `fmt` + `clippy` + **unit** tests only; `make test-unit` deliberately skips the transport tests that boot an in-process server. | Extend CI to the full Principle II gate (v2.0.0): the **transport/integration** tests, and the **web client** build + Playwright visual tests once the Pixi client lands. Seeded **bot-harness** balance runs rejoin the gate when the archived harness is revived (required before boom2 balance ships — §IV). |
+| **Continuous deployment pipeline** | v1 has a CI gate but no deploy step — releases are manual/local. | CD layered on the existing CI: build + publish the server container and the `clients/web/` bundle, run DB migrations, and promote on green `main`. Gated behind the fuller test suite above. |
 | **Deployment architecture & target** | v1 runs as a single local binary + local Postgres; nothing is hosted. | Pick a target — a managed container host + managed Postgres is the simplest viable, and the Principle III single-binary monolith maps cleanly to one container. Decide TLS/WebSocket ingress, config/secrets, DB backups, and the staging→prod path. The single-server stance is the seam; horizontal scaling stays out of v2. |
 
 **Benchmarks** fold into this work: the [Server benchmarks](#other-post-v1-candidates)
@@ -85,11 +85,11 @@ involvement, and emotes are already language-neutral by design
   interpolation. *Rejected (deferred) alternative:* Fluent / ICU MessageFormat —
   full plural/gender grammar machinery isn't justified while every string is a
   short label or a one-sentence rule text; revisit if a string genuinely needs it.
-- **One canonical source, both clients.** Same pattern as the wire types (TS
-  generated from the Rust `protocol` crate so the client cannot drift): locale
-  files live in one shared place, consumed by `web-client/` and `tui-client/`,
-  with a CI check that every protocol enum variant has a key in **every** locale —
-  a new spell that lands without its translations fails the build.
+- **One canonical source.** Same pattern as the wire types (TS generated from the
+  Rust `protocol` crate so the client cannot drift): locale files live in one
+  shared place, consumed by `clients/web/`, with a CI check that every protocol
+  enum variant has a key in **every** locale — a new spell that lands without its
+  translations fails the build.
 - **Server errors become codes, not prose.** Today `Error` carries an `ErrorCode`
   *plus* a hardcoded English `message` (`server/src/session.rs`). v2 clients
   render the localized string from the code (+ structured params where needed);
@@ -100,7 +100,7 @@ involvement, and emotes are already language-neutral by design
   anonymous-session ethos, [02 §14](02_game-design.md)).
 - **Flavor names are translated, not transliterated.** Brewers, buckets and spells
   read in the player's language (Nightshade → Belladone / Belladona); the stable
-  English identifiers remain in code, telemetry, and the harnesses.
+  English identifiers remain in code, telemetry, and any revived harness.
 
 **Testing (Principle II):** French, Spanish and Italian run ~15–30% longer than
 English, and German compounds can stretch a single *word* past a button's width —
@@ -142,9 +142,9 @@ These also sit beyond v1. (Some overlap with the design-side deferrals in
     wave resolution, depile/scoring, deck deal/reshuffle, modifier stacking —
     tracked over time to catch regressions.
   - **WebSocket load harness**: many concurrent rooms driven over the real wire
-    (reuse the `bot-harness` WebSocket transport), measuring tick latency,
+    (revive `archive/bot-harness/`'s WebSocket transport), measuring tick latency,
     broadcast fan-out cost, and memory per room, against target throughput/latency
-    budgets. The bot harness's existing seeded batch runner is the seam.
+    budgets. The archived bot harness's seeded batch runner is the seam.
 
 ---
 
@@ -157,7 +157,8 @@ So the v2 work is a swap, not a rewrite:
 - **Persistence:** post-game results now → append-only event log later (enables
   replays/spectating).
 - **Delivery:** CI gate now (`fmt`/`clippy`/unit) → fuller test layers + CD later
-  (additive; the Makefile targets and bot/agent harnesses are the seams).
+  (additive; the Makefile targets are the seam — the archived harnesses are
+  revivable for the balance layers).
 - **Text:** hardcoded English strings now → ID-keyed locale tables later (the
   wire is already language-neutral — the protocol enums *are* the seam).
 - **Hosting:** single local binary + local Postgres now → managed container +

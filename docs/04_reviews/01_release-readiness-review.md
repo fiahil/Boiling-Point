@@ -2,7 +2,7 @@
 
 A cross-cutting assessment of what stands between today's codebase and a **public v1
 launch**, synthesizing the component reviews ([server](02_server-review.md),
-[tui-client](03_tui-client-review.md), [agent-harness](04_agent-harness-review.md)) against
+[tui-client](../99_archive/tui-client-review.md), [agent-harness](../99_archive/agent-harness-review.md)) against
 the [constitution](../../CLAUDE.md), [game design](../02_game-design.md), and
 [roadmap](../05_roadmap.md).
 

@@ -172,6 +172,10 @@ cargo workspace
 └── agent-harness/ # Claude-as-player wrapper
 ```
 
+> **2026-06-11:** historical — the shipped tree became `protocol/` + `server/` at
+> root with the PixiJS client at `clients/web/`; the v1 harnesses and TUI are
+> retired to `archive/` (change `retire-v1-harnesses`, constitution v2.0.0).
+
 ## Decision Framework
 
 The real fork:

@@ -1,7 +1,7 @@
 # Apothecary Ink — The Design System
 
 > **Status: locked.** Apothecary Ink is the visual direction for the Boiling Point
-> graphical client (`web-client/`, PixiJS — see `adopt-pixi-client`). This document
+> graphical client (`clients/web/`, PixiJS — see `adopt-pixi-client`). This document
 > is the canonical and **sole** record of the system — the HTML exploration tiles it
 > was distilled from have been retired, and all assets will be drafted fresh against
 > the descriptions below.
@@ -97,8 +97,9 @@ ruby's red.
 
 ### 3.3 The four jewels (brand constant, re-tinted)
 
-The jewels are **identity, not theming** — canonical hues live in
-`tui-client/src/palette.rs`; every theme re-tints them to sit on its ground but
+The jewels are **identity, not theming** — the canonical hues were established in
+the retired TUI (`archive/tui-client/src/palette.rs`) and are recorded in the table
+below; every theme re-tints them to sit on its ground but
 they stay recognizably the four. Apothecary Ink presses them as earthier
 *illuminated pigments* on parchment:
 
@@ -291,10 +292,10 @@ animation.
 
 ## 10. Implementation notes (PixiJS + DOM overlay)
 
-- **Tokens**: author once (e.g. `web-client/src/theme/tokens.ts` or a JSON source),
+- **Tokens**: author once (e.g. `clients/web/src/theme/tokens.ts` or a JSON source),
   generate the CSS custom-property sheet for the DOM overlay from it. Canvas and
   overlay must read the same values.
-- **Assets**: author the inline-SVG masters in `web-client/assets/` as `.svg`
+- **Assets**: author the inline-SVG masters in `clients/web/assets/` as `.svg`
   files. For Pixi, render SVG → texture at load (at 2× for high-DPI); keep
   Scribe-register "draws itself" pieces as DOM/SVG where feasible, since
   `stroke-dashoffset` is free there.

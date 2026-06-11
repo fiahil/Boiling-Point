@@ -23,8 +23,9 @@ without leaking anything.
   explosion depile).
 - **Versioned handshake.** The first (entry) client message carries
   `protocol_version` so the server rejects incompatible clients before sharing state.
-- The Node/TS `agent-harness/` hand-mirrors these types (`src/protocol/messages.ts`);
-  keep the two in sync.
+- TypeScript wire types for the web client (`clients/web/`) are **generated from
+  this crate** (the `adopt-pixi-client` typegen step) — never hand-mirrored. (The
+  retired `archive/agent-harness/` hand-mirrored them in v1.)
 
 ## Build / test
 

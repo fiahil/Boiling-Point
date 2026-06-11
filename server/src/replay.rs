@@ -20,7 +20,8 @@
 //! heart" the async room loop drives). The async `session::run_game` records the
 //! same seed + action log on the live path; exact reconstruction parity of those
 //! live logs converges with the two game loops (review-remediation **F2**) and
-//! the Recall-target wire gap (tui review **T4**) — until then a live log
+//! the Recall-target wire gap (tui review **T4**, now in
+//! `docs/99_archive/tui-client-review.md`) — until then a live log
 //! records what the wire carries.
 
 use serde::{Deserialize, Serialize};
