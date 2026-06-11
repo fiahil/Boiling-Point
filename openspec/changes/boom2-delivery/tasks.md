@@ -10,16 +10,25 @@
 
 ## 2. Deployment target & architecture
 
-- [ ] 2.1 Choose the managed container host + managed Postgres; document the decision.
-- [ ] 2.2 Containerize the single-binary monolith (runtime-injected config/secrets).
-- [ ] 2.3 Set up TLS/WebSocket ingress and DB backups.
-- [ ] 2.4 Stand up a staging environment mirroring production.
+- [ ] 2.1 Provision the Dedibox: hardened SSH, firewall open on 80/443 + SSH only, Caddy and
+  PostgreSQL installed.
+- [ ] 2.2 Run the monolith as a systemd service, localhost-bound (`:8080` game, `:8081` admin),
+  secrets via a root-only environment file.
+- [ ] 2.3 Write the Caddyfile: automatic TLS, `/ws` reverse-proxy to `localhost:8080`,
+  `file_server` for the landing page (`/`) and the `clients/web/` bundle (`/play`).
+- [ ] 2.4 Nightly `pg_dump` shipped off-site to object storage; exercise a restore against a
+  scratch database.
+- [ ] 2.5 Keep admin (`:8081`) + Grafana localhost-only; document SSH-tunnel access in
+  `ops/README.md`.
 
 ## 3. Continuous deployment pipeline
 
-- [ ] 3.1 On green `main`: build + publish the server container and the `clients/web/` bundle.
-- [ ] 3.2 Run database migrations as part of promotion.
-- [ ] 3.3 Promote staging→prod; gate the whole pipeline behind the CI test gate.
+- [ ] 3.1 On green `main`: build the release server binary and the `clients/web/` bundle in CI.
+- [ ] 3.2 Deploy step: sync binary + bundle to the box, run DB migrations, restart the systemd
+  service; gate the whole pipeline behind the CI test gate (staging is localhost — green
+  `main` goes straight to prod).
+- [ ] 3.3 Give the server a graceful shutdown/drain on restart — or explicitly document the
+  accepted in-flight-game interruption — so routine deploys aren't silent match-killers.
 - [ ] 3.4 Run the `boom2-benchmarking` per-merge jobs in the pipeline (criterion bench +
   history append + dashboard republish) — observational, outside the gate.
 

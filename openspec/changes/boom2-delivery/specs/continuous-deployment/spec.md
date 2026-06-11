@@ -2,17 +2,17 @@
 
 ### Requirement: Deploy On Green Main
 
-On a `main` commit that passes the full CI test gate, the pipeline SHALL **build and publish** the server container and the web-client (`clients/web/`) bundle, **run database migrations**, and **promote** the release (through staging to production).
+On a `main` commit that passes the full CI test gate, the pipeline SHALL **build** the release server binary and the web-client (`clients/web/`) bundle, **sync** them to the production box, **run database migrations**, and **restart** the service.
 
 #### Scenario: Green main triggers a deploy
 
 - **WHEN** a commit lands on `main` and the full CI gate is green
-- **THEN** the pipeline builds and publishes the server container and web bundle, runs migrations, and promotes the release
+- **THEN** the pipeline builds the server binary and web bundle, syncs them to the box, runs migrations, and restarts the service
 
 #### Scenario: Migrations run as part of the release
 
 - **WHEN** a release includes schema changes
-- **THEN** the pipeline runs the database migrations as part of promotion, before traffic is served by the new version
+- **THEN** the pipeline runs the database migrations before the new version serves traffic
 
 ### Requirement: The Benchmarking Suite Rides The Pipeline
 

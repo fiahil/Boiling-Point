@@ -16,9 +16,9 @@ CI SHALL extend beyond `fmt` + `clippy` + unit tests to run the Principle-II tes
 
 ### Requirement: The Test Gate Precedes Deployment
 
-A deployment SHALL proceed only after the full CI test gate passes on `main`. A red gate SHALL block promotion.
+A deployment SHALL proceed only after the full CI test gate passes on `main`. A red gate SHALL block the deploy.
 
 #### Scenario: Red gate blocks deploy
 
 - **WHEN** any CI test layer fails on a `main` commit
-- **THEN** the continuous-deployment pipeline does not build, publish, or promote that commit
+- **THEN** the continuous-deployment pipeline does not build, sync, or deploy that commit
