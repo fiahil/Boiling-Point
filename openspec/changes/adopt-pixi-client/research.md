@@ -104,19 +104,21 @@ non-Rust client safe.
 
 **Key Details:** Candidate tools — `typeshare` or `ts-rs` over the `protocol` crate.
 MessagePack transport is unchanged (`rmp-serde` server-side; `@msgpack/msgpack`
-client-side). Recorded protocol message-sequence fixtures double as parity tests across
-the TUI, the web client, and the harnesses.
+client-side). Recorded protocol message-sequence fixtures drive deterministic scene
+snapshots.
 
 ## R5: Where does the client live, and what about "compiles to WASM"?
 
-**Decision:** A new **`web-client/`** TypeScript workspace (sibling to `tui-client/`),
-outside the cargo workspace. The constitution's project-structure note that `client/`
-"compiles to WASM for web" is **retired** — the graphical client is TypeScript/Pixi, not
-a Rust→WASM build.
+**Decision:** A new TypeScript workspace at **`clients/web/`**, outside the cargo
+workspace. The constitution's project-structure note that `client/` "compiles to WASM
+for web" is **retired** — the graphical client is TypeScript/Pixi, not a Rust→WASM
+build. *(Re-pathed by `retire-v1-harnesses`: originally decided as a root
+`web-client/` sibling to the since-archived `tui-client/`; the `clients/` group is
+now the client tree and `clients/web/` is its first member.)*
 
 **Rationale:** Pixi is a JS/TS library; the natural layout is a Node/TS package with its
-own toolchain. Naming it `web-client/` keeps it parallel to `tui-client/` and leaves room
-for a future `native-client/` if Flutter is ever un-deferred.
+own toolchain. The `clients/` group keeps renderers identifiable by role and leaves
+room for a future `clients/native/` if Flutter is ever un-deferred.
 
 **Alternatives Considered:** Reusing the documented `client/` slot — avoided to prevent
 implying the retired WASM build; the rename is noted as a governance impact.
@@ -128,6 +130,7 @@ implying the retired WASM build; the rename is noted as a governance impact.
 - **R2 → Capacitor hybrid** for iOS/Android + PWA, one codebase.
 - **R3 → DOM text overlay** for selectable/accessible text; canvas for spectacle.
 - **R4 → generate TS types from the Rust `protocol` crate**, enforced in CI.
-- **R5 → new `web-client/` TS workspace**; the "client compiles to WASM" assumption is
+- **R5 → new `clients/web/` TS workspace**; the "client compiles to WASM" assumption is
   retired.
-- The **TUI stays** as the reference client; **Flutter native is deferred**.
+- **Flutter native is deferred**. *(The TUI was the reference client when this was
+  decided; it has since been retired to `archive/tui-client/` — `retire-v1-harnesses`.)*

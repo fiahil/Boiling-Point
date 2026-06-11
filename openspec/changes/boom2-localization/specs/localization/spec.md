@@ -23,9 +23,9 @@ The launch set SHALL be **English (source), French, Spanish, German, Italian**, 
 - **WHEN** a player selects any of EN/FR/ES/DE/IT or Latin
 - **THEN** the client renders fully from that locale file with no missing-key fallbacks for shipped content
 
-### Requirement: One Canonical Source For Both Clients, Enforced In CI
+### Requirement: One Canonical Source, Enforced In CI
 
-Locale files SHALL live in **one shared place** consumed by both `web-client/` and `tui-client/`. CI SHALL fail if **any** protocol enum variant lacks a key in **any** shipped locale.
+Locale files SHALL live in **one shared place** consumed by the web client (`clients/web/`). CI SHALL fail if **any** protocol enum variant lacks a key in **any** shipped locale.
 
 #### Scenario: A new spell without translations fails CI
 

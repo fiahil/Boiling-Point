@@ -1,17 +1,17 @@
 ## ADDED Requirements
 
-### Requirement: CI Runs The Three Testing Layers
+### Requirement: CI Runs The Full Test Gate
 
-CI SHALL extend beyond `fmt` + `clippy` + unit tests to run the project's three Principle-II testing layers: **transport/integration** tests (booting an in-process server), seeded deterministic **bot-harness** balance runs, and an **agent-harness** Claude-as-player smoke. Once the Pixi client lands, CI SHALL also run the **web-client** build and Playwright visual suite.
+CI SHALL extend beyond `fmt` + `clippy` + unit tests to run the Principle-II testing layers (constitution v2.0.0): **transport/integration** tests (booting an in-process server), and — once the Pixi client lands — the **web client** (`clients/web/`) build and Playwright visual suite. When the archived bot harness (`archive/bot-harness/`) is revived for boom2 balance work (required before boom2 balance ships, §IV), its seeded deterministic balance runs SHALL join the gate.
 
 #### Scenario: A protocol/transport regression fails CI
 
 - **WHEN** a change breaks the transport/integration layer
 - **THEN** the CI run fails before any deploy step
 
-#### Scenario: Balance runs are seeded and deterministic
+#### Scenario: Revived balance runs are seeded and deterministic
 
-- **WHEN** the bot-harness balance layer runs in CI
+- **WHEN** the revived bot-harness balance layer runs in CI
 - **THEN** it uses fixed seeds so results are reproducible and a regression is attributable
 
 ### Requirement: The Test Gate Precedes Deployment

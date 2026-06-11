@@ -21,8 +21,8 @@
 
 ## 4. Clients & harness
 
-- [ ] 4.1 TUI: render the 2-of-pair pick and the four public Brewers at the table.
-- [ ] 4.2 Bot harness: support per-bot Brewer assignment; emit the **persona × Brewer** win/break matrix.
+- [ ] 4.1 Web client (`clients/web/`): render the 2-of-pair pick and the four public Brewers at the table.
+- [ ] 4.2 Bot harness (revived from `archive/bot-harness/`, §IV): support per-bot Brewer assignment; emit the **persona × Brewer** win/break matrix.
 
 ## 5. Balance (Principle IV)
 

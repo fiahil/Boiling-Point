@@ -27,12 +27,13 @@ mobile**, packaged as a hybrid app, and records the decision and its seams.
   font-scaling gap.
 - **Generate the wire types for TypeScript from the canonical Rust `protocol` crate**, so
   the web client cannot drift from the server contract (no hand-maintained duplicates).
-- **Add the Layer-3 visual test harness** for this client (Playwright: Pixi canvas
-  screenshots + DOM-overlay assertions) behind a **deterministic animation clock**,
-  completing the three testing layers (§II) for the web client.
-- The **Rust TUI remains** the agent-test reference client and is **unchanged**.
-  **Flutter+Flame native is deferred, not rejected** — revisit only if a "premium native
-  feel" later justifies a second presentation codebase.
+- **Add the visual test harness** for this client (Playwright: Pixi canvas
+  screenshots + DOM-overlay assertions) behind a **deterministic animation clock** —
+  the §II visual layer (constitution v2.0.0).
+- **Flutter+Flame native is deferred, not rejected** — revisit only if a "premium native
+  feel" later justifies a second presentation codebase. *(Superseded note: this change
+  originally kept the Rust TUI as the agent-test reference client; the TUI has since
+  been retired to `archive/tui-client/` — `retire-v1-harnesses`.)*
 - **BREAKING (governance):** resolves the constitution's "Client (undecided)" row →
   PixiJS (web + mobile hybrid). Requires a constitution amendment recorded per its
   procedure, and supersedes the project-structure note that `client/` "compiles to WASM"
@@ -51,12 +52,12 @@ mobile**, packaged as a hybrid app, and records the decision and its seams.
 
 ### Modified Capabilities
 
-<!-- none — this is additive. The TUI client specs (tui-client-shell, tui-round-play,
-     etc.) are untouched; the new client renders the same protocol alongside the TUI. -->
+<!-- none — this is additive. (The TUI client specs it originally sat alongside were
+     removed by retire-v1-harnesses; the new client renders the same protocol.) -->
 
 ## Impact
 
-- **New code:** a `web-client/` TypeScript workspace (Pixi app, protocol client over
+- **New code:** a `clients/web/` TypeScript workspace (Pixi app, protocol client over
   WebSocket + MessagePack, scene renderers, DOM overlay), a Capacitor project for mobile,
   a typegen step, and a Playwright suite. The animation direction already exists as the
   verified sketch in `docs/ui-explorations/boiling-point-pixi.html`.
@@ -64,7 +65,6 @@ mobile**, packaged as a hybrid app, and records the decision and its seams.
   crate; mobile (Capacitor) build lanes likely follow in a later change.
 - **Governance:** `CLAUDE.md` constitution updated — Client decided = Pixi hybrid;
   WASM-client assumption retired.
-- **No** server, game-logic, balance, or wire-format change. MessagePack/WebSocket and the
-  `protocol` crate stay canonical; the client-agnostic bot harness and Claude-as-player
-  harness are unaffected and continue to validate game correctness independent of any
-  client.
+- **No** server, game-logic, balance, or wire-format change. MessagePack/WebSocket and
+  the `protocol` crate stay canonical. *(The client-agnostic bot and Claude-as-player
+  harnesses this originally left untouched are now archived — `retire-v1-harnesses`.)*

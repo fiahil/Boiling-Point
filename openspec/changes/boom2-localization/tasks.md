@@ -1,7 +1,7 @@
 ## 1. Locale-table system
 
 - [ ] 1.1 Define the shared locale-file format (flat JSON, stable keys, `{placeholder}` interpolation) and its single canonical location.
-- [ ] 1.2 Implement locale loading/lookup in `web-client/` and `tui-client/` from the shared source.
+- [ ] 1.2 Implement locale loading/lookup in the web client (`clients/web/`) from the shared source.
 - [ ] 1.3 Implement locale-as-client-preference: default from browser/system, in-client switcher, local persistence, no account.
 
 ## 2. The one protocol touch

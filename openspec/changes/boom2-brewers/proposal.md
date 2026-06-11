@@ -28,5 +28,5 @@ In the v1 game every seat is mechanically identical — there is no **player ide
 
 - **Protocol crate:** brewer identity + the 2-of-pair offer/pick messages; each player's brewer is public state.
 - **Server engine:** a pre-game brewer phase (deal disjoint pairs, collect picks); per-brewer rule hooks into the wave/resolution/grimoire/deal logic.
-- **Clients:** the TUI renders the brewer pick and shows all four public brewers at the table.
+- **Clients:** the web client (`clients/web/`) renders the brewer pick and shows all four public brewers at the table.
 - **Balance (IV):** the harness matrix grows to **persona × Brewer**; the ≥12 must be mutually balanced (no Brewer breaks any persona) before humans play. The two 🌶️-flagged wave/detonator Brewers (Channeler, Lurker, Cinderwright, Alchemist) get the most scrutiny.

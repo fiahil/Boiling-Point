@@ -11,7 +11,7 @@ There SHALL be a public, static landing page that explains what the game is (wit
 
 ### Requirement: Landing Page Is Static And Independent Of The Game Server
 
-The landing page SHALL be a **static** asset (no game logic), deployable alongside or in front of the `web-client/`, so it can be served and cached independently of the game server.
+The landing page SHALL be a **static** asset (no game logic), deployable alongside or in front of the web client (`clients/web/`), so it can be served and cached independently of the game server.
 
 #### Scenario: Landing page serves without the game server
 

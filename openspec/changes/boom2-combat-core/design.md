@@ -65,7 +65,7 @@ Volatility 0–7 (mean ~3); boiling point ~20–32 (the load-bearing dial); poin
 | Principle | Compliance |
 |---|---|
 | **I — Server-authoritative** | All deal/wave/explosion/scoring/spell resolution is server-computed and validated; clients send intents (play ingredient / cast spell / pass) and render revealed state. The server never leaks the boiling point or pot contents except via Peek and the depile. |
-| **II — Agent-driven** | All artifacts are source files. The protocol-bot harness and Claude-as-player harness drive the new loop headlessly; the TUI renders it for the visual layer. |
+| **II — Agent-driven** | All artifacts are source files. The web client's Playwright suite is the visual layer (constitution v2.0.0); the revived bot harness (`archive/bot-harness/`, §IV) drives the new loop headlessly for balance derivation. |
 | **III — Start simple** | This is the smallest *playable* slice of the rework: **fixed decks** (no drafting), **no Brewers**, **no compounding** — those are separate later changes. **Justification for the rework's size:** v1 tested too simple; the deep core is the product (a documented amendment of the 5–10-min framing). **Rejected simpler alternative:** keep tweaking v1 with more modifiers/effects — raises content volume but not the skill ceiling or player identity, which is where the depth lives. |
 | **IV — Playtest-driven** | Every number is `[needs playtesting]`; the bot harness re-derives the entire blind-volatility economy (boiling point ≈26 is the first sweep) and the ~45% explosion-rate target before human playtests. |
 

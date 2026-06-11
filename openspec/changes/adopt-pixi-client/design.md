@@ -1,6 +1,7 @@
 ## Context
 
-The Rust TUI is the only shipping client and the agent-test reference. The constitution
+At decision time the Rust TUI was the only shipping client and the agent-test reference
+(since retired to `archive/tui-client/` — `retire-v1-harnesses`). The constitution
 lists the *graphical* client as undecided (Macroquad / Godot / Flutter). Direction and
 feasibility were explored as three throwaway sketches in `docs/ui-explorations/`; PixiJS
 won on web reach + animation ceiling + agent-writability + a cheap hybrid mobile path
@@ -70,14 +71,17 @@ filter passes (bloom, shockwave, heat-haze) are used only during the moments tha
 them (depile/boom), and their intensity on real devices is a **needs-playtesting** dial
 (§IV).
 
-### D5: Testing — complete the three layers for this client
+### D5: Testing — the visual layer for this client
 
-- Layers 1 & 2 (bot harness, Claude-as-player) are **client-agnostic** — they speak the
-  protocol directly and already validate game correctness; this change does not touch them.
-- Layer 3 (visual client tests) is added here with **Playwright**: Pixi canvas screenshots
-  under a pinned animation clock + DOM-overlay text assertions (selectable code, etc.).
+*(Re-scoped by `retire-v1-harnesses` / constitution v2.0.0: the v1 harnesses that
+validated game correctness client-agnostically are archived; server tests carry that
+load now.)*
+
+- The visual client test layer (§II) is added here with **Playwright**: Pixi canvas
+  screenshots under a pinned animation clock + DOM-overlay text assertions (selectable
+  code, etc.).
 - Recorded protocol message-sequence **fixtures** are replayed into the client to drive
-  deterministic scene snapshots, and the same fixtures cross-check parity with the TUI.
+  deterministic scene snapshots.
 
 ## Constitution Check
 
@@ -85,8 +89,9 @@ them (depile/boom), and their intensity on real devices is a **needs-playtesting
   it renders server state and emits intents only (spec'd in `web-client-shell`: *Pure
   Renderer Over The Protocol*, *Client never self-advances*).
 - **§II Agent-Driven Development** — ✅ pure TypeScript/HTML source, no GUI-only state;
-  headless screenshot loop proven on the sketch; the three testing layers are preserved
-  (1 & 2 unchanged and client-agnostic; 3 added via Playwright with a deterministic clock).
+  headless screenshot loop proven on the sketch; this change supplies §II's visual test
+  layer (Playwright with a deterministic clock) alongside the server-test layer
+  (constitution v2.0.0; the v1 harness layers are archived per `retire-v1-harnesses`).
 - **§III Start Simple, Scale Later** — ✅ chooses the **simplest path that reaches web +
   mobile + spectacle**: one TS codebase + a hybrid wrapper. *Rejected simpler alternative:*
   a **pure-DOM client** (no canvas) — simpler, but its animation ceiling is too low for the
@@ -111,16 +116,16 @@ as a task.
   (idle loop, filters only during spectacle) + a real-device playtest dial (§IV). Residual:
   a hybrid will never feel as native as Flutter — accepted; native is deferred, not denied.
 - **iOS WebGPU still maturing** → Pixi v8 auto-falls back to WebGL2 (iOS 15+); no action.
-- **A second client increases drift/maintenance** (TUI + web now) → Logic parity is free
-  (server-authoritative + client-agnostic harnesses); type parity is enforced (D2); only
-  the *view* is duplicated, which is inherent to having two clients.
+- ~~**A second client increases drift/maintenance** (TUI + web)~~ — moot since
+  `retire-v1-harnesses`: the TUI is archived and `clients/web/` is the only live
+  client; type parity with the server is enforced (D2).
 - **iOS PWA limits** (push/storage/eviction) → Capacitor build is the first-class iOS path;
   PWA is an extra, not the only delivery.
 
 ## Migration Plan
 
-Additive — no rollback of existing behavior. The TUI keeps working unchanged. Sequence:
-stand up `web-client/` (typegen → protocol client → one vertical slice: connect + table
+Additive — no rollback of existing behavior. Sequence:
+stand up `clients/web/` (typegen → protocol client → one vertical slice: connect + table
 scene) behind nothing (it ships when ready); add Playwright; then broaden scenes; the
 Capacitor mobile lane and store CI are a follow-up change. The constitution edit lands with
 this change.
@@ -129,7 +134,7 @@ this change.
 
 - Exact typegen tool (`typeshare` vs `ts-rs` vs a small custom emitter) — pick during 2.x;
   decision criterion is full coverage of the protocol's enums/IDs/generics.
-- Repo placement of the TS workspace (`web-client/`) and whether it joins a JS monorepo
-  later (alongside `agent-harness/`).
+- ~~Repo placement of the TS workspace~~ — resolved by `retire-v1-harnesses`: it lives
+  at `clients/web/`.
 - How much of the verified sketch (`boiling-point-pixi.html`) is lifted directly vs
   rebuilt as structured modules.

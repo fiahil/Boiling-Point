@@ -38,9 +38,9 @@
 
 ## 7. Clients & harnesses
 
-- [ ] 7.1 TUI: render the new wave actions (ingredient/spell/pass), the grimoire, and the volatility-sorted, boiling-point-revealing depile.
-- [ ] 7.2 Bot harness: drive the new loop headlessly; emit explosion-rate, detonator-distribution, Peek-fire-rate, and freeze (all-pass) statistics.
-- [ ] 7.3 Claude-as-player harness: expose the new intents over the structured JSON interface.
+- [ ] 7.1 Web client (`clients/web/`): render the new wave actions (ingredient/spell/pass), the grimoire, and the volatility-sorted, boiling-point-revealing depile.
+- [ ] 7.2 Bot harness (revived from `archive/bot-harness/`, §IV): drive the new loop headlessly; emit explosion-rate, detonator-distribution, Peek-fire-rate, and freeze (all-pass) statistics.
+- [ ] 7.3 Claude-as-player harness (optional revival from `archive/agent-harness/`): expose the new intents over the structured JSON interface.
 
 ## 8. Balance (Principle IV)
 

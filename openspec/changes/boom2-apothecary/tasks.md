@@ -24,8 +24,8 @@
 
 ## 5. Clients & harness
 
-- [ ] 5.1 TUI: draft UI (pick 2–3 buckets per ledger, set reserve) and a public-recipe readout at the table.
-- [ ] 5.2 Bot harness: programmatic recipes; add the **deck-archetype** axis to the matrix.
+- [ ] 5.1 Web client (`clients/web/`): draft UI (pick 2–3 buckets per ledger, set reserve) and a public-recipe readout at the table.
+- [ ] 5.2 Bot harness (revived from `archive/bot-harness/`, §IV): programmatic recipes; add the **deck-archetype** axis to the matrix.
 
 ## 6. Balance (Principle IV)
 

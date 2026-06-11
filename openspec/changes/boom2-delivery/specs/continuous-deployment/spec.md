@@ -2,7 +2,7 @@
 
 ### Requirement: Deploy On Green Main
 
-On a `main` commit that passes the full CI test gate, the pipeline SHALL **build and publish** the server container and the web-client bundle, **run database migrations**, and **promote** the release (through staging to production).
+On a `main` commit that passes the full CI test gate, the pipeline SHALL **build and publish** the server container and the web-client (`clients/web/`) bundle, **run database migrations**, and **promote** the release (through staging to production).
 
 #### Scenario: Green main triggers a deploy
 

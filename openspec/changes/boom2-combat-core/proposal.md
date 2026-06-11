@@ -39,8 +39,8 @@ It ships **first** and on **simple fixed color-anchored decks** (no drafting yet
 
 ## Impact
 
-- **Protocol crate:** new card/spell/explosion/ depile message shapes (the canonical source the TUI and web clients regenerate from).
-- **Server engine:** new deal/wave/resolution/explosion logic; the blind-volatility economy is re-derived from scratch by the **bot harness** (Principle IV) — the old tuning (boiling point 8–14, vol 1–3) does not carry over.
-- **Clients:** the Rust TUI (reference client) renders the new states; depile becomes a volatility-sorted, boiling-point-revealing animation.
+- **Protocol crate:** new card/spell/explosion/ depile message shapes (the canonical source the web client's TypeScript types regenerate from).
+- **Server engine:** new deal/wave/resolution/explosion logic; the blind-volatility economy is re-derived from scratch by the **revived bot harness** (`archive/bot-harness/`, Principle IV) — the old tuning (boiling point 8–14, vol 1–3) does not carry over.
+- **Clients:** the web client (`clients/web/`) renders the new states; depile becomes a volatility-sorted, boiling-point-revealing animation.
 - **Adjacent v1 specs touched (follow-up, out of this scope):** `cauldron-modifiers` offsets rescale to the new boiling-point range; `deathmatch`'s "most-volatility = Detonator" now aligns with the main model.
 - **Starting numbers** (all `[needs playtesting]`) are recorded in docs/07; this change carries them as the harness's first config, not as final values.

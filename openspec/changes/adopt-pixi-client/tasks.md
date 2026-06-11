@@ -11,12 +11,12 @@
 - [ ] 2.1 Choose the typegen tool (`typeshare` / `ts-rs` / small custom emitter) by
   verifying full coverage of the `protocol` crate's messages, enums, and IDs.
 - [ ] 2.2 Annotate/configure the Rust `protocol` crate so client-facing types emit cleanly.
-- [ ] 2.3 Add a `generate-types` step emitting checked-in TypeScript into `web-client/`.
+- [ ] 2.3 Add a `generate-types` step emitting checked-in TypeScript into `clients/web/`.
 - [ ] 2.4 Add a CI check that fails when committed generated types are stale vs the crate.
 
 ## 3. Web-client workspace skeleton
 
-- [ ] 3.1 Create the `web-client/` TypeScript workspace (build + dev server, Pixi v8 dep,
+- [ ] 3.1 Create the `clients/web/` TypeScript workspace (build + dev server, Pixi v8 dep,
   `@msgpack/msgpack`), all source agent-writable (§II).
 - [ ] 3.2 Add the index HTML shell with the DOM-overlay container layered over the Pixi
   canvas mount.
@@ -63,9 +63,9 @@
 - [ ] 9.1 Add Playwright; capture Pixi canvas screenshots under the pinned animation clock.
 - [ ] 9.2 Assert DOM-overlay text (e.g., the room code is selectable/announced).
 - [ ] 9.3 Add recorded protocol message-sequence fixtures; replay them to drive deterministic
-  scene snapshots and cross-check parity with the TUI.
+  scene snapshots. (TUI-parity cross-checks dropped — the TUI retired to `archive/`
+  in `retire-v1-harnesses`.)
 
 ## 10. Validate
 
 - [ ] 10.1 `openspec validate adopt-pixi-client --strict` passes; specs match implementation.
-- [ ] 10.2 Confirm the bot harness and Claude-as-player harness are unaffected (client-agnostic).
