@@ -1,6 +1,6 @@
 # Boiling Point — Agent Guidelines
 
-## Constitution (v2.0.0)
+## Constitution (v2.1.0)
 
 ### I. Server-Authoritative
 
@@ -19,11 +19,22 @@ The codebase MUST support Claude as an autonomous co-developer
 operating in a closed code-render-screenshot-adjust loop.
 
 - All source files MUST be fully agent-writable — no binary editor state or GUI-only configuration
-- Two testing layers MUST be maintained alongside game code:
-  1. Server tests — unit plus transport/integration tests that boot the in-process
-     server and drive it over the real wire protocol
-  2. Visual client tests — Playwright screenshots + DOM assertions, landing with the
+- Three testing layers MUST be maintained alongside game code:
+  1. Unit tests — public API surfaces and component-level behaviour, plus
+     transport/integration tests that boot the in-process server and drive it over
+     the real wire protocol
+  2. End-to-end tests — few but important, each covering one specific aspect of a
+     game (matchmaking, launching a game, playing a round, triggering a boom, …).
+     Driven by test-bot clients (`boom2-ai-client`, bot brain) against a real server
+     process: reproducible seeded scenarios, **no mocking**, and no infrastructure
+     beyond the server and the test bots — e2e tests MUST NOT require a database.
+     The test harness MUST manage the server/bot processes and capture their outputs
+     so deterministic games yield deterministic assertions
+  3. Visual client tests — Playwright screenshots + DOM assertions, landing with the
      web client (`adopt-pixi-client`)
+- Documentation MUST be kept current — a change that alters behaviour, specs, or
+  design updates the corresponding docs (`openspec/` contracts, `docs/` rationale,
+  this constitution for governance) in the same change
 - Agent testability is a first-class selection criterion for client technology decisions
 - The v1 harnesses (protocol bot harness, Claude-as-player harness) and the TUI
   reference client are retired to `archive/` — revivable, not deleted; reviving the
@@ -114,6 +125,14 @@ When a practice conflicts with a principle above, the principle wins.
 Violations MUST be documented with justification and rejected simpler alternative.
 
 **Amendment log:**
+- **v2.1.0 (2026-06-11)** — MINOR. Expanded Principle II's testing layers from two to
+  three: unit tests scoped to public API surfaces and component-level behaviour; a
+  new end-to-end layer (few but important, one scenario per game aspect —
+  matchmaking, launching a game, playing a round, triggering a boom) driven by
+  test-bot clients (`boom2-ai-client`) with no mocking and no infrastructure beyond
+  the server and bots (no database), harness-managed processes with captured outputs
+  for deterministic assertions; and a standing docs-currency duty (docs updated in
+  the same change that alters behaviour).
 - **v2.0.0 (2026-06-11)** — MAJOR. Retired the v1 test/reference components to
   `archive/` (`tui-client`, `bot-harness`, `agent-harness`, `playtest.sh`) and
   redefined Principle II's mandatory testing layers (server tests now; Playwright
