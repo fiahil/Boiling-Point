@@ -86,6 +86,11 @@ None.
 - **Other boom2 changes:** `boom2-combat-core` 7.2/7.3, `boom2-brewers` 4.2,
   `boom2-apothecary` 5.2, and `boom2-identity` 5.1 each carry per-change harness tasks;
   those land against this client once it exists.
+- **Testing scope (constitution v2.1.1 §II):** this client carries only **minimal
+  unit testing** — component-level tests of its own surfaces (firewall, brains,
+  transports, harness determinism). The **end-to-end scenario suite lives
+  server-side** and runs headless, spawning the server and this client (bot brain)
+  as its instrument; no e2e suite is built inside this change.
 - **Dependencies:** `boom2-combat-core` (v2 protocol shapes — hard dependency);
   `boom2-brewers` / `boom2-apothecary` (matrix axes — the harness scales with what has
   landed); agent brain requires Claude access (auth/billing per design).

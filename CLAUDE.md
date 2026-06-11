@@ -1,6 +1,6 @@
 # Boiling Point — Agent Guidelines
 
-## Constitution (v2.1.0)
+## Constitution (v2.1.1)
 
 ### I. Server-Authoritative
 
@@ -25,11 +25,14 @@ operating in a closed code-render-screenshot-adjust loop.
      the real wire protocol
   2. End-to-end tests — few but important, each covering one specific aspect of a
      game (matchmaking, launching a game, playing a round, triggering a boom, …).
-     Driven by test-bot clients (`boom2-ai-client`, bot brain) against a real server
-     process: reproducible seeded scenarios, **no mocking**, and no infrastructure
-     beyond the server and the test bots — e2e tests MUST NOT require a database.
-     The test harness MUST manage the server/bot processes and capture their outputs
-     so deterministic games yield deterministic assertions
+     The e2e suite lives server-side and runs fully headless: it drives test-bot
+     clients (`boom2-ai-client`, bot brain) against a real server process —
+     reproducible seeded scenarios, **no mocking**, and no infrastructure beyond
+     the server and the test bots (e2e tests MUST NOT require a database). The AI
+     client itself carries only minimal unit testing; it is the instrument, not
+     the home of the suite. The test harness MUST manage the server/bot processes
+     and capture their outputs so deterministic games yield deterministic
+     assertions
   3. Visual client tests — Playwright screenshots + DOM assertions, landing with the
      web client (`adopt-pixi-client`)
 - Documentation MUST be kept current — a change that alters behaviour, specs, or
@@ -125,6 +128,10 @@ When a practice conflicts with a principle above, the principle wins.
 Violations MUST be documented with justification and rejected simpler alternative.
 
 **Amendment log:**
+- **v2.1.1 (2026-06-11)** — PATCH. Clarified the e2e layer's placement: the suite
+  lives server-side and runs fully headless; `boom2-ai-client` is the instrument it
+  drives, not the home of the suite, and the AI client itself carries only minimal
+  unit testing.
 - **v2.1.0 (2026-06-11)** — MINOR. Expanded Principle II's testing layers from two to
   three: unit tests scoped to public API surfaces and component-level behaviour; a
   new end-to-end layer (few but important, one scenario per game aspect —
