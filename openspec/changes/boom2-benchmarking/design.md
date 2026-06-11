@@ -29,6 +29,8 @@ Workloads fully seeded; criterion configured with `noise_threshold ≥ 0.10`, ex
 
 Studies are question-driven (a knob changed; a degenerate strategy is suspected), run by one command, at thousands of seeded games, emitting versioned reports with full provenance (seeds, config hash, engine commit). *Alternative rejected:* scheduled nightly studies — burns compute with no question attached; on-demand keeps every run attributable to a hypothesis (Principle IV).
 
+Dependency (`boom2-observability`): the balance-study runner imports the shared metric definitions from `server/src/observability/balance_metrics.rs` and evaluates them over its bot games — one definition, two populations; study reports never re-derive a formula.
+
 ### D4: One self-contained HTML page, generator-owned (R4)
 
 `bench/dashboard/` reads the bench history + study reports and emits a single `benches.html` with inline JSON data and inline rendering (hand-rolled SVG or an inlined micro-lib — no CDN, no external requests; must open from disk). Agent-writable, diffable, hosting-free (Principles II/III). *Alternative rejected:* grafana — that's live-service telemetry in `ops/`; bench history is per-commit and belongs with the repo, not a TSDB.

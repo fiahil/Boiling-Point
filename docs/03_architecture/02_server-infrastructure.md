@@ -267,35 +267,58 @@ item ([05_roadmap.md](../05_roadmap.md)).
 
 ## 6. Observability
 
-### Game-Specific Metrics
+### Balance metrics — defined once (`boom-balance-metrics`)
 
-| Metric | Type | Why It Matters |
+Every v2 balance metric is defined **exactly once**, in
+`server/src/observability/balance_metrics.rs` — id, formula over v2 engine
+events, unit, and its `[needs playtesting]` target seeded from the
+[decision log](../06_boom2/02_toward-a-v2-core.md). The live pipeline (the
+Prometheus emitters and the admin projection's unsampled aggregates) and the
+benchmarking suite's balance studies (`boom2-benchmarking`) evaluate the **same
+definitions**, so live play and harness runs compare directly. The v1 figures
+(explosion rate vs ~30–40%, cards per round, dominant-colour rate, reshuffle
+frequency) retired with the v1 core; their historical Prometheus series stay in
+storage, unqueried.
+
+| Metric (definition id) | Unit | Target (all `[needs playtesting]`) |
 |---|---|---|
-| `rooms_active` | Gauge | Capacity planning |
-| `rooms_created_total` | Counter | Growth tracking |
-| `players_connected` | Gauge | Load indicator |
-| `game_duration_seconds` | Histogram | Is the game too long/short? |
-| `round_duration_seconds` | Histogram | Are rounds hitting their target? |
-| `explosion_rate` | Ratio | Game balance |
-| `wave_timeout_rate` | Ratio | UX indicator — are wave timers too short? |
-| `ws_message_latency_ms` | Histogram | Player experience |
-| `reconnection_rate` | Ratio | Network quality |
-| `cards_per_round` | Histogram | Engagement — are players passing too early? |
-| `dominant_color_rate` | Ratio | Balance — is one color/strategy winning disproportionately? |
+| `boom_rate` | ratio | ~45% (harness-confirmed 44.8% at BP 31–43) |
+| `freeze_rate` | ratio | 0% — rounds must not freeze |
+| `detonators_per_boom` | per boom | — |
+| `fold_rate` | ratio | — |
+| `wave_depth` | waves/round | — |
+| `wave_duration_seconds` | seconds | — |
+| `round_duration_seconds` | seconds | ~150 s |
+| `game_duration_seconds` | seconds | 900–1080 s (15–18 min) |
+| `spell_cast_rate` (+ per-spell) | casts/round | — |
+| `wave_timeout_rate` | ratio | — |
+| `reconnection_rate` | per game | — |
 
-The balance-relevant metrics are the Principle IV signal; the operator-facing dashboard
-that consumes them is specified in `balance-dashboard` and described in
-[`ops/README.md`](../../ops/README.md).
+Fleet/ops figures carry over from v1 with unchanged identity: `groups_active`,
+`groups_created_total`, `games_active`, `games_started_total`,
+`games_completed_total`, `players_connected`, `waves_total`,
+`wave_timeouts_total`, `rounds_total`, `player_reconnects_total`, and the
+duration histograms.
+
+The balance metrics are the Principle IV signal; the operator-facing dashboard
+that consumes them lives inside the **admin command center**
+(`admin-command-center` / `balance-dashboard` specs, described in
+[`ops/README.md`](../../ops/README.md)) — embedded Grafana renders the
+Prometheus series, and the projection-backed cards render the same definition
+ids, all behind admin auth.
 
 ### Stack
 
 - **Structured logging:** `tracing` + `tracing-subscriber` (JSON output) — the
   ecosystem standard for Tokio/Axum.
-- **Metrics:** the `metrics` crate with a Prometheus exporter.
-- **Tracing spans:** the span tree (room → game → round → wave) is a first-class
-  contract — it is *also* the admin read model and the in-process balance aggregator.
-  See [04_span-schema-contract.md](04_span-schema-contract.md) and the
-  `otel-span-pipeline` / `admin-span-projection` specs.
+- **Metrics:** the `metrics` crate with a Prometheus exporter, emitting only the
+  series named in `balance_metrics::series`.
+- **Tracing spans:** the v2 span tree (group → game → round → wave →
+  commit/spell-cast/resolve, with the round's depile/score) is a first-class
+  contract — it is *also* the admin read model and the in-process balance
+  aggregator. See [04_span-schema-contract.md](04_span-schema-contract.md) and
+  the `otel-span-pipeline` / `admin-span-projection` specs (rebased on v2 by
+  change `boom2-observability`).
 - **Distributed tracing:** not needed for a single-binary monolith; add Jaeger/Tempo if
   services ever split.
 

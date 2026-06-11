@@ -67,11 +67,31 @@ function renderFleet(f) {
   box.appendChild(metricCard("In-flight games", f.games));
   box.appendChild(metricCard("Queue depth", f.queue_depth));
   box.appendChild(metricCard("Stuck groups", f.stuck_groups));
-  box.appendChild(metricCard("Explosion rate", pct(f.balance.explosion_rate), "target 30–40%"));
+  const boom = f.balance.metrics.find((m) => m.id === "boom_rate");
+  box.appendChild(metricCard("Boom rate", fmtMetric(boom), targetText(boom)));
   box.appendChild(metricCard("Games observed", f.balance.games));
 }
 
 const pct = (x) => (x * 100).toFixed(1) + "%";
+
+// Render one evaluated boom-balance-metrics value ("—" until its population exists).
+function fmtMetric(m) {
+  if (!m || m.value == null) return "—";
+  if (m.unit === "ratio") return pct(m.value);
+  if (m.unit === "seconds") return m.value.toFixed(1) + "s";
+  return m.value.toFixed(2);
+}
+
+// The metric's [needs playtesting] target band, or null when no target is seeded
+// (the observed value renders with no band).
+function targetText(m) {
+  if (!m || !m.target) return null;
+  const v = (x) => (m.unit === "ratio" ? pct(x) : m.unit === "seconds" ? x.toFixed(0) + "s" : x);
+  const band = m.target.kind === "point"
+    ? `target ~${v(m.target.value)}`
+    : `target ${v(m.target.lo)}–${v(m.target.hi)}`;
+  return `${band} [${m.target_status}]`;
+}
 
 // ---- groups --------------------------------------------------------------
 
@@ -138,13 +158,20 @@ async function reveal(code, box) {
       add("Round", data.round_number);
       add("Wave", data.wave_number);
       add("Boiling point", data.boiling_point, true);
-      add("Volatility", data.volatility_total, true);
+      add("Pot volatility", data.volatility_total, true);
       add("Modifiers", data.modifiers);
+      add("Active effects", data.active_effects, true);
       out.appendChild(dl);
       if (data.hands.length) {
         out.appendChild(el("h4", null, "Hands"));
         for (const h of data.hands) {
-          out.appendChild(el("div", "secret", `${h.player_id}: ${h.hand}`));
+          out.appendChild(el("div", "secret", `${h.player_id}: [${h.pantry}] grimoire[${h.spells}]`));
+        }
+      }
+      if (data.committed.length) {
+        out.appendChild(el("h4", null, "Committed (unrevealed)"));
+        for (const c of data.committed) {
+          out.appendChild(el("div", "secret", `${c.player_id}: ${c.card} vote=${c.vote_color}`));
         }
       }
     } else {
@@ -202,8 +229,10 @@ function appendActivity(feed, ev) {
 
 function describe(ev) {
   const a = ev.attributes || {};
-  if (ev.span === "score" && ev.kind === "end") return `exploded=${a["round.exploded"]} dominant=${a.dominant_color ?? ""} pot=${a["pot.value"] ?? ""}`;
-  if (ev.span === "round" && ev.kind === "end") return `r${a["round.number"] ?? "?"} exploded=${a["round.exploded"]}`;
+  if (ev.span === "score" && ev.kind === "end") return `boomed=${a["round.boomed"]} pot=${a["pot.value"] ?? ""}${a.detonators ? ` detonators=${a.detonators}` : ""}`;
+  if (ev.span === "round" && ev.kind === "end") return `r${a["round.number"] ?? "?"} boomed=${a["round.boomed"]}`;
+  if (ev.span === "depile") return `bp=${a.boiling_point ?? "?"}${a.crossing_index != null ? ` crossed@${a.crossing_index}` : ""}`;
+  if (ev.span === "spell.cast") return `${(a["player.id"] ?? "").slice(0, 4)} cast ${a["spell.kind"] ?? ""}${a["spell.target"] ? "→" + a["spell.target"] : ""}`;
   if (ev.span === "wave") return `w${a["wave.number"] ?? "?"} ${a["wave.timed_out"] === "true" ? "(timeout)" : ""}`;
   if (ev.span === "reconnect") return `player=${a["player.id"] ?? ""}`;
   if (ev.span === "ws.message") return a["ws.message_kind"] ?? "";
@@ -235,17 +264,25 @@ async function viewReplay(gameId) {
   }
   const game = await res.json();
   box.appendChild(el("h3", null, "Game " + (game.group_code || game.game_id)));
-  // Group spans by round, then waves, in completion order.
+  // Group spans by round, then waves (commits + spell casts), then the depile —
+  // the preserved v2 tree, replayed wave by wave in completion order.
   const rounds = game.spans.filter((s) => s.name === "round");
   for (const r of rounds) {
     const wrap = el("div", "card");
-    wrap.appendChild(el("h4", null, `Round ${r.attributes["round.number"] ?? "?"} — exploded=${r.attributes["round.exploded"]} bp=${r.attributes.boiling_point ?? "?"}`));
+    wrap.appendChild(el("h4", null, `Round ${r.attributes["round.number"] ?? "?"} — boomed=${r.attributes["round.boomed"]} bp=${r.attributes.boiling_point ?? "?"}`));
     const waves = game.spans.filter((s) => s.name === "wave" && s.parent_id === r.id);
     for (const w of waves) {
       const commits = game.spans.filter((s) => s.name === "commit" && s.parent_id === w.id);
-      const line = `wave ${w.attributes["wave.number"] ?? "?"}: ` +
-        commits.map((c) => `${c.attributes["player.id"]?.slice(0, 4)}→${c.attributes.committed_card ?? "?"}`).join(", ");
-      wrap.appendChild(el("div", "secret", line || `wave ${w.attributes["wave.number"]}`));
+      const casts = game.spans.filter((s) => s.name === "spell.cast" && s.parent_id === w.id);
+      const parts = commits
+        .map((c) => `${c.attributes["player.id"]?.slice(0, 4)}→${c.attributes.committed_card ?? "?"} (${c.attributes["vote.color"] ?? "?"})`)
+        .concat(casts.map((c) => `${c.attributes["player.id"]?.slice(0, 4)} cast ${c.attributes["spell.kind"] ?? "?"}${c.attributes["spell.target"] ? "→" + c.attributes["spell.target"] : ""}`));
+      const line = `wave ${w.attributes["wave.number"] ?? "?"}: ` + parts.join(", ");
+      wrap.appendChild(el("div", "secret", line));
+    }
+    const depile = game.spans.find((s) => s.name === "depile" && s.parent_id === r.id);
+    if (depile) {
+      wrap.appendChild(el("div", null, `depile bp=${depile.attributes.boiling_point ?? "?"}${depile.attributes.crossing_index != null ? ` crossed@${depile.attributes.crossing_index}` : ""}: ${depile.attributes.reveals ?? ""}`));
     }
     box.appendChild(wrap);
   }
@@ -295,13 +332,19 @@ async function loadBalance() {
   const b = await getJson("/admin/balance");
   const box = $("#balance-cards");
   box.innerHTML = "";
-  box.appendChild(metricCard("Explosion rate", pct(b.explosion_rate), "target 30–40%"));
-  box.appendChild(metricCard("Cards / round", b.cards_per_round.toFixed(2)));
-  box.appendChild(metricCard("Avg round", (b.avg_round_duration_ms / 1000).toFixed(1) + "s"));
-  box.appendChild(metricCard("Avg game", (b.avg_game_duration_ms / 1000).toFixed(1) + "s"));
-  box.appendChild(metricCard("Wave timeout", pct(b.wave_timeout_rate)));
-  box.appendChild(metricCard("Reconnect / game", b.reconnection_rate.toFixed(2)));
-  box.appendChild(metricCard("Dominant-colour", pct(b.dominant_color_rate)));
+  // Every card is one boom-balance-metrics definition: observed value plus its
+  // [needs playtesting] target band when one is seeded.
+  for (const m of b.metrics) {
+    box.appendChild(metricCard(m.label, fmtMetric(m), targetText(m)));
+  }
+  if (b.per_spell_cast_rates.length) {
+    const c = el("div", "card");
+    c.appendChild(el("h3", null, "Casts / round by spell"));
+    for (const [kind, rate] of b.per_spell_cast_rates) {
+      c.appendChild(el("div", null, `${kind}: ${rate.toFixed(2)}`));
+    }
+    box.appendChild(c);
+  }
   box.appendChild(metricCard("Schema", "v" + b.schema_version));
   const url = localStorage.getItem("bp_grafana_url");
   if (url) $("#grafana").src = url;
