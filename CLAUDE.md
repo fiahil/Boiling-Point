@@ -1,6 +1,6 @@
 # Boiling Point — Agent Guidelines
 
-## Constitution (v1.1.0)
+## Constitution (v2.0.0)
 
 ### I. Server-Authoritative
 
@@ -19,11 +19,15 @@ The codebase MUST support Claude as an autonomous co-developer
 operating in a closed code-render-screenshot-adjust loop.
 
 - All source files MUST be fully agent-writable — no binary editor state or GUI-only configuration
-- Three testing layers MUST be maintained alongside game code:
-  1. Protocol bot harness (headless Rust bots for balance testing)
-  2. Claude-as-player harness (structured JSON over WebSocket)
-  3. Visual client tests (Playwright or equivalent)
+- Two testing layers MUST be maintained alongside game code:
+  1. Server tests — unit plus transport/integration tests that boot the in-process
+     server and drive it over the real wire protocol
+  2. Visual client tests — Playwright screenshots + DOM assertions, landing with the
+     web client (`adopt-pixi-client`)
 - Agent testability is a first-class selection criterion for client technology decisions
+- The v1 harnesses (protocol bot harness, Claude-as-player harness) and the TUI
+  reference client are retired to `archive/` — revivable, not deleted; reviving the
+  bot harness is the expected path for at-scale balance validation (see Principle IV)
 
 ### III. Start Simple, Scale Later
 
@@ -43,8 +47,11 @@ Complexity MUST be justified against a simpler rejected alternative with documen
 Game mechanics, scoring values, thresholds, and card effects are hypotheses until validated by playtesting.
 
 - Design documents MUST mark unvalidated numbers with "needs playtesting"
-- Balance changes MUST be data-informed — bot harness statistics or structured player feedback
-- The bot harness MUST be able to run thousands of games to surface degenerate strategies before human playtesting begins
+- Balance changes MUST be data-informed — server telemetry, the admin balance
+  dashboard, structured player feedback, or revived-harness statistics
+- Before large balance reworks (e.g. boom2) ship, at-scale automated playtesting MUST
+  be reinstated — the archived bot harness (`archive/bot-harness/`) is the designed
+  seam for running thousands of games to surface degenerate strategies
 - No balance number is sacred — if data says change it, change it
 
 ## Technology Stack
@@ -72,19 +79,19 @@ alternatives in `docs/03_architecture/03_tech-stack-exploration.md`).
 | Macroquad | Full Rust stack, shared types | Rejected — immature text/a11y/mobile; type-sharing solved via codegen |
 | Godot | Fastest to polished game feel, full 2D editor | Rejected — editor-driven workflow conflicts with the agent-writable closed loop (§II) |
 
-The Rust TUI (`tui-client/`) remains the agent-test reference client. Agent testability
-remains a first-class selection criterion for any client technology decision.
+The Rust TUI was the v1 agent-test reference client; it is retired to
+`archive/tui-client/` (change `retire-v1-harnesses`). Agent testability remains a
+first-class selection criterion for any client technology decision.
 
 **Project structure:**
 
 ```
-cargo workspace
-├── server/        # authoritative game logic (Axum + Tokio)
+├── server/        # authoritative game logic (Axum + Tokio) — cargo workspace member
 ├── protocol/      # wire protocol types, game enums, serde derives (canonical source)
-├── tui-client/    # reference client — Rust + ratatui (agent-test target)
-├── web-client/    # graphical client — TypeScript + PixiJS (web + mobile hybrid)
-├── bot-harness/   # headless bot players for balance testing
-└── agent-harness/ # Claude-as-player wrapper
+├── clients/
+│   └── web/       # graphical client — TypeScript + PixiJS (lands with adopt-pixi-client)
+└── archive/       # retired v1 components — tui-client, bot-harness, agent-harness,
+                   # playtest.sh — revivable, not deleted
 ```
 
 ## Governance
@@ -107,6 +114,13 @@ When a practice conflicts with a principle above, the principle wins.
 Violations MUST be documented with justification and rejected simpler alternative.
 
 **Amendment log:**
+- **v2.0.0 (2026-06-11)** — MAJOR. Retired the v1 test/reference components to
+  `archive/` (`tui-client`, `bot-harness`, `agent-harness`, `playtest.sh`) and
+  redefined Principle II's mandatory testing layers (server tests now; Playwright
+  visual tests when `clients/web` lands; archived harnesses revivable) and Principle
+  IV's standing bot-harness mandate (at-scale runs reinstated on revival, required
+  before large balance reworks ship). Restructured the client tree under `clients/`.
+  Change `retire-v1-harnesses`.
 - **v1.1.0 (2026-06-04)** — MINOR. Resolved the client technology decision: adopted
   **PixiJS (web + mobile hybrid via Capacitor)**, recorded Flutter/Flame as deferred and
   Macroquad/Godot as rejected, and retired the "`client/` compiles to WASM" project-
