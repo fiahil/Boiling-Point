@@ -1,12 +1,14 @@
 # Boiling Point — cargo workspace.
 #
 # `protocol/` is the narrow wire waist (DTOs + codec, no secrets); `server/` is
-# the authoritative engine that owns the full domain model. Retired v1 components
-# (tui-client, bot-harness, agent-harness) live under `archive/` — excluded, not
-# members; see archive/README.md for the revival recipe.
+# the authoritative engine that owns the full domain model; `bot-harness/` is the
+# headless balance harness (revived from `archive/` for the boom2 rework —
+# Principle IV's at-scale playtesting mandate). Remaining retired v1 components
+# (tui-client, agent-harness) live under `archive/` — excluded, not members; see
+# archive/README.md for the revival recipe.
 [workspace]
 resolver = "2"
-members = ["protocol", "server"]
+members = ["protocol", "server", "bot-harness"]
 exclude = ["archive"]
 
 [workspace.package]

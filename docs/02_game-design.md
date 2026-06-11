@@ -29,6 +29,22 @@ whether to cooperate, betray, or push your luck one card too far.
 It blends the quick gut-decisions of *Exploding Kittens* with the emergent
 politics of *Cosmic Encounter* / *Sheriff of Nottingham*.
 
+> **Status (2026-06-11) — the v2 combat core has shipped (`boom2-combat-core`).**
+> The server now runs the deeper v2 core decided in
+> [06_boom2/02_toward-a-v2-core.md](06_boom2/02_toward-a-v2-core.md): two card
+> types (ingredients vs spells, two per-player decks), points scoring only on
+> colored Votes, volatility 0–7 with a harness-derived boiling point of 31–43,
+> a **detonator-only** explosion (the fatal wave's trigger + heavier cards split
+> −P; §7's everyone-loses is superseded), the ingredient-or-pass + optional-spell
+> wave, the 15-spell grimoire (§9's in-pot effects are superseded), and a
+> volatility-sorted depile that reveals the boiling point **every** round
+> (changing §10's reveal-on-boom-only). Superseded here: §3 (the card), §5 (wave
+> contents), §6–7 (scoring/explosion), §9 (effects), §13 (deck composition);
+> §§8, 11 (modifiers, deathmatch) survive with the new core, their magnitudes
+> pending a rescale. The v2 rules are promoted into this document wholesale when
+> the boom2 saga archives and the v1 specs retire; until then the decision log
+> and the `openspec/changes/boom2-*` specs are the v2 source of truth.
+
 ---
 
 ## 2. Format

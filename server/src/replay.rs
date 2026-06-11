@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use boiling_point_protocol::vocab::Color;
+use boiling_point_protocol::vocab::{Color, SpellTarget};
 use boiling_point_protocol::{CardId, EmoteId, PlayerId};
 
 use crate::config::ContentConfig;
@@ -44,12 +44,16 @@ use crate::persistence::StoredReplay;
 ///
 /// v2: the body gained the observational `input_log` (timestamped raw inputs) and
 /// the payload column moved from base64 `TEXT` to raw `BYTEA`.
-pub const REPLAY_FORMAT_VERSION: u16 = 2;
+/// v3: the boom2 combat core — `WaveChoice` became ingredient-or-pass + optional
+/// spell, and the recorded inputs gained `CommitIngredient`/`CastSpell`.
+pub const REPLAY_FORMAT_VERSION: u16 = 3;
 
 /// Engine version the payload was recorded under. Bump when an engine change
 /// alters deterministic reconstruction; stored payloads then select a migration
 /// / re-render path keyed off this tag rather than being lost.
-pub const ENGINE_VERSION: u16 = 1;
+///
+/// v2: the boom2 combat-core engine (pantries/grimoire, detonator-only explosion).
+pub const ENGINE_VERSION: u16 = 2;
 
 /// A seated player as the replay must remember them to rebuild the roster.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -67,10 +71,19 @@ struct ReplayPlayer {
 /// what was *sent* — not the effective `WaveChoice` the engine resolved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RecordedInput {
-    /// The player committed a specific card.
-    CommitCard {
-        /// The hand card committed.
+    /// The player committed a specific ingredient.
+    CommitIngredient {
+        /// The hand ingredient committed.
         card: CardId,
+        /// Whether it was played colorless.
+        colorless: bool,
+    },
+    /// The player cast a spell.
+    CastSpell {
+        /// The grimoire spell cast.
+        spell: CardId,
+        /// The chosen target, if any.
+        target: Option<SpellTarget>,
     },
     /// The player committed to passing the wave.
     CommitPass,
@@ -262,7 +275,7 @@ impl ReplayDecider {
 
 impl Decider for ReplayDecider {
     fn decide(&mut self, _player: PlayerId, _hand: &Hand) -> WaveChoice {
-        self.actions.next().unwrap_or(WaveChoice::Pass)
+        self.actions.next().unwrap_or_else(WaveChoice::pass)
     }
 }
 
@@ -294,13 +307,17 @@ mod tests {
             .collect()
     }
 
-    /// An eager decider: play the first card in hand, else pass.
+    /// An eager decider: play the first ingredient in hand as a Vote, else pass.
     fn eager() -> impl FnMut(PlayerId, &Hand) -> WaveChoice {
-        |_player, hand| {
-            hand.views()
-                .first()
-                .map(|c| WaveChoice::Play(c.id))
-                .unwrap_or(WaveChoice::Pass)
+        |_player, hand| match hand.ingredients().first() {
+            Some(first) => WaveChoice {
+                action: crate::game::round::WaveAction::Play {
+                    card: first.id,
+                    colorless: false,
+                },
+                spell: None,
+            },
+            None => WaveChoice::pass(),
         }
     }
 
@@ -353,12 +370,20 @@ mod tests {
             TimedInput {
                 player: roster[0].id,
                 at_ms: 12,
-                input: RecordedInput::CommitCard { card: CardId(1) },
+                input: RecordedInput::CommitIngredient {
+                    card: CardId(1),
+                    colorless: true,
+                },
             },
             TimedInput {
                 player: roster[1].id,
                 at_ms: 340,
-                input: RecordedInput::Emote { emote: EmoteId(2) },
+                input: RecordedInput::CastSpell {
+                    spell: CardId(9),
+                    target: Some(SpellTarget::Player {
+                        player: roster[0].id,
+                    }),
+                },
             },
             TimedInput {
                 player: roster[2].id,

@@ -2,18 +2,18 @@
 //! strictly separate from the game loop.
 //!
 //! Three distinct kinds, never merged into one union:
-//! - [`card`]: dealt card data,
-//! - [`effect`]: special-effect behaviour (Strategy),
+//! - [`card`]: dealt ingredient data (pantry slots),
+//! - [`spell`]: grimoire composition + tunable spell magnitudes,
 //! - [`modifier`]: cauldron-modifier behaviour (Strategy).
 //!
 //! The [`registry::ContentRegistry`] is the single lookup the loop consults.
 
 pub mod card;
-pub mod effect;
 pub mod modifier;
 pub mod registry;
+pub mod spell;
 
-pub use card::CardDef;
-pub use effect::{Effect, EffectCategory, EffectCtx};
+pub use card::{IngredientDef, PantrySlot};
 pub use modifier::Modifier;
 pub use registry::ContentRegistry;
+pub use spell::{SpellDef, SpellValues};

@@ -1,179 +1,189 @@
-# Boiling Point — default content / balance configuration.
+# Boiling Point — default content / balance configuration (boom2 combat core).
 #
 # Every number here is a STARTING hypothesis: `[needs playtesting]`. The bot
-# balance harness tunes these. The server validates this file at startup and
-# refuses to run if it is inconsistent (see `config::ContentConfig::validate`).
+# balance harness re-derives the blind-volatility economy from scratch (the old
+# v1 tuning — boiling point 8–14, volatility 1–3 — does not carry over). The
+# server validates this file at startup and refuses to run if it is inconsistent
+# (see `config::ContentConfig::validate`).
 #
-# Deck composition (90 cards): 56 plain colour cards + 13 wild + 21 effect cards.
-
-[deck]
-size = 90
-
-[deck.ratio_bounds]
-effect_min = 0.15
-effect_max = 0.35
-wild_min = 0.10
-wild_max = 0.20
+# Two decks per player, fixed until the Apothecary (boom2-apothecary) ships:
+# - the PANTRY: 30 ingredients, colour-anchored (~75% own colour + a toolkit of
+#   off-colour and wild cards), instantiated per player from the slots below;
+# - the GRIMOIRE: 20 spells across the 15 kinds, hoarded (drawn at round start).
 
 [timing]
-wave1_ms = 60000
-wave_ms = 45000
+wave1_ms = 25000
+wave_ms = 15000
 
 [boiling_point]
-min = 8
-max = 14
+# The load-bearing dial. The design's starting window was 20-32; the revived
+# bot harness swept 20-44 against the ~45% explosion-rate target and landed on
+# 31-43 (45.3%/43.5%/45.3% across seeds 42/7/1234, 1000 games each, baseline
+# bots) — rounds run longer (~5.8 waves) than the design's up-to-4-card-wave
+# sketch, so the line sits higher. Still `[needs playtesting]` by humans.
+min = 31
+max = 43
 
-# ---- Plain colour cards (no effect): 14 per colour × 4 = 56 ----
+# ---- The pantry: 30 ingredients per player ----
+#
+# `slot` says how the deck builder instantiates the card for a seat:
+#   Own      -> the player's own colour (the Vote workhorses)
+#   OffColor -> another player's colour (kingmake / misdirect toolkit)
+#   Wild     -> colourless (pure danger / go-neutral; never scores)
+# Volatility is 0-7 skewed low (5-7 are rare weapons); points 0-3.
 
-[[card]]
-color = "Ruby"
-volatility = 1
-points = 2
-copies = 5
-[[card]]
-color = "Ruby"
-volatility = 2
+[pantry]
+size = 30
+# The colour anchor: the share of Own-slot cards must sit in this band (~75%).
+own_min = 0.70
+own_max = 0.80
+
+# Own colour (22 = ~73%)
+[[ingredient]]
+slot = "Own"
+volatility = 0
 points = 1
-copies = 5
-[[card]]
-color = "Ruby"
-volatility = 3
-points = 3
-copies = 2
-[[card]]
-color = "Ruby"
-volatility = 2
-points = 0
-copies = 2
-
-[[card]]
-color = "Sapphire"
+copies = 3
+[[ingredient]]
+slot = "Own"
 volatility = 1
-points = 2
-copies = 5
-[[card]]
-color = "Sapphire"
-volatility = 2
 points = 1
-copies = 5
-[[card]]
-color = "Sapphire"
-volatility = 3
-points = 3
-copies = 2
-[[card]]
-color = "Sapphire"
-volatility = 2
-points = 0
-copies = 2
-
-[[card]]
-color = "Emerald"
-volatility = 1
-points = 2
-copies = 5
-[[card]]
-color = "Emerald"
-volatility = 2
-points = 1
-copies = 5
-[[card]]
-color = "Emerald"
-volatility = 3
-points = 3
-copies = 2
-[[card]]
-color = "Emerald"
-volatility = 2
-points = 0
-copies = 2
-
-[[card]]
-color = "Amethyst"
-volatility = 1
-points = 2
-copies = 5
-[[card]]
-color = "Amethyst"
-volatility = 2
-points = 1
-copies = 5
-[[card]]
-color = "Amethyst"
-volatility = 3
-points = 3
-copies = 2
-[[card]]
-color = "Amethyst"
-volatility = 2
-points = 0
-copies = 2
-
-# ---- Wild cards: 13 ----
-
-[[card]]
-color = "Wild"
-volatility = 2
-points = 2
-copies = 7
-[[card]]
-color = "Wild"
-volatility = 1
-points = 3
-copies = 6
-
-# ---- Effect cards: 21 (all 8 kinds present) ----
-
-[[card]]
-color = "Ruby"
-volatility = 2
-points = 1
-effect = "Peek"
 copies = 4
-[[card]]
-color = "Sapphire"
-volatility = 1
-points = 0
-effect = "Dampen"
-copies = 3
-[[card]]
-color = "Emerald"
-volatility = 3
-points = 0
-effect = "VolatileSurge"
-copies = 3
-[[card]]
-color = "Amethyst"
-volatility = 1
+[[ingredient]]
+slot = "Own"
+volatility = 2
 points = 1
-effect = "Copycat"
 copies = 3
-[[card]]
-color = "Ruby"
-volatility = 1
-points = 0
-effect = "Recall"
+[[ingredient]]
+slot = "Own"
+volatility = 2
+points = 2
 copies = 3
-[[card]]
-color = "Sapphire"
-volatility = 1
-points = 0
-effect = "Expose"
+[[ingredient]]
+slot = "Own"
+volatility = 3
+points = 1
+copies = 3
+[[ingredient]]
+slot = "Own"
+volatility = 3
+points = 2
 copies = 2
-[[card]]
-color = "Emerald"
-volatility = 2
-points = 0
-effect = "DoubleDown"
+[[ingredient]]
+slot = "Own"
+volatility = 4
+points = 2
 copies = 2
-[[card]]
-color = "Amethyst"
-volatility = 2
+[[ingredient]]
+slot = "Own"
+volatility = 5
+points = 3
+copies = 1
+[[ingredient]]
+slot = "Own"
+volatility = 6
 points = 0
-effect = "Shield"
 copies = 1
 
+# Off-colour toolkit (5)
+[[ingredient]]
+slot = "OffColor"
+volatility = 1
+points = 2
+copies = 2
+[[ingredient]]
+slot = "OffColor"
+volatility = 2
+points = 1
+copies = 2
+[[ingredient]]
+slot = "OffColor"
+volatility = 4
+points = 3
+copies = 1
+
+# Wilds (3) — volatility only, no points, no dominance.
+[[ingredient]]
+slot = "Wild"
+volatility = 2
+points = 0
+copies = 1
+[[ingredient]]
+slot = "Wild"
+volatility = 3
+points = 0
+copies = 1
+[[ingredient]]
+slot = "Wild"
+volatility = 7
+points = 0
+copies = 1
+
+# ---- The grimoire: 20 spells per player, all 15 kinds present ----
+
+[grimoire]
+size = 20
+# Drawn at round start; not replenished in-round (except Forage); carry over.
+spells_per_round = 3
+
+[[spell]]
+kind = "Peek"
+copies = 2
+[[spell]]
+kind = "Expose"
+copies = 1
+[[spell]]
+kind = "Assay"
+copies = 1
+[[spell]]
+kind = "Dampen"
+copies = 2
+[[spell]]
+kind = "Surge"
+copies = 2
+[[spell]]
+kind = "Quench"
+copies = 1
+[[spell]]
+kind = "Cap"
+copies = 2
+[[spell]]
+kind = "Halve"
+copies = 1
+[[spell]]
+kind = "Redirect"
+copies = 1
+[[spell]]
+kind = "DoubleDown"
+copies = 1
+[[spell]]
+kind = "Sour"
+copies = 1
+[[spell]]
+kind = "Harvest"
+copies = 1
+[[spell]]
+kind = "Skim"
+copies = 1
+[[spell]]
+kind = "Forage"
+copies = 2
+[[spell]]
+kind = "Hex"
+copies = 1
+
+# Spell magnitudes, scaled to the 0-7 volatility range and P~10 pots.
+[spell_values]
+dampen = 3       # -3 cauldron volatility
+surge = 3        # +3 cauldron volatility
+cap_max = 3      # a Capped detonator eats at most -3
+hex_bonus = 5    # the hexed take -5 extra on any explosion
+harvest_bonus = 3 # +3 on top of a won pot
+forage_draws = 2 # Forage draws 2 spells
+
 # ---- Cauldron modifier pool: 20 copies, dramatic ones rarer ----
+# Offsets are still v1-scaled; rescaling them to the 20-32 boiling-point range
+# is follow-up work outside boom2-combat-core.
 
 [[modifier]]
 kind = "Residue"

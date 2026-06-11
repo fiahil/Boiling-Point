@@ -114,8 +114,12 @@ fn skewed_strategy_is_flagged_as_degenerate() {
         round_number: 1,
         exploded,
         pot_value: 8,
+        detonators: vec![],
         cards_in_pot: 6,
         waves: 2,
+        peek_casts: 1,
+        spell_casts: 2,
+        ended_all_pass: false,
         modifier: Some(ModifierKind::ThinIce),
     };
 
@@ -151,9 +155,9 @@ fn skewed_strategy_is_flagged_as_degenerate() {
                         strategy: "random".into(),
                     },
                 ],
-                // A healthy ~35% explosion rate so the explosion smell does NOT fire,
+                // A healthy ~45% explosion rate so the explosion smell does NOT fire,
                 // isolating the strategy-dominance signal.
-                rounds: vec![round(i % 3 == 0)],
+                rounds: vec![round(i % 20 < 9)],
                 winners: vec![winner],
                 completed: true,
             }

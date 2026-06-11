@@ -34,6 +34,10 @@ pub struct Thresholds {
     pub explosion_min: f64,
     /// Upper edge of the acceptable explosion-rate band.
     pub explosion_max: f64,
+    /// All-pass round rate above which the game is flagged as freezing (the
+    /// Vulture check: detonator-only losses make folding safe, so the harness
+    /// must confirm rounds still resolve through play).
+    pub freeze_max: f64,
     /// Win share above which a single strategy/colour is flagged as dominant.
     pub dominant_win_share: f64,
     /// Average pot value above which pots are flagged as runaway.
@@ -42,12 +46,15 @@ pub struct Thresholds {
 
 impl Default for Thresholds {
     fn default() -> Self {
-        // The proposal targets a ~30–40% explosion rate; with four distinct
-        // strategies/colours an even share is 25%, so 40% is a clear dominance
-        // signal. The runaway-pot cap is a coarse starting guess.
+        // The boom2 combat core targets ~45% of rounds exploding (higher than
+        // v1's 30-40% — only the detonators suffer), so the band is 40-50%.
+        // With four distinct strategies/colours an even win share is 25%, so
+        // 40% is a clear dominance signal. The runaway-pot cap is ~2.5x the
+        // expected P~10.
         Thresholds {
-            explosion_min: 0.30,
-            explosion_max: 0.40,
+            explosion_min: 0.40,
+            explosion_max: 0.50,
+            freeze_max: 0.35,
             dominant_win_share: 0.40,
             runaway_pot_value: 25.0,
         }
@@ -119,6 +126,32 @@ impl Smell {
                     ),
                 });
             }
+        }
+
+        // Frozen rounds: too many all-pass endings means the Vulture is back —
+        // players are folding their way to safety instead of contesting pots.
+        if stats.rounds > 0 && stats.all_pass_rate > thresholds.freeze_max {
+            smells.push(Smell {
+                kind: "frozen_rounds".into(),
+                detail: format!(
+                    "{:.1}% of rounds ended on an all-pass wave ({} of {}), above the {:.0}% freeze threshold",
+                    stats.all_pass_rate * 100.0,
+                    stats.all_pass_rounds,
+                    stats.rounds,
+                    thresholds.freeze_max * 100.0,
+                ),
+            });
+        }
+
+        // Hard freezes: rounds where nobody played anything at all.
+        if stats.empty_pot_rounds > 0 {
+            smells.push(Smell {
+                kind: "empty_pot_rounds".into(),
+                detail: format!(
+                    "{} round(s) settled with an empty pot — nobody played a single ingredient",
+                    stats.empty_pot_rounds
+                ),
+            });
         }
 
         // Runaway pots.
@@ -213,6 +246,21 @@ impl Report {
             self.thresholds.explosion_max * 100.0,
         ));
         out.push_str(&format!(
+            "- All-pass (freeze) endings: **{:.1}%** of rounds ({}; {} with an empty pot) — freeze threshold {:.0}%\n",
+            s.all_pass_rate * 100.0,
+            s.all_pass_rounds,
+            s.empty_pot_rounds,
+            self.thresholds.freeze_max * 100.0,
+        ));
+        out.push_str(&format!(
+            "- Detonators per explosion: {:.2} (total detonation hits: {})\n",
+            s.avg_detonators_per_explosion, s.detonations,
+        ));
+        out.push_str(&format!(
+            "- Peek casts / game: {:.2} ({} total) — visible spell casts / round: {:.2}\n",
+            s.peek_casts_per_game, s.peek_casts, s.spell_casts_per_round,
+        ));
+        out.push_str(&format!(
             "- Avg pot value / round: {:.2}\n",
             s.avg_pot_value
         ));
@@ -239,6 +287,18 @@ impl Report {
                 "- {color}: {wins} ({:.1}%)\n",
                 s.color_win_share(color) * 100.0
             ));
+        }
+
+        out.push_str("\n## Detonation distribution\n\n");
+        if s.detonations_by_strategy.is_empty() {
+            out.push_str("- (no explosions)\n");
+        } else {
+            for (strategy, hits) in &s.detonations_by_strategy {
+                out.push_str(&format!(
+                    "- {strategy}: {hits} ({:.1}%)\n",
+                    s.strategy_detonation_share(strategy) * 100.0
+                ));
+            }
         }
 
         out.push_str("\n## Modifier draws\n\n");
@@ -285,6 +345,16 @@ mod tests {
             rounds,
             explosions: (explosion_rate * rounds as f64) as usize,
             explosion_rate,
+            all_pass_rounds: 0,
+            all_pass_rate: 0.0,
+            empty_pot_rounds: 0,
+            detonations: 0,
+            avg_detonators_per_explosion: 0.0,
+            detonations_by_strategy: BTreeMap::new(),
+            peek_casts: 0,
+            peek_casts_per_game: 0.0,
+            spell_casts: 0,
+            spell_casts_per_round: 0.0,
             avg_pot_value,
             avg_cards_per_round: 6.0,
             avg_waves_per_round: 2.0,
@@ -299,7 +369,7 @@ mod tests {
     #[test]
     fn clean_batch_has_no_smells() {
         let stats = stats_with(
-            0.35,
+            0.45,
             1000,
             &[
                 ("cautious", 25),
@@ -316,7 +386,7 @@ mod tests {
     #[test]
     fn dominant_strategy_is_flagged() {
         let stats = stats_with(
-            0.35,
+            0.45,
             1000,
             &[
                 ("cautious", 5),
@@ -344,6 +414,21 @@ mod tests {
                 .iter()
                 .any(|s| s.kind == "explosion_rate" && s.detail.contains("below"))
         );
+    }
+
+    /// A freezing batch (all-pass endings past the threshold) is flagged —
+    /// the Vulture check.
+    #[test]
+    fn frozen_rounds_are_flagged() {
+        let mut stats = stats_with(0.45, 1000, &[("a", 1)], 10.0);
+        stats.all_pass_rounds = 500;
+        stats.all_pass_rate = 0.5;
+        let smells = Smell::detect(&stats, &Thresholds::default());
+        assert!(smells.iter().any(|s| s.kind == "frozen_rounds"));
+
+        stats.empty_pot_rounds = 3;
+        let smells = Smell::detect(&stats, &Thresholds::default());
+        assert!(smells.iter().any(|s| s.kind == "empty_pot_rounds"));
     }
 
     /// The fingerprint is stable and content-sensitive.

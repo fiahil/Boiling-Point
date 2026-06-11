@@ -3,7 +3,7 @@
 The **Layer-1 balance harness**: headless Rust bots that play complete games and a
 seeded batch runner that aggregates balance statistics. It's a pure consumer of the
 public wire protocol — a bot receives only what a real player would, which doubles as
-a check on the server's secret-management contract (constitution Principle IV).
+a check on the server's secret-management contract (constitution Principles I/IV).
 
 ## Layout
 
@@ -46,6 +46,11 @@ cargo test -p boiling-point-bot-harness
 `tests/validation.rs` checks reproducibility (same seed → identical outcomes), seed
 divergence, and degenerate-strategy detection, across both transports.
 
-The harness is the primary tool for tuning the open balance knobs in
-[`docs/02_game-design.md §16`](../docs/02_game-design.md). The Layer-2 Claude-as-player
-harness lives in [`agent-harness/`](../agent-harness/README.md).
+Revived from `archive/` with change `boom2-combat-core` and rewritten against the
+v4 (ingredient/spell) protocol. Beyond the v1 metrics, the report now carries the
+boom2 mandate's statistics: explosion rate vs the ~45% target, detonator
+distribution by strategy, Peek-fire rate, and freeze (all-pass) rates — the
+first derivation is recorded in
+[`docs/06_boom2/02_toward-a-v2-core.md`](../docs/06_boom2/02_toward-a-v2-core.md).
+The retired Layer-2 Claude-as-player harness lives in
+[`archive/agent-harness/`](../archive/agent-harness/README.md).

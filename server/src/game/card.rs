@@ -1,33 +1,44 @@
-//! The server-side concrete card: a physical instance with a stable id and its
-//! authoritative attributes. Distinct from the protocol's `CardView`, which is
-//! the *revealed* projection sent to clients.
+//! The server-side concrete cards: physical instances with stable ids and their
+//! authoritative attributes. Distinct from the protocol's views, which are the
+//! *revealed* projections sent to clients.
+//!
+//! Two card types (the boom2 split): an [`Ingredient`] goes into the cauldron
+//! (colour · volatility · points); a [`Spell`] is an active effect that is never
+//! in the pot and carries no points or volatility of its own.
 
 use boiling_point_protocol::CardId;
-use boiling_point_protocol::vocab::{CardView, Color, EffectKind};
+use boiling_point_protocol::vocab::{Color, IngredientView, SpellKind};
 
-/// A concrete card instance in the deck, a hand, or the pot.
+/// A concrete ingredient instance in a pantry, a hand, or the pot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Card {
-    /// Stable instance id (assigned when the deck is built).
+pub struct Ingredient {
+    /// Stable instance id (assigned when the pantries are built).
     pub id: CardId,
-    /// The card's colour.
+    /// The ingredient's printed colour (per-seat instantiation of its slot).
     pub color: Color,
-    /// Explosion risk contributed (1–3).
+    /// Explosion risk contributed (0–7).
     pub volatility: u8,
-    /// Point value for scoring (0–3).
+    /// Point value when played as a colored Vote (0–3).
     pub points: u8,
-    /// The card's special effect, if any.
-    pub effect: Option<EffectKind>,
 }
 
-impl Card {
+impl Ingredient {
     /// Project to the public, revealed view sent over the wire.
-    pub fn view(&self) -> CardView {
-        CardView {
+    pub fn view(&self) -> IngredientView {
+        IngredientView {
             color: self.color,
             volatility: self.volatility,
             points: self.points,
-            effect: self.effect,
         }
     }
+}
+
+/// A concrete spell instance in a grimoire or a hand. Consumed on cast (Instant)
+/// or on fire / round end (Active).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Spell {
+    /// Stable instance id (assigned when the grimoires are built).
+    pub id: CardId,
+    /// Which of the fifteen spells this is.
+    pub kind: SpellKind,
 }

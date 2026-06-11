@@ -21,7 +21,7 @@ use serde_json::json;
 use tokio::sync::broadcast;
 
 use boiling_point_protocol::GroupCode;
-use boiling_point_protocol::vocab::{EffectKind, ModifierKind};
+use boiling_point_protocol::vocab::{ModifierKind, SpellKind};
 
 use crate::lobby::registry::ContentSelector;
 
@@ -176,7 +176,7 @@ async fn reveal(_op: Operator, State(s): State<AdminState>, Path(code): Path<Str
 #[derive(Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 enum SelectorReq {
-    Effect(EffectKind),
+    Spell(SpellKind),
     Modifier(ModifierKind),
     Emote(u16),
 }
@@ -184,7 +184,7 @@ enum SelectorReq {
 impl From<SelectorReq> for ContentSelector {
     fn from(req: SelectorReq) -> Self {
         match req {
-            SelectorReq::Effect(k) => ContentSelector::Effect(k),
+            SelectorReq::Spell(k) => ContentSelector::Spell(k),
             SelectorReq::Modifier(k) => ContentSelector::Modifier(k),
             SelectorReq::Emote(id) => ContentSelector::Emote(id),
         }

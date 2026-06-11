@@ -1,15 +1,16 @@
 //! Messages sent from the server to clients, plus the audience model that keeps
 //! secrets from leaking onto broadcasts.
 //!
-//! Secret discipline: the boiling point appears in exactly two messages —
-//! [`ServerMessage::PeekResult`] (private, to the peeker) and
-//! [`ServerMessage::Depile`] (only when the round exploded). No other message
-//! type carries it; this is asserted by tests.
+//! Secret discipline (v4): in-round, the boiling point appears in exactly one
+//! message — [`ServerMessage::PeekResult`] (private, to the peeker). Post-round
+//! it is no longer a secret: every [`ServerMessage::Depile`] (boom *and* safe)
+//! reveals it, so a safe brew gets its near-miss payoff. No other message type
+//! carries it; this is asserted by tests.
 
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{EmoteId, GroupCode, PlayerId};
-use crate::vocab::{CardView, Color, HandCard, ModifierKind};
+use crate::vocab::{Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind};
 
 /// Public, per-player lobby/table information (never includes hand contents).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,7 +48,7 @@ pub struct PlayerScore {
     pub score: i32,
 }
 
-/// How many cards a player has contributed to the current pot.
+/// How many ingredients a player has contributed to the current pot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Contribution {
     /// The player.
@@ -56,15 +57,37 @@ pub struct Contribution {
     pub count: u8,
 }
 
-/// One revealed card in a depile, in play order (first-added first).
+/// One revealed ingredient in a depile, in **ascending effective-volatility**
+/// order (the "fuse climb" — every round, boom or safe).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DepileEntry {
-    /// Who played the card.
+    /// Who played the ingredient.
     pub player: PlayerId,
-    /// The card's now-revealed attributes.
-    pub card: CardView,
-    /// Cumulative volatility after this card landed (for marking the crossing).
+    /// The ingredient's now-revealed printed attributes.
+    pub ingredient: IngredientView,
+    /// Whether it was played colorless (volatility only, zero points).
+    pub colorless: bool,
+    /// The 1-based wave it was played in (fatal-wave liability is wave-scoped).
+    pub wave_number: u8,
+    /// Cumulative volatility after this entry in the sorted climb (rises toward —
+    /// or past — the revealed boiling point).
     pub running_volatility: u8,
+    /// Whether this entry is liable for the explosion (a detonator card). Always
+    /// `false` on a safe brew.
+    pub liable: bool,
+}
+
+/// A fired Active spell, narrated at resolution (wards and Hex on an explosion,
+/// Harvest on a safe brew). This is the visible-when-activated moment for
+/// Actives — a primed-but-unfired spell is never disclosed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpellFire {
+    /// Who had primed the spell.
+    pub player: PlayerId,
+    /// The spell that fired.
+    pub spell: SpellKind,
+    /// The player it was aimed at, when the spell targets a player.
+    pub target: Option<PlayerId>,
 }
 
 /// The dominance outcome of a safely-resolved round.
@@ -90,8 +113,14 @@ pub enum ErrorCode {
     VersionMismatch,
     /// The invite code maps to no active group.
     UnknownGroup,
-    /// The committed card is not in the player's hand.
+    /// The committed ingredient is not in the player's hand.
     NotYourCard,
+    /// The cast spell is not in the player's grimoire hand.
+    NotYourSpell,
+    /// The spell's target is missing, of the wrong kind, or illegal.
+    InvalidTarget,
+    /// A second spell was cast in the same wave (the limit is one).
+    SpellLimit,
     /// The action is illegal in the current phase.
     WrongPhase,
     /// The player is locked out of the round (already passed / timed out).
@@ -128,10 +157,14 @@ pub enum ServerMessage {
         /// Number of rounds to be played.
         round_count: u8,
     },
-    /// The recipient's private hand. (private)
+    /// The recipient's private hand: ingredients (topped up to the hand floor
+    /// each wave) and the hoarded grimoire spells. (private)
     YourHand {
-        /// The cards now in hand.
-        cards: Vec<HandCard>,
+        /// The ingredients now in hand.
+        ingredients: Vec<HandIngredient>,
+        /// The spells now in hand (drawn at round start, carried over; replenished
+        /// in-round only by Forage).
+        spells: Vec<HandSpell>,
     },
     /// A new wave has opened; carries the timer budget for a client countdown. (broadcast)
     WaveOpened {
@@ -145,13 +178,25 @@ pub enum ServerMessage {
         /// remains, who gets exactly this wave before the pot settles.
         final_wave: bool,
     },
+    /// An Instant spell activated at the wave reveal — visible to the whole table
+    /// (caster + which spell; a volatility spell thereby reveals its *delta*,
+    /// never the cauldron's absolute total). Primed Actives emit nothing. (broadcast)
+    SpellCast {
+        /// Who cast it.
+        player: PlayerId,
+        /// The spell that activated.
+        spell: SpellKind,
+        /// The colour it was aimed at, for colour-targeted spells (Double Down,
+        /// Sour). Player-targeted Actives disclose their target only on fire.
+        color_target: Option<Color>,
+    },
     /// A wave resolved: who acted and the new count, never card identities. (broadcast)
     WaveResolved {
-        /// Players who played a card this wave.
+        /// Players who played an ingredient this wave.
         played: Vec<PlayerId>,
         /// Players who passed (now locked out).
         passed: Vec<PlayerId>,
-        /// Total cards now in the cauldron.
+        /// Total ingredients now in the cauldron.
         cauldron_card_count: u8,
         /// Per-player contributed-card counts after this wave.
         contributions: Vec<Contribution>,
@@ -163,15 +208,15 @@ pub enum ServerMessage {
         /// The round it was drawn for.
         round_number: u8,
     },
-    /// Someone played Peek — anonymous; the value is not disclosed. (broadcast)
-    SomeonePeeked,
-    /// An Expose effect revealed a pot card to the whole table. (broadcast)
+    /// An Expose spell revealed a pot ingredient to the whole table. (broadcast)
     Exposed {
-        /// The revealed card.
-        card: CardView,
+        /// Who had played the revealed ingredient.
+        player: PlayerId,
+        /// The revealed ingredient.
+        ingredient: IngredientView,
+        /// Whether it had been played colorless.
+        colorless: bool,
     },
-    /// The draw deck was reshuffled from the discard; any card counting resets. (broadcast)
-    DeckReshuffled,
     /// A preset emote from a player. (broadcast)
     EmoteBroadcast {
         /// The sender.
@@ -179,26 +224,35 @@ pub enum ServerMessage {
         /// The emote sent.
         emote: EmoteId,
     },
-    /// Private Peek result: the exact boiling point, only to the peeker. (private, secret)
+    /// Private Peek result: the exact boiling point, only to the caster. (private, secret)
     PeekResult {
         /// The exact boiling point.
         boiling_point: u8,
     },
-    /// End-of-round play-order reveal of the whole pot. (broadcast)
-    ///
-    /// `boiling_point` is `Some` only when the round exploded; on a safe brew it
-    /// stays hidden.
+    /// Private Assay result: the dominant colour and its point lead, only to the
+    /// caster. (private, secret)
+    AssayResult {
+        /// The currently dominant colour (None if no colored Votes yet).
+        dominant: Option<Color>,
+        /// Its lead in points over the runner-up colour.
+        lead: u32,
+    },
+    /// End-of-round reveal of the whole pot, sorted ascending by effective
+    /// volatility, **revealing the boiling point every round** (boom and safe).
+    /// On a boom the running climb crosses the line and the liable entries are
+    /// marked; on a safe brew it stops short. (broadcast)
     Depile {
-        /// Revealed cards, first-added first (play order); `running_volatility` rises.
+        /// Revealed ingredients in ascending effective-volatility order.
         reveals: Vec<DepileEntry>,
         /// Whether the round exploded.
         exploded: bool,
-        /// The boiling point — revealed only on explosion.
-        boiling_point: Option<u8>,
-        /// Index into `reveals` of the card that tipped past the boiling point, if exploded.
+        /// The boiling point — revealed every round once the pot settles.
+        boiling_point: u8,
+        /// Index into `reveals` where the sorted climb first crossed the boiling
+        /// point, if exploded.
         crossing_index: Option<usize>,
     },
-    /// A safe-brew scoring result. (broadcast)
+    /// A safe-brew scoring result: the dominant colour wins +P. (broadcast)
     RoundScored {
         /// Per-colour point totals used to decide dominance.
         color_points: Vec<(Color, u32)>,
@@ -206,15 +260,20 @@ pub enum ServerMessage {
         outcome: ScoringOutcome,
         /// Points awarded to each player this round.
         awards: Vec<PlayerScore>,
+        /// Harvests that fired on this win, narrated here.
+        fired: Vec<SpellFire>,
     },
-    /// An explosion: everyone loses the pot value (Shielded players exempt). (broadcast)
+    /// An explosion: the detonator(s) split −P; everyone else loses nothing. (broadcast)
     Explosion {
-        /// The pot's total value that was lost.
+        /// The pot's value P that the detonators split.
         pot_value: u32,
-        /// Per-player score delta applied (negative for the loss; zero for shielded).
+        /// The liable players (fatal-wave trigger + heavier cards).
+        detonators: Vec<PlayerId>,
+        /// Per-player score delta applied (after wards/Redirect/Hex; zero for
+        /// the unaffected).
         deltas: Vec<PlayerScore>,
-        /// Players who were shielded and took no loss.
-        shielded: Vec<PlayerId>,
+        /// Wards and Hexes that fired at this resolution, narrated in fire order.
+        fired: Vec<SpellFire>,
     },
     /// Updated cumulative scores. (broadcast)
     ScoreUpdate {
@@ -245,7 +304,7 @@ pub enum ServerMessage {
     /// Full state for a reconnecting player, scoped to what they may know. (private)
     ///
     /// Deliberately omits secrets: no boiling point, no other players' hands, no
-    /// face-down cauldron card identities.
+    /// face-down cauldron identities, no primed Actives.
     StateSnapshot {
         /// The group's invite code.
         group_code: GroupCode,
@@ -261,8 +320,10 @@ pub enum ServerMessage {
         active_modifiers: Vec<ModifierKind>,
         /// Per-player contributed-card counts in the current pot.
         contributions: Vec<Contribution>,
-        /// The recipient's own hand.
-        your_hand: Vec<HandCard>,
+        /// The recipient's own ingredients.
+        your_ingredients: Vec<HandIngredient>,
+        /// The recipient's own spells.
+        your_spells: Vec<HandSpell>,
     },
     /// The post-game Deathmatch tiebreaker has begun among the tied leaders.
     /// The outcome (champion or co-champions) follows in [`ServerMessage::GameOver`]. (broadcast)
@@ -320,6 +381,7 @@ impl ServerMessage {
             self,
             ServerMessage::YourHand { .. }
                 | ServerMessage::PeekResult { .. }
+                | ServerMessage::AssayResult { .. }
                 | ServerMessage::Error { .. }
                 | ServerMessage::Heartbeat
                 | ServerMessage::GroupJoined { .. }
