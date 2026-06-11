@@ -1,14 +1,16 @@
 # Boiling Point — cargo workspace.
 #
 # `protocol/` is the narrow wire waist (DTOs + codec, no secrets); `server/` is
-# the authoritative engine that owns the full domain model; `bot-harness/` is the
-# headless balance harness (revived from `archive/` for the boom2 rework —
-# Principle IV's at-scale playtesting mandate). Remaining retired v1 components
-# (tui-client, agent-harness) live under `archive/` — excluded, not members; see
+# the authoritative engine that owns the full domain model; `clients/ai/` is the
+# Rust AI client (bot + Claude brains behind one `Brain` trait, seat-filler and
+# balance-harness hosts — change `boom2-ai-client`, Principle IV's at-scale
+# playtesting mandate); `bot-harness/` is the v1-revived interim harness it
+# supersedes for v2 work. Remaining retired v1 components (tui-client,
+# agent-harness) live under `archive/` — excluded, not members; see
 # archive/README.md for the revival recipe.
 [workspace]
 resolver = "2"
-members = ["protocol", "server", "bot-harness"]
+members = ["protocol", "server", "bot-harness", "clients/ai"]
 exclude = ["archive"]
 
 [workspace.package]

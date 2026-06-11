@@ -1,0 +1,83 @@
+[package]
+name = "boiling-point-ai-client"
+description = "Boiling Point AI client: one firewalled protocol consumer with two pluggable brains (deterministic bot, Claude agent), a seat-filler host for real rooms, and the seeded balance-harness host (Principle IV)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "boiling_point_ai_client"
+path = "src/lib.rs"
+
+# The seat-filler host: joins real rooms over WebSocket and plays with either brain.
+[[bin]]
+name = "bp-seats"
+path = "src/bin/bp_seats.rs"
+
+# The agent-brain latency probe: one isolated decision against a fixture frame.
+[[bin]]
+name = "bp-probe"
+path = "src/bin/bp_probe.rs"
+
+# The balance-harness batch runner (links the server for the in-process boot —
+# the ONLY target allowed to; the seat↔server boundary stays encoded frames).
+[[bin]]
+name = "bp-harness"
+path = "src/bin/bp_harness.rs"
+required-features = ["harness"]
+
+[features]
+# The firewall default: the client proper depends on `protocol/` alone — no
+# server crate, no server types (Constitution I / design D2). CI proves it by
+# building with default features and inspecting the dependency graph
+# (`make firewall-check`).
+default = []
+# Harness mode: pulls the server in for the headless in-process room boot. The
+# batch-runner binary and the transport-parity/batch tests require it.
+harness = ["dep:boiling-point-server"]
+
+[dependencies]
+# The wire protocol — the only crate shared with the server (firewall D2).
+boiling-point-protocol = { path = "../../protocol" }
+# The authoritative engine, harness mode only, consumed ONLY through its
+# headless byte-frame seam (`server::headless`) and embedded WS router.
+boiling-point-server = { path = "../../server", optional = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true }
+# All bot randomness draws from the seeded RNG tree (root → game → seat).
+rand = "0.8"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "net"] }
+# The real wire (seat-filler mode + transport-parity runs).
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+# Dyn-compatible async `Brain` trait (the agent brain awaits network I/O).
+async-trait = "0.1"
+# The agent brain's Claude Messages API calls (rustls: no system OpenSSL).
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Seat/harness configuration files.
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+# Harness-feature tests embed the server's WS router for real-wire runs.
+axum = "0.8"
+# Paused-clock budget-race tests.
+tokio = { version = "1", features = ["test-util"] }
+
+[[test]]
+name = "harness_validation"
+path = "tests/harness_validation.rs"
+required-features = ["harness"]
+
+[[test]]
+name = "seat_filler_e2e"
+path = "tests/seat_filler_e2e.rs"
+required-features = ["harness"]

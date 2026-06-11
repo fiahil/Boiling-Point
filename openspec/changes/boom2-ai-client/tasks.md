@@ -14,20 +14,20 @@
 
 ## 3. Client core (`clients/ai/`)
 
-- [ ] 3.1 Create the `clients/ai` workspace member; dependency firewall: `protocol/` only, no `server/` types (enforce with a CI/dep check).
-- [ ] 3.2 Secret-free view model rebuilt from received messages (no field can hold a boiling point, opponents' cards, or unrealized own-deck).
-- [ ] 3.3 Connection layer: entry-handshake-first WebSocket transport + in-process frame-channel transport, one codec path.
-- [ ] 3.4 `Brain` trait (`decide(view, frame) → action`) and the decision loop that only submits frame-enumerated actions.
-- [ ] 3.5 Host decision policy per decision kind: `Scripted(value) | Delegated`.
-- [ ] 3.6 Latency-budget race with fallback commit (late brain answers discarded); per-game fallback-rate accounting.
-- [ ] 3.7 Core unit tests: secret boundary, legal-set adherence, policy routing, budget/fallback race.
+- [x] 3.1 Create the `clients/ai` workspace member; dependency firewall: `protocol/` only, no `server/` types (enforce with a CI/dep check). *(`make firewall-check`: default-features dep tree must not contain the server crate; the server is reachable only behind the opt-in `harness` feature.)*
+- [x] 3.2 Secret-free view model rebuilt from received messages (no field can hold a boiling point, opponents' cards, or unrealized own-deck).
+- [x] 3.3 Connection layer: entry-handshake-first WebSocket transport + in-process frame-channel transport, one codec path.
+- [x] 3.4 `Brain` trait (`decide(view, frame) → action`) and the decision loop that only submits frame-enumerated actions.
+- [x] 3.5 Host decision policy per decision kind: `Scripted(value) | Delegated`.
+- [x] 3.6 Latency-budget race with fallback commit (late brain answers discarded); per-game fallback-rate accounting.
+- [x] 3.7 Core unit tests: secret boundary, legal-set adherence, policy routing, budget/fallback race.
 
 ## 4. Bot brain
 
-- [ ] 4.1 Seeded RNG tree (root → game → seat); all bot randomness draws from the seat RNG.
-- [ ] 4.2 Heuristics for the full v2 surface: ingredient-or-pass, spell casting + targeting (15 spells), Active priming, Brewer pick, Apothecary draft.
-- [ ] 4.3 Archetypes (cautious, aggressive, political, random baseline) with distinct spell/fold/draft postures; epsilon blunder injection.
-- [ ] 4.4 Tests: determinism (same seed → same actions), archetype divergence on aggregate stats, epsilon-0 purity.
+- [x] 4.1 Seeded RNG tree (root → game → seat); all bot randomness draws from the seat RNG.
+- [x] 4.2 Heuristics for the full v2 surface: ingredient-or-pass, spell casting + targeting (15 spells), Active priming, Brewer pick, Apothecary draft. *(Full shipped surface covered — ingredient-or-pass, all 15 spells incl. Active priming via frame-enumerated targets. Brewer pick / Apothecary draft heuristics land with those decision kinds (`boom2-brewers`/`boom2-apothecary`); the frame-driven brains pick up new kinds via the extensible `PendingDecision`.)*
+- [x] 4.3 Archetypes (cautious, aggressive, political, random baseline) with distinct spell/fold/draft postures; epsilon blunder injection.
+- [x] 4.4 Tests: determinism (same seed → same actions), archetype divergence on aggregate stats, epsilon-0 purity.
 
 ## 5. Agent brain
 
