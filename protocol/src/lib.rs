@@ -11,12 +11,14 @@
 
 pub mod client;
 pub mod codec;
+pub mod frame;
 pub mod ids;
 pub mod server;
 pub mod vocab;
 
 pub use client::{ClientMessage, PROTOCOL_VERSION, ProtocolVersion};
 pub use codec::{CodecError, decode, decode_json, encode, encode_json};
+pub use frame::{CastableSpell, PendingDecision, PlayableIngredient, TargetOptions};
 pub use ids::{CardId, EmoteId, GroupCode, PlayerId};
 pub use server::{Audience, Outbound, ServerMessage};
 pub use vocab::{
@@ -146,6 +148,40 @@ mod tests {
                 wave_number: 1,
                 timer_ms: 25_000,
                 final_wave: false,
+            },
+            ServerMessage::DecisionFrame {
+                round_number: 1,
+                wave_number: 2,
+                timer_ms: Some(15_000),
+                decision: PendingDecision::WaveCommit {
+                    playable: vec![PlayableIngredient {
+                        ingredient: HandIngredient {
+                            id: CardId(1),
+                            view: sample_ingredient(),
+                        },
+                        colorless_allowed: true,
+                    }],
+                    can_pass: true,
+                    spells: vec![
+                        CastableSpell {
+                            spell: CardId(2),
+                            kind: SpellKind::Peek,
+                            targets: TargetOptions::None,
+                        },
+                        CastableSpell {
+                            spell: CardId(3),
+                            kind: SpellKind::Hex,
+                            targets: TargetOptions::Players { players: vec![p] },
+                        },
+                        CastableSpell {
+                            spell: CardId(4),
+                            kind: SpellKind::Sour,
+                            targets: TargetOptions::Colors {
+                                colors: Color::PLAYER_COLORS.to_vec(),
+                            },
+                        },
+                    ],
+                },
             },
             ServerMessage::SpellCast {
                 player: p,
@@ -370,6 +406,91 @@ mod tests {
                 _ => assert_eq!(kind.target_kind(), TargetKind::None),
             }
         }
+    }
+
+    /// A decision frame carries only recipient-permitted information: no
+    /// `boiling_point` field exists anywhere in its shape, and the frame is
+    /// private-only so it can never ride a broadcast.
+    #[test]
+    fn decision_frames_are_private_and_carry_no_secret() {
+        let p = sample_player();
+        let frame = ServerMessage::DecisionFrame {
+            round_number: 2,
+            wave_number: 1,
+            timer_ms: Some(25_000),
+            decision: PendingDecision::WaveCommit {
+                playable: vec![PlayableIngredient {
+                    ingredient: HandIngredient {
+                        id: CardId(1),
+                        view: sample_ingredient(),
+                    },
+                    colorless_allowed: true,
+                }],
+                can_pass: true,
+                spells: vec![CastableSpell {
+                    spell: CardId(2),
+                    kind: SpellKind::Redirect,
+                    targets: TargetOptions::Players { players: vec![p] },
+                }],
+            },
+        };
+        assert!(frame.is_private_only());
+        let json = encode_json(&frame).unwrap();
+        assert!(
+            !json.contains("boiling_point"),
+            "a decision frame must never carry the boiling point: {json}"
+        );
+    }
+
+    /// The frame's `permits_*` helpers accept exactly the enumerated actions.
+    #[test]
+    fn frame_permits_exactly_the_enumerated_actions() {
+        let p = sample_player();
+        let other = PlayerId(uuid::Uuid::from_u128(2));
+        let decision = PendingDecision::WaveCommit {
+            playable: vec![PlayableIngredient {
+                ingredient: HandIngredient {
+                    id: CardId(1),
+                    view: sample_ingredient(),
+                },
+                colorless_allowed: true,
+            }],
+            can_pass: true,
+            spells: vec![
+                CastableSpell {
+                    spell: CardId(2),
+                    kind: SpellKind::Peek,
+                    targets: TargetOptions::None,
+                },
+                CastableSpell {
+                    spell: CardId(3),
+                    kind: SpellKind::Hex,
+                    targets: TargetOptions::Players { players: vec![p] },
+                },
+                CastableSpell {
+                    spell: CardId(4),
+                    kind: SpellKind::Sour,
+                    targets: TargetOptions::Colors {
+                        colors: Color::PLAYER_COLORS.to_vec(),
+                    },
+                },
+            ],
+        };
+        // Plays: the held card (either way), never an unlisted card.
+        assert!(decision.permits_play(CardId(1), false));
+        assert!(decision.permits_play(CardId(1), true));
+        assert!(!decision.permits_play(CardId(99), false));
+        assert!(decision.permits_pass());
+        // Casts: bare Peek, Hex at the listed player only, Sour at player
+        // colours only — and never an unlisted spell.
+        assert!(decision.permits_cast(CardId(2), None));
+        assert!(!decision.permits_cast(CardId(2), Some(SpellTarget::Player { player: p })));
+        assert!(decision.permits_cast(CardId(3), Some(SpellTarget::Player { player: p })));
+        assert!(!decision.permits_cast(CardId(3), Some(SpellTarget::Player { player: other })));
+        assert!(!decision.permits_cast(CardId(3), None));
+        assert!(decision.permits_cast(CardId(4), Some(SpellTarget::Color { color: Color::Ruby })));
+        assert!(!decision.permits_cast(CardId(4), Some(SpellTarget::Color { color: Color::Wild })));
+        assert!(!decision.permits_cast(CardId(99), None));
     }
 
     /// Building an `Outbound` must classify audiences correctly.

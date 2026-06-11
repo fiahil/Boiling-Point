@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::frame::PendingDecision;
 use crate::ids::{EmoteId, GroupCode, PlayerId};
 use crate::vocab::{Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind};
 
@@ -125,6 +126,10 @@ pub enum ErrorCode {
     WrongPhase,
     /// The player is locked out of the round (already passed / timed out).
     LockedOut,
+    /// The action answered a decision frame that has already been resolved
+    /// (its deadline passed / the phase advanced); the auto-resolved outcome
+    /// stands and no state changed.
+    StaleFrame,
     /// The emote id is not in the configured palette.
     InvalidEmote,
     /// An unexpected server-side error.
@@ -165,6 +170,22 @@ pub enum ServerMessage {
         /// The spells now in hand (drawn at round start, carried over; replenished
         /// in-round only by Forage).
         spells: Vec<HandSpell>,
+    },
+    /// The recipient owes a decision: the pending decision kind and its complete
+    /// legal action set (see [`crate::frame`]). Sent whenever a decision opens,
+    /// and re-sent (refreshed) when the legal set shrinks mid-decision (e.g. the
+    /// one allowed spell was cast). Carries only recipient-permitted
+    /// information. (private)
+    DecisionFrame {
+        /// 1-based round number the decision belongs to.
+        round_number: u8,
+        /// 1-based wave number within the round (0 for future non-wave kinds).
+        wave_number: u8,
+        /// Remaining decision budget in milliseconds, when a timer applies
+        /// (informational; the server alone closes the decision).
+        timer_ms: Option<u32>,
+        /// The pending decision and its enumerated legal actions.
+        decision: PendingDecision,
     },
     /// A new wave has opened; carries the timer budget for a client countdown. (broadcast)
     WaveOpened {
@@ -380,6 +401,7 @@ impl ServerMessage {
         matches!(
             self,
             ServerMessage::YourHand { .. }
+                | ServerMessage::DecisionFrame { .. }
                 | ServerMessage::PeekResult { .. }
                 | ServerMessage::AssayResult { .. }
                 | ServerMessage::Error { .. }

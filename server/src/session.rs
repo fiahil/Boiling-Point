@@ -25,6 +25,9 @@ use uuid::Uuid;
 
 use crate::observability::span_schema::SPAN_SCHEMA_VERSION;
 
+use boiling_point_protocol::frame::{
+    CastableSpell, PendingDecision, PlayableIngredient, TargetOptions,
+};
 use boiling_point_protocol::server::{
     Audience, Contribution, ErrorCode, Outbound, PlayerPublic, PlayerScore, ScoringOutcome,
 };
@@ -155,6 +158,55 @@ fn scores_vec(scores: &HashMap<PlayerId, i32>, order: &[PlayerId]) -> Vec<Player
             score: scores[id],
         })
         .collect()
+}
+
+/// Enumerate one player's complete legal action set for the current wave — the
+/// decision-frame contract (`boom-decision-frame`): exact in both directions
+/// against the validation this module and the engine apply. Plays mirror the
+/// hand-membership check ([`Hand::contains_ingredient`]); the pass is always
+/// legal for an active player; casts mirror [`target_shape_ok`] (the engine's
+/// `target_valid` re-checks identically), enumerating every legal target.
+/// `allow_spell` is false once the player's one allowed spell this wave is
+/// spent — the refreshed frame then offers no further casts.
+fn wave_commit_frame(
+    player: PlayerId,
+    hand: &Hand,
+    seated: &[PlayerId],
+    allow_spell: bool,
+) -> PendingDecision {
+    let playable: Vec<PlayableIngredient> = hand
+        .ingredient_views()
+        .into_iter()
+        .map(|ingredient| PlayableIngredient {
+            ingredient,
+            colorless_allowed: true,
+        })
+        .collect();
+    let spells: Vec<CastableSpell> = if allow_spell {
+        hand.spell_views()
+            .into_iter()
+            .map(|s| CastableSpell {
+                spell: s.id,
+                kind: s.kind,
+                targets: match s.kind.target_kind() {
+                    TargetKind::None => TargetOptions::None,
+                    TargetKind::Player => TargetOptions::Players {
+                        players: seated.iter().copied().filter(|p| *p != player).collect(),
+                    },
+                    TargetKind::Color => TargetOptions::Colors {
+                        colors: Color::PLAYER_COLORS.to_vec(),
+                    },
+                },
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    PendingDecision::WaveCommit {
+        playable,
+        can_pass: true,
+        spells,
+    }
 }
 
 /// Send `player` their current private hand (ingredients + spells).
@@ -315,6 +367,19 @@ pub async fn run_game(
                     wave.timed_out = tracing::field::Empty,
                 )
             });
+            // Phase-advance invalidation (`boom-decision-frame`): anything still
+            // queued at this point was sent against a frame that has already been
+            // resolved — reject those actions (StaleFrame, no state change)
+            // before the new wave opens and fresh frames go out.
+            let stale_reconnected = reject_stale(
+                rx,
+                &mut players,
+                &mut gone,
+                palette,
+                game_start,
+                &mut input_log,
+            )
+            .await;
             broadcast(
                 &players,
                 ServerMessage::WaveOpened {
@@ -326,6 +391,27 @@ pub async fn run_game(
                 },
             )
             .await;
+            // Each connected acting player owes this wave's commit: send them the
+            // enumerated legal action set (a disconnected seat auto-passes, so it
+            // owes nothing).
+            for player in &acting {
+                if gone.contains(player) {
+                    continue;
+                }
+                if let Some(hand) = game.hand(*player) {
+                    send_to(
+                        &players,
+                        *player,
+                        ServerMessage::DecisionFrame {
+                            round_number,
+                            wave_number: wave_no,
+                            timer_ms: Some(timer_ms),
+                            decision: wave_commit_frame(*player, hand, &ids, true),
+                        },
+                    )
+                    .await;
+                }
+            }
 
             let collection = collect_wave(
                 rx,
@@ -334,14 +420,17 @@ pub async fn run_game(
                 game.hands(),
                 &mut gone,
                 palette,
+                round_number,
+                wave_no,
                 timer_ms,
                 game_start,
                 &mut input_log,
             )
             .await;
             let wave_timed_out = collection.timed_out;
-            // Reconnected players resume for future rounds and get a private snapshot.
-            for player in &collection.reconnected {
+            // Reconnected players (during the stale drain or the commit window)
+            // resume for future rounds and get a private snapshot.
+            for player in stale_reconnected.iter().chain(&collection.reconnected) {
                 // `reconnect` span — child of the game span; player.id is public.
                 let _reconnect =
                     game_span.in_scope(|| tracing::info_span!("reconnect", player.id = %player.0));
@@ -721,6 +810,109 @@ fn recorded_input(msg: &ClientMessage) -> Option<RecordedInput> {
     }
 }
 
+/// Reject everything still queued from before the current wave opened — the
+/// stale-frame rule (`boom-decision-frame`): a submission against a frame whose
+/// decision has already been resolved gets [`ErrorCode::StaleFrame`] and changes
+/// no state; the auto-resolved outcome stands. Liveness traffic is still
+/// serviced (heartbeats answered, palette emotes broadcast), departures are
+/// folded into `gone`, and reconnects reattach their channel (returned so the
+/// caller sends their snapshot exactly as for mid-wave reconnects). Raw inputs
+/// are recorded before rejection, like everything else players send.
+async fn reject_stale(
+    rx: &mut mpsc::Receiver<GroupCommand>,
+    players: &mut [SeatInfo],
+    gone: &mut HashSet<PlayerId>,
+    palette: &HashSet<u16>,
+    game_start: std::time::Instant,
+    input_log: &mut Vec<TimedInput>,
+) -> Vec<PlayerId> {
+    let mut reconnected: Vec<PlayerId> = Vec::new();
+    while let Ok(cmd) = rx.try_recv() {
+        match cmd {
+            GroupCommand::Action { player, msg } => {
+                if let Some(input) = recorded_input(&msg) {
+                    input_log.push(TimedInput {
+                        player,
+                        at_ms: game_start.elapsed().as_millis() as u32,
+                        input,
+                    });
+                }
+                match msg {
+                    ClientMessage::CommitIngredient { .. }
+                    | ClientMessage::CastSpell { .. }
+                    | ClientMessage::CommitPass
+                    | ClientMessage::LockIn => {
+                        send_to(
+                            players,
+                            player,
+                            ServerMessage::Error {
+                                code: ErrorCode::StaleFrame,
+                                message: "that decision has already been resolved".into(),
+                            },
+                        )
+                        .await;
+                    }
+                    ClientMessage::Heartbeat => {
+                        send_to(players, player, ServerMessage::Heartbeat).await;
+                    }
+                    ClientMessage::Emote { emote } if palette.contains(&emote.0) => {
+                        broadcast(
+                            players,
+                            ServerMessage::EmoteBroadcast {
+                                from: player,
+                                emote,
+                            },
+                        )
+                        .await;
+                    }
+                    ClientMessage::Emote { .. } => {
+                        send_to(
+                            players,
+                            player,
+                            ServerMessage::Error {
+                                code: ErrorCode::InvalidEmote,
+                                message: "unknown emote".into(),
+                            },
+                        )
+                        .await;
+                    }
+                    // Entry and group-lobby messages are never valid mid-game.
+                    _ => {
+                        send_to(
+                            players,
+                            player,
+                            ServerMessage::Error {
+                                code: ErrorCode::WrongPhase,
+                                message: "not a valid action during a wave".into(),
+                            },
+                        )
+                        .await;
+                    }
+                }
+            }
+            GroupCommand::Leave { player } => {
+                gone.insert(player);
+            }
+            GroupCommand::Join { player, out, .. } => {
+                if let Some(seat) = players.iter_mut().find(|s| s.id == player) {
+                    seat.out = out;
+                    reconnected.push(player);
+                } else {
+                    let _ = out
+                        .send(ServerMessage::Error {
+                            code: ErrorCode::WrongPhase,
+                            message: "game already in progress".into(),
+                        })
+                        .await;
+                }
+            }
+            GroupCommand::ForceStart => {}
+            GroupCommand::Shutdown => break,
+        }
+    }
+    reconnected
+}
+
 /// A player's pending choice as a wave collects: the ingredient-or-pass slot may
 /// be revised until lock-in; the spell slot is one-shot (a second cast is
 /// rejected — at most one spell resolves per player per wave).
@@ -767,11 +959,15 @@ async fn collect_wave(
     hands: &HashMap<PlayerId, Hand>,
     gone: &mut HashSet<PlayerId>,
     palette: &HashSet<u16>,
+    round_number: u8,
+    wave_number: u8,
     timer_ms: u32,
     game_start: std::time::Instant,
     input_log: &mut Vec<TimedInput>,
 ) -> WaveCollection {
     let seated: Vec<PlayerId> = players.iter().map(|s| s.id).collect();
+    // When the commit window closes — for the refreshed frame's remaining budget.
+    let deadline = std::time::Instant::now() + Duration::from_millis(timer_ms as u64);
     let mut pending: HashMap<PlayerId, Pending> = HashMap::new();
     let mut locked: HashSet<PlayerId> = HashSet::new();
     let mut reconnected: Vec<PlayerId> = Vec::new();
@@ -868,6 +1064,31 @@ async fn collect_wave(
                                         Some(_) => {
                                             pending.entry(player).or_default().spell =
                                                 Some(SpellChoice { spell, target });
+                                            // The one allowed cast this wave is now
+                                            // spent: refresh the caster's frame so the
+                                            // legal set they hold offers no further
+                                            // spells (frame exactness on refresh).
+                                            if let Some(hand) = hands.get(&player) {
+                                                let remaining = deadline
+                                                    .saturating_duration_since(
+                                                        std::time::Instant::now(),
+                                                    )
+                                                    .as_millis()
+                                                    as u32;
+                                                send_to(
+                                                    players,
+                                                    player,
+                                                    ServerMessage::DecisionFrame {
+                                                        round_number,
+                                                        wave_number,
+                                                        timer_ms: Some(remaining),
+                                                        decision: wave_commit_frame(
+                                                            player, hand, &seated, false,
+                                                        ),
+                                                    },
+                                                )
+                                                .await;
+                                            }
                                         }
                                     }
                                 }
@@ -1073,6 +1294,8 @@ mod tests {
             &hands,
             &mut gone,
             &palette,
+            1,
+            1,
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
@@ -1146,6 +1369,8 @@ mod tests {
             &hands,
             &mut gone,
             &palette,
+            1,
+            1,
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
@@ -1166,16 +1391,21 @@ mod tests {
         // the passed player in).
         assert_eq!(choice.action, WaveAction::Pass);
 
+        // The accepted first cast spends the spell slot (the refreshed frame
+        // offers no further casts); the second cast gets the SpellLimit error.
         let msgs = drain(&mut rx1);
         assert!(
             matches!(
                 msgs.as_slice(),
-                [ServerMessage::Error {
-                    code: ErrorCode::SpellLimit,
-                    ..
-                }]
+                [
+                    ServerMessage::DecisionFrame { .. },
+                    ServerMessage::Error {
+                        code: ErrorCode::SpellLimit,
+                        ..
+                    }
+                ]
             ),
-            "expected one SpellLimit error, got {msgs:?}"
+            "expected a refreshed frame then one SpellLimit error, got {msgs:?}"
         );
     }
 
@@ -1233,6 +1463,8 @@ mod tests {
             &hands,
             &mut gone,
             &palette,
+            1,
+            1,
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
@@ -1287,6 +1519,8 @@ mod tests {
             &hands,
             &mut gone,
             &palette,
+            1,
+            1,
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
@@ -1350,6 +1584,8 @@ mod tests {
             &hands,
             &mut gone,
             &palette,
+            1,
+            1,
             5_000,
             std::time::Instant::now(),
             &mut input_log,
@@ -1392,6 +1628,264 @@ mod tests {
         );
         assert!(input_log.iter().all(|t| t.player == id1));
         assert!(input_log.windows(2).all(|w| w[0].at_ms <= w[1].at_ms));
+    }
+
+    // ---- decision frames (`boom-decision-frame`): exactness + staleness ----
+
+    /// Frame exactness both ways at the validation seam: every action the frame
+    /// enumerates passes the checks `collect_wave` applies (hand membership +
+    /// target shape), and every action that would pass those checks is
+    /// enumerated. Non-enumerated probes fail both.
+    #[test]
+    fn wave_commit_frame_is_exact_against_validation() {
+        let me = PlayerId(Uuid::from_u128(1));
+        let seated: Vec<PlayerId> = (1..=4u128).map(|n| PlayerId(Uuid::from_u128(n))).collect();
+        let mut hand = Hand::new();
+        hand.add_ingredients([ing(10, Color::Ruby, 2, 1), ing(11, Color::Wild, 5, 0)]);
+        hand.add_spells([
+            crate::game::card::Spell {
+                id: CardId(20),
+                kind: SpellKind::Peek,
+            },
+            crate::game::card::Spell {
+                id: CardId(21),
+                kind: SpellKind::Hex,
+            },
+            crate::game::card::Spell {
+                id: CardId(22),
+                kind: SpellKind::Sour,
+            },
+        ]);
+
+        let frame = wave_commit_frame(me, &hand, &seated, true);
+
+        // Forward: everything enumerated validates.
+        let PendingDecision::WaveCommit {
+            playable,
+            can_pass,
+            spells,
+        } = &frame;
+        assert!(*can_pass, "an active player may always pass");
+        for p in playable {
+            assert!(hand.contains_ingredient(p.ingredient.id));
+        }
+        for s in spells {
+            assert!(hand.contains_spell(s.spell));
+            match &s.targets {
+                TargetOptions::None => {
+                    assert!(target_shape_ok(s.kind, None, me, &seated));
+                }
+                TargetOptions::Players { players } => {
+                    for t in players {
+                        assert!(target_shape_ok(
+                            s.kind,
+                            Some(SpellTarget::Player { player: *t }),
+                            me,
+                            &seated
+                        ));
+                    }
+                }
+                TargetOptions::Colors { colors } => {
+                    for c in colors {
+                        assert!(target_shape_ok(
+                            s.kind,
+                            Some(SpellTarget::Color { color: *c }),
+                            me,
+                            &seated
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Reverse: everything that validates is enumerated.
+        for c in hand.ingredients() {
+            assert!(frame.permits_play(c.id, false) && frame.permits_play(c.id, true));
+        }
+        for s in hand.spells() {
+            match s.kind.target_kind() {
+                TargetKind::None => assert!(frame.permits_cast(s.id, None)),
+                TargetKind::Player => {
+                    for t in seated.iter().filter(|t| **t != me) {
+                        assert!(frame.permits_cast(s.id, Some(SpellTarget::Player { player: *t })));
+                    }
+                }
+                TargetKind::Color => {
+                    for c in Color::PLAYER_COLORS {
+                        assert!(frame.permits_cast(s.id, Some(SpellTarget::Color { color: c })));
+                    }
+                }
+            }
+        }
+
+        // Probes: non-enumerated actions are absent from the frame AND fail the
+        // validation, in agreement.
+        assert!(!frame.permits_play(CardId(99), false));
+        assert!(!hand.contains_ingredient(CardId(99)));
+        let self_hex = Some(SpellTarget::Player { player: me });
+        assert!(!frame.permits_cast(CardId(21), self_hex));
+        assert!(!target_shape_ok(SpellKind::Hex, self_hex, me, &seated));
+        let wild_sour = Some(SpellTarget::Color { color: Color::Wild });
+        assert!(!frame.permits_cast(CardId(22), wild_sour));
+        assert!(!target_shape_ok(SpellKind::Sour, wild_sour, me, &seated));
+        assert!(
+            !frame.permits_cast(CardId(21), None),
+            "Hex requires a target"
+        );
+
+        // A spent spell slot empties the cast set; plays and the pass remain.
+        let refreshed = wave_commit_frame(me, &hand, &seated, false);
+        assert!(!refreshed.permits_cast(CardId(20), None));
+        assert!(refreshed.permits_play(CardId(10), false));
+        assert!(refreshed.permits_pass());
+    }
+
+    /// An accepted cast spends the wave's one spell slot: the caster receives a
+    /// refreshed frame whose legal set offers no further casts (spec: "Illegal
+    /// options are absent").
+    #[tokio::test]
+    async fn accepted_cast_refreshes_the_frame_without_spells() {
+        let (s1, mut rx1) = seat(1, Color::Ruby);
+        let id1 = s1.id;
+        let mut players = vec![s1];
+        let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
+        let mut h = Hand::new();
+        h.add_ingredients([ing(10, Color::Ruby, 2, 1)]);
+        h.add_spells([crate::game::card::Spell {
+            id: CardId(20),
+            kind: SpellKind::Peek,
+        }]);
+        hands.insert(id1, h);
+        let mut gone = HashSet::new();
+        let palette: HashSet<u16> = HashSet::new();
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        cmd_tx
+            .send(GroupCommand::Action {
+                player: id1,
+                msg: ClientMessage::CastSpell {
+                    spell: CardId(20),
+                    target: None,
+                },
+            })
+            .await
+            .unwrap();
+        drop(cmd_tx);
+
+        let collection = collect_wave(
+            &mut cmd_rx,
+            &mut players,
+            &[id1],
+            &hands,
+            &mut gone,
+            &palette,
+            1,
+            1,
+            5_000,
+            std::time::Instant::now(),
+            &mut Vec::new(),
+        )
+        .await;
+        assert_eq!(
+            collection.choices.get(&id1).and_then(|c| c.spell),
+            Some(SpellChoice {
+                spell: CardId(20),
+                target: None
+            })
+        );
+
+        let msgs = drain(&mut rx1);
+        match msgs.as_slice() {
+            [
+                ServerMessage::DecisionFrame {
+                    round_number: 1,
+                    wave_number: 1,
+                    timer_ms: Some(_),
+                    decision,
+                },
+            ] => {
+                assert!(
+                    !decision.permits_cast(CardId(20), None),
+                    "the refreshed frame must offer no further casts"
+                );
+                assert!(decision.permits_play(CardId(10), false));
+                assert!(decision.permits_pass());
+            }
+            other => panic!("expected one refreshed DecisionFrame, got {other:?}"),
+        }
+    }
+
+    /// Submissions queued after a frame's decision resolved are rejected with
+    /// `StaleFrame` and change no state; liveness traffic is still serviced and
+    /// departures are folded in.
+    #[tokio::test]
+    async fn stale_actions_are_rejected_with_stale_frame_and_no_state_change() {
+        let (s1, mut rx1) = seat(1, Color::Ruby);
+        let (s2, _rx2) = seat(2, Color::Sapphire);
+        let id1 = s1.id;
+        let id2 = s2.id;
+        let mut players = vec![s1, s2];
+        let mut gone = HashSet::new();
+        let palette: HashSet<u16> = HashSet::new();
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        for msg in [
+            ClientMessage::CommitIngredient {
+                card: CardId(10),
+                colorless: false,
+            },
+            ClientMessage::CastSpell {
+                spell: CardId(20),
+                target: None,
+            },
+            ClientMessage::CommitPass,
+            ClientMessage::LockIn,
+            ClientMessage::Heartbeat,
+        ] {
+            cmd_tx
+                .send(GroupCommand::Action { player: id1, msg })
+                .await
+                .unwrap();
+        }
+        cmd_tx
+            .send(GroupCommand::Leave { player: id2 })
+            .await
+            .unwrap();
+
+        let mut input_log: Vec<TimedInput> = Vec::new();
+        let reconnected = reject_stale(
+            &mut cmd_rx,
+            &mut players,
+            &mut gone,
+            &palette,
+            std::time::Instant::now(),
+            &mut input_log,
+        )
+        .await;
+
+        assert!(reconnected.is_empty());
+        assert!(
+            gone.contains(&id2),
+            "a drain-time leave is folded into gone"
+        );
+        // Four stale rejections, then the serviced heartbeat — in order.
+        let msgs = drain(&mut rx1);
+        assert_eq!(msgs.len(), 5, "got {msgs:?}");
+        for m in &msgs[..4] {
+            assert!(
+                matches!(
+                    m,
+                    ServerMessage::Error {
+                        code: ErrorCode::StaleFrame,
+                        ..
+                    }
+                ),
+                "expected StaleFrame, got {m:?}"
+            );
+        }
+        assert!(matches!(msgs[4], ServerMessage::Heartbeat));
+        // The raw-input log still captured the rejected attempts (not the heartbeat).
+        assert_eq!(input_log.len(), 4);
     }
 
     // ---- the shipping (async) path is the tested engine path ----

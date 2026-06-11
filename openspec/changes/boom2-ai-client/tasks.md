@@ -2,10 +2,10 @@
 
 ## 1. Decision frames (protocol + server, with boom2-combat-core)
 
-- [ ] 1.1 Add decision-frame message shapes to `protocol/`: pending decision kind (Brewer pick, draft, wave commit), deadline, and the enumerated legal action set incl. spell targets — coordinated with the combat-core protocol review.
-- [ ] 1.2 Server: emit a decision frame to each player owing a decision, derived from the same validation logic (exactness both ways: everything listed validates, everything valid is listed).
-- [ ] 1.3 Server: invalidate stale frames on phase advance; late submissions get an error and no state change.
-- [ ] 1.4 Server tests: frame exactness (property-style: submit every enumerated action / probe non-enumerated ones), no-secrets audit of frame contents, stale-frame rejection.
+- [x] 1.1 Add decision-frame message shapes to `protocol/`: pending decision kind (Brewer pick, draft, wave commit), deadline, and the enumerated legal action set incl. spell targets — coordinated with the combat-core protocol review. *(Landed as `protocol/src/frame.rs` + `ServerMessage::DecisionFrame` + `ErrorCode::StaleFrame`, protocol v5. Combat-core shipped first; the Brewer-pick and draft kinds join the extensible `PendingDecision` enum when `boom2-brewers`/`boom2-apothecary` land their vocabulary — wave commit is the full surface the shipped game owes today.)*
+- [x] 1.2 Server: emit a decision frame to each player owing a decision, derived from the same validation logic (exactness both ways: everything listed validates, everything valid is listed).
+- [x] 1.3 Server: invalidate stale frames on phase advance; late submissions get an error and no state change.
+- [x] 1.4 Server tests: frame exactness (property-style: submit every enumerated action / probe non-enumerated ones), no-secrets audit of frame contents, stale-frame rejection.
 
 ## 2. Server in-process seam
 
