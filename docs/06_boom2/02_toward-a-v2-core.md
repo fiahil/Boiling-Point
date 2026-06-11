@@ -334,6 +334,41 @@ rarer (~10%), and the **reserve** guarantees ≥1 god-tier spell if you want it.
 
 ---
 
+## First harness derivation (2026-06-11, `boom2-combat-core`)
+
+The combat core shipped on fixed colour-anchored decks and the **revived bot
+harness** (`bot-harness/`, constitution §IV) re-derived the blind-volatility
+economy: 1000-game seeded batches over the four baseline bots (cautious /
+aggressor / diplomat / random), sweeping the boiling-point window from 20–32 to
+32–44 in steps of 2.
+
+| Knob | Start (sketch) | **Harness-derived** | Note |
+|---|---|---|---|
+| Boiling-point range | 20–32 (mid ~26) | **31–43 (mid 37)** | the sweep was cleanly monotone (70.0% explosions at 20–32 → 43.4% at 32–44); 31–43 lands 43.5–45.3% across seeds 42/7/1234 — on the ~45% target |
+| Explosion rate | ~45% of rounds | **44.8%** (2000 games, seed 42) | confirmed at the adopted window |
+| Freeze (Vulture check) | rounds must not freeze | **0.0% all-pass endings, 0 empty pots** | folding stays individually safe but rounds always resolve through play |
+| Detonators per boom | — | **1.28** | clean causality: mostly a single culprit, equal-volatility splits are rare |
+| Peek economy | 2 copies/grimoire, 3 spells drawn/round | **~3.4 Peek casts/game** (of 8 dealt per table) | blind volatility holds; Peeks are hoarded, not burned |
+| Waves / round | "up-to-4-card waves", ~2–3 implied | **~5.8** | rounds run longer than the sketch — why the line sits higher than 20–32 |
+| Pot value P | ~10 typical | **~32 avg scored value** | fatter pots: more cards land per round than sketched, plus modifier multipliers — see open findings |
+| Win spread (baselines) | no archetype dominant | diplomat 37.9% · cautious 28.0% · aggressor 22.2% · random 11.9% | nothing above the 40% dominance line at the adopted window (at BP 20–32, cautious folding dominated at 42.9% — the higher line fixed it) |
+| Detonation share | — | aggressor 62.3% of hits | reckless play pays the booms, as designed |
+
+**Open findings for the follow-up changes** (all `[needs playtesting]` by humans):
+
+- **Fat pots.** Average scored pot value ~32 trips the harness's runaway-pot
+  smell (threshold 25, itself a guess). Rounds at the higher boiling point run
+  ~5.8 waves and land ~14.7 cards, so P grows past the P≈10 sketch. Candidate
+  levers if human play confirms the smell: a flatter points curve, fewer rounds,
+  or modifier-multiplier rescale — owned by the points-curve work in
+  `boom2-compounding` / the modifier rescale follow-up.
+- **Modifier offsets are still v1-scaled** (ThinIce −4 / DeepCauldron +4 /
+  Residue +3 against a 31–43 line) — the flagged adjacent rescale.
+- Baseline bots fire no Brewer/draft systems yet; the persona × Brewer ×
+  deck-archetype matrix re-opens with `boom2-brewers` / `boom2-apothecary`.
+
+---
+
 ## Pointers
 
 - Rationale & alternatives: [`06_depth-and-complexity.md`](01_depth-and-complexity.md)

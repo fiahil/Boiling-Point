@@ -16,10 +16,13 @@ wave1_ms = 25000
 wave_ms = 15000
 
 [boiling_point]
-# The load-bearing dial (~2x the v1 8-14: higher mean volatility + up-to-4-card
-# waves). Swept by the harness against the ~45% explosion-rate target.
-min = 20
-max = 32
+# The load-bearing dial. The design's starting window was 20-32; the revived
+# bot harness swept 20-44 against the ~45% explosion-rate target and landed on
+# 31-43 (45.3%/43.5%/45.3% across seeds 42/7/1234, 1000 games each, baseline
+# bots) — rounds run longer (~5.8 waves) than the design's up-to-4-card-wave
+# sketch, so the line sits higher. Still `[needs playtesting]` by humans.
+min = 31
+max = 43
 
 # ---- The pantry: 30 ingredients per player ----
 #

@@ -38,12 +38,12 @@
 
 ## 7. Clients & harnesses
 
-- [ ] 7.1 Web client (`clients/web/`): render the new wave actions (ingredient/spell/pass), the grimoire, and the volatility-sorted, boiling-point-revealing depile.
-- [ ] 7.2 Bot harness (revived from `archive/bot-harness/`, §IV): drive the new loop headlessly; emit explosion-rate, detonator-distribution, Peek-fire-rate, and freeze (all-pass) statistics.
-- [ ] 7.3 Claude-as-player harness (optional revival from `archive/agent-harness/`): expose the new intents over the structured JSON interface.
+- [ ] 7.1 Web client (`clients/web/`): render the new wave actions (ingredient/spell/pass), the grimoire, and the volatility-sorted, boiling-point-revealing depile. *(Blocked: `clients/web/` does not exist yet — `adopt-pixi-client` has not been implemented. The v4 protocol this renders is shipped; this task lands with/after the web client.)*
+- [x] 7.2 Bot harness (revived from `archive/bot-harness/`, §IV): drive the new loop headlessly; emit explosion-rate, detonator-distribution, Peek-fire-rate, and freeze (all-pass) statistics.
+- [ ] 7.3 Claude-as-player harness (optional revival from `archive/agent-harness/`): expose the new intents over the structured JSON interface. *(Optional — not revived; constitution v2.1.x points agent-driven testing at `boom2-ai-client` instead.)*
 
 ## 8. Balance (Principle IV)
 
-- [ ] 8.1 Sweep the boiling-point range (~20–32) against the ~45% explosion-rate target; confirm rounds don't freeze (Vulture check).
-- [ ] 8.2 Tune volatility/points curves and the fixed-deck composition; re-derive the blind-volatility / Peek economy.
-- [ ] 8.3 Record validated numbers back into docs/07 and promote stable rules into docs/02.
+- [x] 8.1 Sweep the boiling-point range (~20–32) against the ~45% explosion-rate target; confirm rounds don't freeze (Vulture check). *(Swept 20–32 → 32–44; adopted **31–43** at 44.8% explosions over 2000 games; 0.0% all-pass endings.)*
+- [x] 8.2 Tune volatility/points curves and the fixed-deck composition; re-derive the blind-volatility / Peek economy. *(Curves kept — they satisfy the design bands; the load-bearing dial moved instead. Peek economy: ~3.4 casts/game of 8 dealt. Open finding: fat pots (avg ~32) recorded for the points-curve follow-up.)*
+- [x] 8.3 Record validated numbers back into docs/07 and promote stable rules into docs/02. *(Numbers recorded in docs/06_boom2/02 §First harness derivation — the decision log formerly numbered 07; docs/02 carries the v2-core status banner with the superseded-section map, pending the wholesale rewrite when the saga archives.)*

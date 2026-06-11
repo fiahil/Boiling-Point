@@ -1,6 +1,6 @@
 # Boiling Point — Agent Guidelines
 
-## Constitution (v2.1.1)
+## Constitution (v2.2.0)
 
 ### I. Server-Authoritative
 
@@ -39,9 +39,10 @@ operating in a closed code-render-screenshot-adjust loop.
   design updates the corresponding docs (`openspec/` contracts, `docs/` rationale,
   this constitution for governance) in the same change
 - Agent testability is a first-class selection criterion for client technology decisions
-- The v1 harnesses (protocol bot harness, Claude-as-player harness) and the TUI
-  reference client are retired to `archive/` — revivable, not deleted; reviving the
-  bot harness is the expected path for at-scale balance validation (see Principle IV)
+- The **bot harness is revived** as a live workspace member (`bot-harness/`,
+  change `boom2-combat-core`) — the at-scale balance instrument Principle IV
+  mandates. The Claude-as-player harness and the TUI reference client remain
+  retired to `archive/` — revivable, not deleted
 
 ### III. Start Simple, Scale Later
 
@@ -64,8 +65,9 @@ Game mechanics, scoring values, thresholds, and card effects are hypotheses unti
 - Balance changes MUST be data-informed — server telemetry, the admin balance
   dashboard, structured player feedback, or revived-harness statistics
 - Before large balance reworks (e.g. boom2) ship, at-scale automated playtesting MUST
-  be reinstated — the archived bot harness (`archive/bot-harness/`) is the designed
-  seam for running thousands of games to surface degenerate strategies
+  run — the revived bot harness (`bot-harness/`, reinstated with `boom2-combat-core`)
+  is the standing instrument for running thousands of seeded games to surface
+  degenerate strategies and derive the balance numbers
 - No balance number is sacred — if data says change it, change it
 
 ## Technology Stack
@@ -102,10 +104,11 @@ first-class selection criterion for any client technology decision.
 ```
 ├── server/        # authoritative game logic (Axum + Tokio) — cargo workspace member
 ├── protocol/      # wire protocol types, game enums, serde derives (canonical source)
+├── bot-harness/   # headless balance harness (revived with boom2-combat-core) — workspace member
 ├── clients/
 │   └── web/       # graphical client — TypeScript + PixiJS (lands with adopt-pixi-client)
-└── archive/       # retired v1 components — tui-client, bot-harness, agent-harness,
-                   # playtest.sh — revivable, not deleted
+└── archive/       # retired v1 components — tui-client, agent-harness, playtest.sh —
+                   # revivable, not deleted
 ```
 
 ## Governance
@@ -128,6 +131,12 @@ When a practice conflicts with a principle above, the principle wins.
 Violations MUST be documented with justification and rejected simpler alternative.
 
 **Amendment log:**
+- **v2.2.0 (2026-06-11)** — MINOR. Revived the bot harness from `archive/` to a
+  live workspace member (`bot-harness/`), satisfying Principle IV's pre-ship
+  mandate for the boom2 rework: Principle II's archive bullet and Principle IV's
+  reinstatement bullet now reference the live harness, and the project structure
+  gains `bot-harness/`. Change `boom2-combat-core` (which also re-derived the
+  blind-volatility economy — boiling point 31–43 at a ~45% explosion rate).
 - **v2.1.1 (2026-06-11)** — PATCH. Clarified the e2e layer's placement: the suite
   lives server-side and runs fully headless; `boom2-ai-client` is the instrument it
   drives, not the home of the suite, and the AI client itself carries only minimal
