@@ -14,11 +14,16 @@ On a `main` commit that passes the full CI test gate, the pipeline SHALL **build
 - **WHEN** a release includes schema changes
 - **THEN** the pipeline runs the database migrations as part of promotion, before traffic is served by the new version
 
-### Requirement: Benchmark Regression Runs Land In The Pipeline
+### Requirement: The Benchmarking Suite Rides The Pipeline
 
-The seeded server-benchmark regression runs SHALL execute within this pipeline so performance is **tracked over time**.
+The pipeline SHALL run the `boom2-benchmarking` per-merge jobs — the seeded criterion benches, the bench-history append, and the dashboard republish — so performance is **tracked over time**. These jobs are observational: their results SHALL NOT gate the deploy.
 
 #### Scenario: Benchmarks are tracked across releases
 
 - **WHEN** a release is built
-- **THEN** the seeded benchmark runs execute and their results are recorded for regression comparison across releases
+- **THEN** the seeded criterion benches execute, their results are appended to the bench history, and the dashboard is republished
+
+#### Scenario: Bench results do not block promotion
+
+- **WHEN** a release's bench results regress
+- **THEN** promotion proceeds, and the regression is visible only on the bench dashboard

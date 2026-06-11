@@ -42,13 +42,15 @@ project into a continuously deployed, publicly reachable service.
 | Feature | Why it's v2 | Dependency / note |
 |---|---|---|
 | **Landing page** | v1 distributes via invite links to people who already know the game; no acquisition surface is needed to validate the core loop. | Static marketing page (what the game is, screenshots/trailer, a "play now" → create/join room CTA). Sits alongside or in front of the PixiJS client (`clients/web/`), which is the "play" target. |
-| **Fuller tests in CI** | v1 CI gates `fmt` + `clippy` + **unit** tests only; `make test-unit` deliberately skips the transport tests that boot an in-process server. | Extend CI to the full Principle II gate (v2.0.0): the **transport/integration** tests, and the **web client** build + Playwright visual tests once the Pixi client lands. Seeded **bot-harness** balance runs rejoin the gate when the archived harness is revived (required before boom2 balance ships — §IV). |
+| **Fuller tests in CI** | v1 CI gates `fmt` + `clippy` + **unit** tests only; `make test-unit` deliberately skips the transport tests that boot an in-process server. | Extend CI to the full Principle II gate (v2.0.0): the **transport/integration** tests, and the **web client** build + Playwright visual tests once the Pixi client lands. A seeded **bot-harness smoke** (completion + determinism only) rejoins the gate when the archived harness is revived (required before boom2 balance ships — §IV); balance *metrics* stay observational in `boom2-benchmarking`. |
 | **Continuous deployment pipeline** | v1 has a CI gate but no deploy step — releases are manual/local. | CD layered on the existing CI: build + publish the server container and the `clients/web/` bundle, run DB migrations, and promote on green `main`. Gated behind the fuller test suite above. |
 | **Deployment architecture & target** | v1 runs as a single local binary + local Postgres; nothing is hosted. | Pick a target — a managed container host + managed Postgres is the simplest viable, and the Principle III single-binary monolith maps cleanly to one container. Decide TLS/WebSocket ingress, config/secrets, DB backups, and the staging→prod path. The single-server stance is the seam; horizontal scaling stays out of v2. |
 
-**Benchmarks** fold into this work: the [Server benchmarks](#other-post-v1-candidates)
-regression harness (below) is meant to be *tracked over time*, so its seeded runs
-land in this CI/CD pipeline once it exists.
+**Benchmarks** fold into this work: the benchmarking suite (change
+`boom2-benchmarking` — see [Server benchmarks](#other-post-v1-candidates) below)
+rides this pipeline. Seeded criterion runs execute per merge to `main` and the
+bench dashboard republishes — all *observational* (tracked over time, never
+gating); balance studies stay on-demand, outside CI.
 
 **Ordering:** fuller tests in CI first (they gate everything), then pick the
 deployment target/architecture, then the CD pipeline on top, with the landing
@@ -135,16 +137,19 @@ These also sit beyond v1. (Some overlap with the design-side deferrals in
   the v1 *persistence-and-replays* work stores match results and replays but
   attaches **no** profile or cross-game identity. Moved here out of the v1
   persistence scope.
-- **Server benchmarks** — a performance-regression harness, deliberately out of
-  v1 (correctness and balance come first); the regression runs land in the v2
-  CI/CD pipeline (see *Deployment, Delivery & CI/CD* above). Two layers:
+- **Server benchmarks** — now scoped in change **`boom2-benchmarking`** as one
+  instrument of the **benchmarking suite** (the other is the on-demand **balance
+  study**, where the revived bot harness fits; both read from one self-contained
+  HTML dashboard, all observational — benchmarks measure, tests gate):
   - **Engine micro-benchmarks** (`criterion`): hot paths in the round engine —
-    wave resolution, depile/scoring, deck deal/reshuffle, modifier stacking —
-    tracked over time to catch regressions.
+    deck realization, wave resolution, explosion resolution/depile, modifier
+    stacking — run per merge to `main`, read as *trends* (observed rerun noise
+    is 6–12%, so single-run deltas are noise).
   - **WebSocket load harness**: many concurrent rooms driven over the real wire
     (revive `archive/bot-harness/`'s WebSocket transport), measuring tick latency,
     broadcast fan-out cost, and memory per room, against target throughput/latency
-    budgets. The archived bot harness's seeded batch runner is the seam.
+    budgets. **Deferred** out of `boom2-benchmarking`; the suite's report and
+    dashboard conventions are its seam.
 
 ---
 

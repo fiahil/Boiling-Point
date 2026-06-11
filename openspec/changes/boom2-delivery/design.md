@@ -19,7 +19,7 @@ v1 ships a CI gate (`fmt`/`clippy`/unit) and a locally runnable monolith, with d
 
 ### D1: Tests gate delivery
 
-The fuller CI layers land **first** and gate the CD pipeline — nothing deploys on a red gate. Balance runs (when the bot harness is revived for boom2, §IV) are seeded/deterministic so a regression is attributable. *Alternative rejected:* deploy first, harden tests later — risks shipping balance/transport regressions to a live service.
+The fuller CI layers land **first** and gate the CD pipeline — nothing deploys on a red gate. The revived bot harness contributes a seeded/deterministic **smoke** to the gate (completion + reproducibility only); its balance metrics stay observational in `boom2-benchmarking`. *Alternative rejected:* deploy first, harden tests later — risks shipping balance/transport regressions to a live service.
 
 ### D2: Managed container + managed Postgres, one container
 
@@ -40,7 +40,7 @@ A static page deployable in front of `clients/web/`, cacheable, with no game log
 | **I — Server-authoritative** | Delivery is infrastructure only; it changes no game logic and moves nothing authoritative client-side. The landing page carries no game logic. |
 | **II — Agent-driven** | CI runs the v2.0.0 testing layers (transport/integration, web visual; revived-harness balance runs when boom2 revives `archive/bot-harness/`); pipelines are source-defined (YAML), agent-writable. |
 | **III — Start simple** | A single managed container + managed Postgres, **single-server only** (scaling deferred), CD layered on the existing CI gate rather than a new system. **Rejected simpler alternative:** stay local-only — but v2's purpose is a reachable, continuously delivered service. |
-| **IV — Playtest-driven** | Benchmark regressions live in the pipeline, and the seeded balance runs join it when the bot harness is revived — which §IV (v2.0.0) requires before boom2 balance ships — so balance and performance are tracked release-over-release. |
+| **IV — Playtest-driven** | The pipeline runs the `boom2-benchmarking` suite (per-merge criterion + dashboard; on-demand balance studies stay outside CI) so balance and performance are tracked release-over-release — observationally, never as a gate. The revived harness's gate contribution is the determinism smoke only. |
 
 ## Risks / Migration
 
