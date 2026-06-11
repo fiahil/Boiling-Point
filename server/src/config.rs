@@ -2,36 +2,47 @@
 //! and registry assembly.
 //!
 //! All tunable counts and ratios live here, not in the loop. The whole config is
-//! validated at startup and the server refuses to run on an invalid config
-//! (Constraint #3) — a typo fails loudly at boot, never mid-game.
+//! validated at startup and the server refuses to run on an invalid config — a
+//! typo fails loudly at boot, never mid-game.
 
 use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use boiling_point_protocol::vocab::{Color, EffectKind, ModifierKind};
+use boiling_point_protocol::vocab::{ModifierKind, SpellKind};
 
-use crate::content::card::CardDef;
-use crate::content::effect::ALL_EFFECT_KINDS;
+use crate::content::card::{IngredientDef, PantrySlot};
 use crate::content::registry::ContentRegistry;
+use crate::content::spell::{SpellDef, SpellValues};
 
-/// Players per table — fixed at four in v1.
+/// Players per table — fixed at four.
 pub const PLAYERS: u16 = 4;
-/// Hand refill floor dealt at the start of each round.
-pub const HAND_SIZE: u16 = 5;
+/// Ingredient hand floor — topped up to this at the start of every wave.
+pub const INGREDIENT_HAND: u16 = 3;
 /// Rounds per game.
 pub const ROUND_COUNT: u8 = 5;
 /// Modifiers drawn over a game (one each at the start of rounds 2–5).
 pub const MODIFIER_DRAWS: u32 = 4;
+/// Maximum ingredient volatility.
+pub const MAX_VOLATILITY: u8 = 7;
+/// Maximum ingredient points.
+pub const MAX_POINTS: u8 = 3;
 
 /// Top-level content configuration, deserialised from TOML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentConfig {
-    /// Deck size and ratio bounds.
-    pub deck: DeckConfig,
-    /// Card archetypes (`[[card]]` tables).
+    /// Pantry size and the colour-anchor band.
+    pub pantry: PantryConfig,
+    /// Ingredient archetypes (`[[ingredient]]` tables).
     #[serde(default)]
-    pub card: Vec<CardConfig>,
+    pub ingredient: Vec<IngredientConfig>,
+    /// Grimoire size and the round-start spell draw.
+    pub grimoire: GrimoireConfig,
+    /// Spell pool entries (`[[spell]]` tables).
+    #[serde(default)]
+    pub spell: Vec<SpellConfig>,
+    /// Tunable spell magnitudes.
+    pub spell_values: SpellValues,
     /// Modifier pool entries (`[[modifier]]` tables).
     #[serde(default)]
     pub modifier: Vec<ModifierConfig>,
@@ -44,43 +55,50 @@ pub struct ContentConfig {
     pub boiling_point: BoilingPointConfig,
 }
 
-/// Deck-wide settings.
+/// Pantry-wide settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeckConfig {
-    /// Declared total number of physical cards (enabled copies must sum to this).
+pub struct PantryConfig {
+    /// Declared pantry size per player (enabled copies must sum to this).
     pub size: u16,
-    /// Allowed ratio bands for effect and wild cards.
-    pub ratio_bounds: RatioBounds,
+    /// Minimum share of the pantry in Own-colour slots (the colour anchor).
+    pub own_min: f64,
+    /// Maximum share of the pantry in Own-colour slots.
+    pub own_max: f64,
 }
 
-/// Allowed proportions of effect and wild cards in the deck.
+/// An ingredient archetype.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RatioBounds {
-    /// Minimum share of the deck that must be effect cards.
-    pub effect_min: f64,
-    /// Maximum share of the deck that may be effect cards.
-    pub effect_max: f64,
-    /// Minimum share of the deck that must be wild cards.
-    pub wild_min: f64,
-    /// Maximum share of the deck that may be wild cards.
-    pub wild_max: f64,
-}
-
-/// A card archetype.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CardConfig {
-    /// The card's colour.
-    pub color: Color,
-    /// Explosion risk (1–3).
+pub struct IngredientConfig {
+    /// How the colour is assigned per seat (Own / OffColor / Wild).
+    pub slot: PantrySlot,
+    /// Explosion risk (0–7).
     pub volatility: u8,
-    /// Point value (0–3).
+    /// Point value as a colored Vote (0–3).
     pub points: u8,
-    /// The special effect this card carries, if any.
-    #[serde(default)]
-    pub effect: Option<EffectKind>,
-    /// Number of physical copies.
+    /// Number of physical copies in each pantry.
     pub copies: u16,
-    /// Whether this archetype is enabled (excluded from the deck if false).
+    /// Whether this archetype is enabled (excluded from the pantry if false).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// Grimoire-wide settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrimoireConfig {
+    /// Declared grimoire size per player (enabled copies must sum to this).
+    pub size: u16,
+    /// Spells drawn at every round start (hoarded; no in-round replenish except Forage).
+    pub spells_per_round: u8,
+}
+
+/// A spell pool entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpellConfig {
+    /// Which of the fifteen spells.
+    pub kind: SpellKind,
+    /// Copies in each grimoire.
+    pub copies: u16,
+    /// Whether this spell is enabled.
     #[serde(default = "default_true")]
     pub enabled: bool,
 }
@@ -134,17 +152,17 @@ fn default_true() -> bool {
 /// A configuration that failed validation, with a specific, actionable reason.
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ConfigError {
-    /// Enabled card copies do not sum to the declared deck size.
-    #[error("enabled card copies sum to {got} but deck.size is {expected}")]
-    CountMismatch {
-        /// Declared deck size.
+    /// Enabled ingredient copies do not sum to the declared pantry size.
+    #[error("enabled ingredient copies sum to {got} but pantry.size is {expected}")]
+    PantryCountMismatch {
+        /// Declared pantry size.
         expected: u16,
         /// Actual sum of enabled copies.
         got: u16,
     },
-    /// Effect-card ratio is outside the configured band.
-    #[error("effect ratio {ratio:.3} outside [{min:.3}, {max:.3}]")]
-    EffectRatioOutOfBounds {
+    /// Own-colour share is outside the configured anchor band.
+    #[error("own-colour ratio {ratio:.3} outside [{min:.3}, {max:.3}]")]
+    OwnRatioOutOfBounds {
         /// Observed ratio.
         ratio: f64,
         /// Configured minimum.
@@ -152,19 +170,30 @@ pub enum ConfigError {
         /// Configured maximum.
         max: f64,
     },
-    /// Wild-card ratio is outside the configured band.
-    #[error("wild ratio {ratio:.3} outside [{min:.3}, {max:.3}]")]
-    WildRatioOutOfBounds {
-        /// Observed ratio.
-        ratio: f64,
-        /// Configured minimum.
-        min: f64,
-        /// Configured maximum.
-        max: f64,
+    /// An ingredient's volatility or points are out of range.
+    #[error(
+        "ingredient attributes out of range: volatility {volatility} (max {MAX_VOLATILITY}) / points {points} (max {MAX_POINTS})"
+    )]
+    IngredientOutOfRange {
+        /// The offending volatility.
+        volatility: u8,
+        /// The offending points.
+        points: u8,
     },
-    /// A rules-required effect is absent from the config entirely.
-    #[error("effect {0:?} is required by the rules but absent from config")]
-    MissingEffect(EffectKind),
+    /// Enabled spell copies do not sum to the declared grimoire size.
+    #[error("enabled spell copies sum to {got} but grimoire.size is {expected}")]
+    GrimoireCountMismatch {
+        /// Declared grimoire size.
+        expected: u16,
+        /// Actual sum of enabled copies.
+        got: u16,
+    },
+    /// A rules-required spell is absent from the config entirely.
+    #[error("spell {0:?} is required by the rules but absent from config")]
+    MissingSpell(SpellKind),
+    /// The round-start spell draw is zero (no spell economy at all).
+    #[error("grimoire.spells_per_round must be at least 1")]
+    NoSpellDraw,
     /// Too few enabled modifiers to draw one per applicable round.
     #[error("modifier pool has {got} enabled copies but needs at least {need}")]
     ModifierPoolTooSmall {
@@ -173,12 +202,12 @@ pub enum ConfigError {
         /// Minimum required.
         need: u32,
     },
-    /// The deck is too small to cover the initial deal.
-    #[error("deck size {size} cannot cover the initial deal of {need}")]
-    DeckTooSmallForDeal {
-        /// Declared deck size.
+    /// The pantry is too small to cover the opening ingredient deal.
+    #[error("pantry size {size} cannot cover the ingredient hand of {need}")]
+    PantryTooSmallForDeal {
+        /// Declared pantry size.
         size: u16,
-        /// Cards needed for the opening deal.
+        /// Ingredients needed for the opening top-up.
         need: u16,
     },
     /// The boiling-point range is empty or inverted.
@@ -206,74 +235,81 @@ impl ContentConfig {
         toml::from_str(s).map_err(|e| ConfigError::Parse(e.to_string()))
     }
 
-    /// Enabled card archetypes only.
-    fn enabled_cards(&self) -> impl Iterator<Item = &CardConfig> {
-        self.card.iter().filter(|c| c.enabled)
+    /// Enabled ingredient archetypes only.
+    fn enabled_ingredients(&self) -> impl Iterator<Item = &IngredientConfig> {
+        self.ingredient.iter().filter(|c| c.enabled)
     }
 
-    /// Sum of enabled card copies (the realised deck size).
-    fn enabled_copies(&self) -> u16 {
-        self.enabled_cards().map(|c| c.copies).sum()
+    /// Enabled spell entries only.
+    fn enabled_spells(&self) -> impl Iterator<Item = &SpellConfig> {
+        self.spell.iter().filter(|s| s.enabled)
     }
 
     /// Validate the whole config, returning the first specific failure. This is
     /// the fail-fast gate run before the server binds a port.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        // Counts sum to the declared deck size.
-        let total = self.enabled_copies();
-        if total != self.deck.size {
-            return Err(ConfigError::CountMismatch {
-                expected: self.deck.size,
+        // Pantry counts sum to the declared size.
+        let total: u16 = self.enabled_ingredients().map(|c| c.copies).sum();
+        if total != self.pantry.size {
+            return Err(ConfigError::PantryCountMismatch {
+                expected: self.pantry.size,
                 got: total,
             });
         }
 
-        // Deck large enough for the opening deal (reshuffle covers later exhaustion).
-        let need = PLAYERS * HAND_SIZE;
-        if self.deck.size < need {
-            return Err(ConfigError::DeckTooSmallForDeal {
-                size: self.deck.size,
-                need,
+        // Pantry large enough for the opening top-up (reshuffle covers later exhaustion).
+        if self.pantry.size < INGREDIENT_HAND {
+            return Err(ConfigError::PantryTooSmallForDeal {
+                size: self.pantry.size,
+                need: INGREDIENT_HAND,
             });
         }
 
-        // Effect ratio within bounds.
-        let effect_copies: u16 = self
-            .enabled_cards()
-            .filter(|c| c.effect.is_some())
-            .map(|c| c.copies)
-            .sum();
-        let effect_ratio = effect_copies as f64 / total.max(1) as f64;
-        let b = &self.deck.ratio_bounds;
-        if effect_ratio < b.effect_min || effect_ratio > b.effect_max {
-            return Err(ConfigError::EffectRatioOutOfBounds {
-                ratio: effect_ratio,
-                min: b.effect_min,
-                max: b.effect_max,
-            });
-        }
-
-        // Wild ratio within bounds.
-        let wild_copies: u16 = self
-            .enabled_cards()
-            .filter(|c| c.color == Color::Wild)
-            .map(|c| c.copies)
-            .sum();
-        let wild_ratio = wild_copies as f64 / total.max(1) as f64;
-        if wild_ratio < b.wild_min || wild_ratio > b.wild_max {
-            return Err(ConfigError::WildRatioOutOfBounds {
-                ratio: wild_ratio,
-                min: b.wild_min,
-                max: b.wild_max,
-            });
-        }
-
-        // Every rules-required effect is present in config (enabled or explicitly disabled).
-        for kind in ALL_EFFECT_KINDS {
-            let present = self.card.iter().any(|c| c.effect == Some(kind));
-            if !present {
-                return Err(ConfigError::MissingEffect(kind));
+        // Attribute ranges: volatility 0-7, points 0-3.
+        for c in self.enabled_ingredients() {
+            if c.volatility > MAX_VOLATILITY || c.points > MAX_POINTS {
+                return Err(ConfigError::IngredientOutOfRange {
+                    volatility: c.volatility,
+                    points: c.points,
+                });
             }
+        }
+
+        // The colour anchor: Own share within the band (~75%).
+        let own_copies: u16 = self
+            .enabled_ingredients()
+            .filter(|c| c.slot == PantrySlot::Own)
+            .map(|c| c.copies)
+            .sum();
+        let own_ratio = own_copies as f64 / total.max(1) as f64;
+        if own_ratio < self.pantry.own_min || own_ratio > self.pantry.own_max {
+            return Err(ConfigError::OwnRatioOutOfBounds {
+                ratio: own_ratio,
+                min: self.pantry.own_min,
+                max: self.pantry.own_max,
+            });
+        }
+
+        // Grimoire counts sum to the declared size.
+        let spell_total: u16 = self.enabled_spells().map(|s| s.copies).sum();
+        if spell_total != self.grimoire.size {
+            return Err(ConfigError::GrimoireCountMismatch {
+                expected: self.grimoire.size,
+                got: spell_total,
+            });
+        }
+
+        // Every rules-required spell is present in config (enabled or explicitly disabled).
+        for kind in SpellKind::ALL {
+            let present = self.spell.iter().any(|s| s.kind == kind);
+            if !present {
+                return Err(ConfigError::MissingSpell(kind));
+            }
+        }
+
+        // The spell economy exists at all.
+        if self.grimoire.spells_per_round == 0 {
+            return Err(ConfigError::NoSpellDraw);
         }
 
         // Modifier pool big enough to draw one per applicable round.
@@ -317,21 +353,23 @@ impl ContentConfig {
     pub fn build_registry(&self) -> Result<ContentRegistry, ConfigError> {
         self.validate()?;
 
-        let cards: Vec<CardDef> = self
-            .enabled_cards()
-            .map(|c| CardDef {
-                color: c.color,
+        let ingredients: Vec<IngredientDef> = self
+            .enabled_ingredients()
+            .map(|c| IngredientDef {
+                slot: c.slot,
                 volatility: c.volatility,
                 points: c.points,
-                effect: c.effect,
                 copies: c.copies,
             })
             .collect();
 
-        // Enabled effect kinds = those carried by at least one enabled card.
-        let mut enabled_effects: Vec<EffectKind> = cards.iter().filter_map(|c| c.effect).collect();
-        enabled_effects.sort_by_key(|k| format!("{k:?}"));
-        enabled_effects.dedup();
+        let spells: Vec<SpellDef> = self
+            .enabled_spells()
+            .map(|s| SpellDef {
+                kind: s.kind,
+                copies: s.copies,
+            })
+            .collect();
 
         let enabled_modifiers: Vec<(ModifierKind, u16)> = self
             .modifier
@@ -341,8 +379,9 @@ impl ContentConfig {
             .collect();
 
         Ok(ContentRegistry::new(
-            cards,
-            &enabled_effects,
+            ingredients,
+            spells,
+            self.spell_values,
             &enabled_modifiers,
         ))
     }
@@ -351,7 +390,6 @@ impl ContentConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use boiling_point_protocol::vocab::EffectKind;
 
     /// The checked-in default config, used as a known-valid baseline.
     const DEFAULT: &str = include_str!("../content.toml");
@@ -362,25 +400,74 @@ mod tests {
         let cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
         cfg.validate().expect("validate");
         let reg = cfg.build_registry().expect("build");
-        assert_eq!(reg.deck_size(), 90);
-        // All eight effects are enabled in the default deck.
-        for kind in ALL_EFFECT_KINDS {
-            assert!(reg.effect(kind).is_some(), "missing effect {kind:?}");
+        assert_eq!(reg.pantry_size(), 30);
+        assert_eq!(reg.grimoire_size(), 20);
+        // All fifteen spells are enabled in the default grimoire.
+        for kind in SpellKind::ALL {
+            assert!(
+                reg.spells().iter().any(|s| s.kind == kind),
+                "missing spell {kind:?}"
+            );
         }
         // Modifier pool has the full 20 copies.
         let pool: u32 = reg.modifier_pool().iter().map(|(_, c)| *c as u32).sum();
         assert_eq!(pool, 20);
     }
 
-    /// A count that no longer sums to the declared deck size aborts.
+    /// A count that no longer sums to the declared pantry size aborts.
     #[test]
-    fn count_mismatch_aborts() {
+    fn pantry_count_mismatch_aborts() {
         let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
-        cfg.deck.size += 1;
+        cfg.pantry.size += 1;
         assert!(matches!(
             cfg.validate(),
-            Err(ConfigError::CountMismatch { .. })
+            Err(ConfigError::PantryCountMismatch { .. })
         ));
+    }
+
+    /// Eroding the colour anchor aborts (the ~75% own-colour band is load-bearing).
+    #[test]
+    fn own_ratio_out_of_band_aborts() {
+        let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
+        // Flip every Own archetype to OffColor: own ratio collapses to 0.
+        for c in cfg.ingredient.iter_mut() {
+            if c.slot == PantrySlot::Own {
+                c.slot = PantrySlot::OffColor;
+            }
+        }
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::OwnRatioOutOfBounds { .. })
+        ));
+    }
+
+    /// Volatility above 7 aborts.
+    #[test]
+    fn out_of_range_volatility_aborts() {
+        let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
+        cfg.ingredient[0].volatility = 8;
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::IngredientOutOfRange { .. })
+        ));
+    }
+
+    /// A grimoire that loses a required spell kind aborts.
+    #[test]
+    fn missing_spell_kind_aborts() {
+        let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
+        let removed = cfg
+            .spell
+            .iter()
+            .position(|s| s.kind == SpellKind::Hex)
+            .expect("hex present");
+        let copies = cfg.spell[removed].copies;
+        cfg.spell.remove(removed);
+        cfg.grimoire.size -= copies;
+        assert_eq!(
+            cfg.validate(),
+            Err(ConfigError::MissingSpell(SpellKind::Hex))
+        );
     }
 
     /// An empty modifier pool aborts (cannot draw one per round).
@@ -409,30 +496,20 @@ mod tests {
         ));
     }
 
-    /// Duplicate emote ids abort.
-    #[test]
-    fn duplicate_emote_id_aborts() {
-        let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
-        let id = cfg.emote[0].id;
-        cfg.emote[1].id = id;
-        assert!(matches!(
-            cfg.validate(),
-            Err(ConfigError::DuplicateEmoteId(_))
-        ));
-    }
-
     /// Disabling a content item excludes it from the registry without code changes.
     #[test]
-    fn disabling_a_card_toggles_it_off() {
+    fn disabling_a_spell_toggles_it_off() {
         let mut cfg = ContentConfig::from_toml(DEFAULT).expect("parse");
-        for card in cfg.card.iter_mut() {
-            if card.effect == Some(EffectKind::Shield) {
-                card.enabled = false;
+        let mut removed = 0u16;
+        for s in cfg.spell.iter_mut() {
+            if s.kind == SpellKind::Quench {
+                s.enabled = false;
+                removed += s.copies;
             }
         }
-        cfg.deck.size -= 1; // keep counts consistent (Shield had 1 copy)
+        cfg.grimoire.size -= removed; // keep counts consistent
         let reg = cfg.build_registry().expect("build");
-        assert!(reg.effect(EffectKind::Shield).is_none());
-        assert!(reg.effect(EffectKind::Peek).is_some());
+        assert!(!reg.spells().iter().any(|s| s.kind == SpellKind::Quench));
+        assert!(reg.spells().iter().any(|s| s.kind == SpellKind::Peek));
     }
 }

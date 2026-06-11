@@ -1,33 +1,41 @@
-//! The multi-round game runner: deals refill-to-5 hands, draws one cumulative
-//! modifier per round from round 2, runs each round's waves to completion,
-//! accumulates scores, and ends after the final round.
+//! The multi-round game runner: builds each seat's colour-anchored pantry and
+//! grimoire, draws spells at round start, tops ingredient hands up to the floor
+//! each wave, draws one cumulative modifier per round from round 2, runs each
+//! round's waves to completion, accumulates scores, and ends after the final
+//! round.
 //!
-//! This is the synchronous heart that the async group task (a later task) drives
-//! over the network; here it is fully testable in-process via a decision
-//! callback. A tie for the lead is broken by a Deathmatch among the tied players.
+//! This is the synchronous heart that the async group task drives over the
+//! network; here it is fully testable in-process via a decision callback. A tie
+//! for the lead is broken by a Deathmatch among the tied players.
 
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 use uuid::Uuid;
 
 use boiling_point_protocol::PlayerId;
-use boiling_point_protocol::server::{Contribution, DepileEntry, PlayerScore, ScoringOutcome};
-use boiling_point_protocol::vocab::{CardView, Color, HandCard, ModifierKind};
+use boiling_point_protocol::server::{
+    Contribution, DepileEntry, PlayerScore, ScoringOutcome, SpellFire,
+};
+use boiling_point_protocol::vocab::{
+    Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellTarget,
+    TargetKind,
+};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::persistence::{CompletedGame, GameStats, PlayerOutcome, StoredReplay};
 
-use super::card::Card;
+use super::card::Ingredient;
 use super::deathmatch::{DeathmatchResult, run_deathmatch};
-use super::deck::Deck;
+use super::deck::{Grimoire, Pantry};
 use super::modifiers::ActiveModifiers;
-use super::round::{DepileData, Round, RoundEnd, WaveChoice, WaveInput};
+use super::round::{DepileData, Round, RoundEnd, SpellChoice, WaveAction, WaveChoice, WaveInput};
 use super::scoring::{ExplosionResult, SafeScore, ScoringContext, explosion, score_safe};
+use super::spells::CastCommit;
 use super::state::{Hand, Player};
 
 /// Per-round summary, for analytics and persistence.
@@ -39,9 +47,11 @@ pub struct RoundLog {
     pub effective_boiling_point: i32,
     /// Whether the round exploded.
     pub exploded: bool,
-    /// Final pot volatility.
+    /// The detonators, if it did.
+    pub detonators: Vec<PlayerId>,
+    /// Final pot volatility (running total).
     pub final_volatility: i32,
-    /// Cards played in the round.
+    /// Ingredients in the pot at settle.
     pub cards_played: u32,
     /// The modifier drawn at the start of this round, if any.
     pub modifier: Option<ModifierKind>,
@@ -56,10 +66,10 @@ pub struct GameOutcome {
     pub winners: Vec<PlayerId>,
     /// Per-round logs.
     pub rounds: Vec<RoundLog>,
-    /// Total cards each player committed across the game.
+    /// Total ingredients each player committed across the game.
     pub cards_played: HashMap<PlayerId, u32>,
     /// The root seed this game was played from — drives all deterministic RNG
-    /// (deck, modifier shuffle, boiling points, Deathmatch), so re-running from
+    /// (decks, modifier shuffle, boiling points, Deathmatch), so re-running from
     /// it plus [`action_log`](Self::action_log) reproduces the game exactly.
     pub seed: u64,
     /// The ordered per-wave player actions in engine decision order — the
@@ -67,10 +77,10 @@ pub struct GameOutcome {
     pub action_log: Vec<WaveChoice>,
 }
 
-/// One public-facing event in a reconstructed game's stream (deals, wave
-/// reveals, depile, scoring, final scores). A replay re-runs the engine and
-/// emits this stream; post-game it MAY reveal everything the depile revealed.
-/// Mirrors the broadcast [`boiling_point_protocol::ServerMessage`] payloads.
+/// One public-facing event in a reconstructed game's stream. A replay re-runs
+/// the engine and emits this stream; post-game it MAY reveal everything the
+/// depile revealed. Mirrors the broadcast
+/// [`boiling_point_protocol::ServerMessage`] payloads.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReplayEvent {
     /// The game began with this roster.
@@ -80,12 +90,12 @@ pub enum ReplayEvent {
         /// Rounds to be played.
         round_count: u8,
     },
-    /// A round's hands were dealt (revealed post-game).
+    /// A round opened: spells drawn, ingredient hands topped up (revealed post-game).
     RoundDealt {
         /// 1-based round number.
         round_number: u8,
-        /// Each player's hand after the refill.
-        hands: Vec<(PlayerId, Vec<HandCard>)>,
+        /// Each player's hand after the round-start deal.
+        hands: Vec<(PlayerId, Vec<HandIngredient>, Vec<HandSpell>)>,
     },
     /// A cumulative modifier became active for this round.
     ModifierRevealed {
@@ -94,32 +104,59 @@ pub enum ReplayEvent {
         /// The round it was drawn for.
         round_number: u8,
     },
+    /// An Instant spell activated at the wave reveal (public).
+    SpellCast {
+        /// 1-based round number.
+        round_number: u8,
+        /// 1-based wave number within the round.
+        wave_number: u8,
+        /// Who cast it.
+        player: PlayerId,
+        /// The spell.
+        spell: SpellKind,
+        /// The colour target for colour-aimed spells.
+        color_target: Option<Color>,
+    },
+    /// An Expose revealed a pot ingredient (public).
+    Exposed {
+        /// 1-based round number.
+        round_number: u8,
+        /// 1-based wave number within the round.
+        wave_number: u8,
+        /// Who had played the revealed ingredient.
+        player: PlayerId,
+        /// The revealed ingredient.
+        ingredient: IngredientView,
+        /// Whether it was played colorless.
+        colorless: bool,
+    },
     /// A wave resolved: who acted and the new pot count (never card identities).
     WaveResolved {
         /// 1-based round number.
         round_number: u8,
         /// 1-based wave number within the round.
         wave_number: u8,
-        /// Players who committed a card this wave.
+        /// Players who committed an ingredient this wave.
         played: Vec<PlayerId>,
         /// Players who passed (now locked out).
         passed: Vec<PlayerId>,
-        /// Total cards now in the cauldron.
+        /// Total ingredients now in the cauldron.
         cauldron_card_count: u8,
         /// Per-player contributed-card counts after this wave.
         contributions: Vec<Contribution>,
     },
-    /// End-of-round play-order reveal of the pot.
+    /// End-of-round volatility-sorted reveal of the pot (boiling point disclosed
+    /// every round).
     Depile {
         /// 1-based round number.
         round_number: u8,
-        /// Revealed cards, first-added first (play order).
+        /// Revealed entries in ascending effective-volatility order.
         reveals: Vec<DepileEntry>,
         /// Whether the round exploded.
         exploded: bool,
-        /// The boiling point — revealed only on explosion.
-        boiling_point: Option<u8>,
-        /// Index into `reveals` of the card that tipped past the boiling point.
+        /// The revealed boiling point.
+        boiling_point: u8,
+        /// Index where the sorted climb crossed the line, if exploded.
         crossing_index: Option<usize>,
     },
     /// A safe-brew scoring result.
@@ -132,17 +169,21 @@ pub enum ReplayEvent {
         outcome: ScoringOutcome,
         /// Points awarded to each player this round.
         awards: Vec<PlayerScore>,
+        /// Harvests that fired.
+        fired: Vec<SpellFire>,
     },
-    /// An explosion: everyone (bar the shielded) loses the pot value.
+    /// An explosion: the detonators split the pot value.
     Explosion {
         /// 1-based round number.
         round_number: u8,
-        /// The pot value lost.
+        /// The pot value split.
         pot_value: u32,
-        /// Per-player score delta (negative loss; zero for shielded).
+        /// The liable players.
+        detonators: Vec<PlayerId>,
+        /// Per-player score delta (zero for the unaffected).
         deltas: Vec<PlayerScore>,
-        /// Players who were shielded and took no loss.
-        shielded: Vec<PlayerId>,
+        /// Wards and Hexes that fired.
+        fired: Vec<SpellFire>,
     },
     /// Updated cumulative scores after a round.
     ScoreUpdate {
@@ -220,12 +261,27 @@ fn pot_contributions(round: &Round, players: &[Player]) -> Vec<Contribution> {
         .collect()
 }
 
+/// Project the engine's depile onto the wire entries.
+pub fn depile_entries(depile: &DepileData) -> Vec<DepileEntry> {
+    depile
+        .reveals
+        .iter()
+        .map(|item| DepileEntry {
+            player: item.player,
+            ingredient: item.ingredient.view(),
+            colorless: item.colorless,
+            wave_number: item.wave_number,
+            running_volatility: item.running_volatility.clamp(0, u8::MAX as i32) as u8,
+            liable: item.liable,
+        })
+        .collect()
+}
+
 /// Build a persistable [`CompletedGame`] from the parts both game loops hold (the
 /// in-process [`Game`] and the async `session::run_game`) plus the encoded
 /// `replay`. Finishing positions rank by descending final score; the `stats_*`
 /// summary and the deathmatch flag (a tie for the lead) are derived here. Shared
-/// so both paths persist identically (review-remediation F2: the two loops
-/// converge on one result shape).
+/// so both paths persist identically.
 #[allow(clippy::too_many_arguments)]
 pub fn build_completed_game(
     players: impl IntoIterator<Item = (PlayerId, Color, String)>,
@@ -291,26 +347,29 @@ pub fn build_completed_game(
 pub struct RoundOpening {
     /// The cumulative modifier revealed at the start of this round (round 2+), if any.
     pub modifier: Option<ModifierKind>,
-    /// How many hand refills reshuffled the discard back in (a public table event).
-    pub reshuffles: usize,
     /// The round's effective (post-modifier) boiling point — secret; for the reveal
-    /// span and the private Peek disclosure only, never broadcast.
+    /// span and the private Peek disclosure only, never broadcast in-round.
     pub effective_boiling_point: i32,
 }
 
 /// What resolving one wave produced, for a networked presenter.
 pub struct WaveResolution {
-    /// The cards committed this wave, with identities — server-side only, never wired.
-    pub committed: Vec<(PlayerId, Card)>,
+    /// The ingredients committed this wave, with identities — server-side only,
+    /// never wired before the depile.
+    pub committed: Vec<(PlayerId, Ingredient, bool)>,
     /// Players who passed (or whose choice was an invalid / unheld card).
     pub passers: Vec<PlayerId>,
-    /// Players who privately played Peek and should receive the boiling point.
+    /// Visible Instant activations, in resolution order.
+    pub casts: Vec<(PlayerId, SpellKind, Option<Color>)>,
+    /// Casters who privately receive the boiling point (Peek).
     pub peeked: Vec<PlayerId>,
-    /// Cards revealed to the whole table (by Expose).
-    pub exposed: Vec<CardView>,
-    /// Owners whose hand grew from a recall this wave — re-send each a private hand (D3).
-    pub recalled_to: Vec<PlayerId>,
-    /// Number of cards in the pot after this wave.
+    /// Private Assay reads: (caster, dominant colour, lead).
+    pub assays: Vec<(PlayerId, Option<Color>, u32)>,
+    /// Ingredients revealed to the whole table by Expose.
+    pub exposed: Vec<(PlayerId, IngredientView, bool)>,
+    /// Players whose hand grew mid-wave (Forage) — re-send each a private hand.
+    pub hand_changed: Vec<PlayerId>,
+    /// Number of ingredients in the pot after this wave.
     pub pot_card_count: u8,
     /// Running pot volatility after this wave (secret — for the reveal span only).
     pub pot_volatility: i32,
@@ -320,7 +379,7 @@ pub struct WaveResolution {
 
 /// A round's scoring outcome.
 pub enum RoundScoring {
-    /// The pot exploded (shared loss).
+    /// The pot exploded (detonators split the loss).
     Exploded(ExplosionResult),
     /// The pot resolved safely (dominance payout).
     Safe(SafeScore),
@@ -328,8 +387,8 @@ pub enum RoundScoring {
 
 /// What settling a round produced, for a networked presenter.
 pub struct RoundSettlement {
-    /// The end-of-round depile (play order, first-added first; the presenter
-    /// discloses the boiling point only on an explosion).
+    /// The end-of-round depile (volatility-ascending; the boiling point is
+    /// revealed every round).
     pub depile: DepileData,
     /// The round's scoring outcome.
     pub scoring: RoundScoring,
@@ -346,7 +405,8 @@ struct ActiveRound {
 
 /// A decision source: given a player and their hand, choose a wave action.
 pub trait Decider {
-    /// Choose to play a card or pass for `player`, who holds `hand`.
+    /// Choose this wave's action (ingredient-or-pass + optional spell) for
+    /// `player`, who holds `hand`.
     fn decide(&mut self, player: PlayerId, hand: &Hand) -> WaveChoice;
 }
 
@@ -361,14 +421,17 @@ pub struct Game<'a> {
     registry: &'a ContentRegistry,
     players: Vec<Player>,
     hands: HashMap<PlayerId, Hand>,
+    pantries: HashMap<PlayerId, Pantry>,
+    grimoires: HashMap<PlayerId, Grimoire>,
     scores: HashMap<PlayerId, i32>,
     color_owner: HashMap<Color, PlayerId>,
-    deck: Deck,
+    player_color: HashMap<PlayerId, Color>,
     modifiers: ActiveModifiers,
     modifier_pile: Vec<ModifierKind>,
     rng: StdRng,
     bp_min: u8,
     bp_max: u8,
+    spells_per_round: u8,
     rounds: Vec<RoundLog>,
     cards_played: HashMap<PlayerId, u32>,
     seed: u64,
@@ -396,24 +459,44 @@ impl<'a> Game<'a> {
             .collect();
         modifier_pile.shuffle(&mut rng);
 
-        let color_owner = players.iter().map(|p| (p.color, p.id)).collect();
+        // Per-seat deck seeds branch off a dedicated seeder so the main RNG
+        // stream (modifier shuffle, boiling points) stays layout-stable.
+        let mut deck_seeder = StdRng::seed_from_u64(seed ^ 0xDEC0_5EED);
+        let mut next_id = 0u32;
+        let mut pantries = HashMap::new();
+        let mut grimoires = HashMap::new();
+        for p in &players {
+            let pantry_seed = deck_seeder.next_u64();
+            let grimoire_seed = deck_seeder.next_u64();
+            pantries.insert(
+                p.id,
+                Pantry::build(registry, p.color, &mut next_id, pantry_seed),
+            );
+            grimoires.insert(p.id, Grimoire::build(registry, &mut next_id, grimoire_seed));
+        }
+
+        let color_owner: HashMap<Color, PlayerId> =
+            players.iter().map(|p| (p.color, p.id)).collect();
+        let player_color = players.iter().map(|p| (p.id, p.color)).collect();
         let scores = players.iter().map(|p| (p.id, 0)).collect();
         let cards_played = players.iter().map(|p| (p.id, 0)).collect();
         let hands = players.iter().map(|p| (p.id, Hand::new())).collect();
-        let deck = Deck::build(registry, seed);
 
         Game {
             registry,
             players,
             hands,
+            pantries,
+            grimoires,
             scores,
             color_owner,
-            deck,
+            player_color,
             modifiers: ActiveModifiers::new(),
             modifier_pile,
             rng,
             bp_min: config.boiling_point.min,
             bp_max: config.boiling_point.max,
+            spells_per_round: config.grimoire.spells_per_round,
             rounds: Vec::new(),
             cards_played,
             seed,
@@ -426,15 +509,16 @@ impl<'a> Game<'a> {
     /// synchronous driver of the shared orchestration core: open each round, ask the
     /// decider for every active player's wave choice, resolve the wave, settle the
     /// round, then break any tie for the lead with a Deathmatch. The networked path
-    /// (`session::run_game`) drives the very same `begin_round` / `resolve_wave` /
-    /// `settle_round` / `break_tie` steps over the wire, so the two cannot drift.
+    /// (`session::run_game`) drives the very same `begin_round` / `top_up_active` /
+    /// `resolve_wave` / `settle_round` / `break_tie` steps over the wire, so the
+    /// two cannot drift.
     pub fn play_out(&mut self, decider: &mut dyn Decider) -> GameOutcome {
         self.play_out_inner(decider, &mut EventSink::Discard)
     }
 
     /// Play the whole game and also collect the reconstructable public event
-    /// stream (deals, wave reveals, depile, scores). Used to reconstruct a
-    /// timeless replay — see [`crate::replay::reconstruct`].
+    /// stream (deals, wave reveals, spell casts, depile, scores). Used to
+    /// reconstruct a timeless replay — see [`crate::replay::reconstruct`].
     pub fn play_out_with_events(
         &mut self,
         decider: &mut dyn Decider,
@@ -445,10 +529,7 @@ impl<'a> Game<'a> {
     }
 
     /// The shared play loop driving the orchestration core, parameterised by where
-    /// its reconstructable public events go (`Discard` for normal play, `Collect`
-    /// for a replay). It steps the same `begin_round` / `resolve_wave` /
-    /// `settle_round` / `break_tie` core the networked `session::run_game` drives,
-    /// emitting the public event stream from those steps' returns.
+    /// its reconstructable public events go.
     fn play_out_inner(&mut self, decider: &mut dyn Decider, sink: &mut EventSink) -> GameOutcome {
         sink.emit(|| ReplayEvent::GameStarted {
             players: self
@@ -473,11 +554,18 @@ impl<'a> Game<'a> {
                 hands: self
                     .players
                     .iter()
-                    .map(|p| (p.id, self.hands[&p.id].views()))
+                    .map(|p| {
+                        (
+                            p.id,
+                            self.hands[&p.id].ingredient_views(),
+                            self.hands[&p.id].spell_views(),
+                        )
+                    })
                     .collect(),
             });
             while self.round_is_open() {
                 let wave_number = self.wave_number();
+                self.top_up_active();
                 let acting = self.active().to_vec();
                 let mut choices = HashMap::with_capacity(acting.len());
                 for player in &acting {
@@ -485,10 +573,30 @@ impl<'a> Game<'a> {
                     choices.insert(*player, choice);
                 }
                 let resolution = self.resolve_wave(&choices);
+                for (player, spell, color_target) in &resolution.casts {
+                    let (player, spell, color_target) = (*player, *spell, *color_target);
+                    sink.emit(|| ReplayEvent::SpellCast {
+                        round_number,
+                        wave_number,
+                        player,
+                        spell,
+                        color_target,
+                    });
+                }
+                for (player, ingredient, colorless) in &resolution.exposed {
+                    let (player, ingredient, colorless) = (*player, *ingredient, *colorless);
+                    sink.emit(|| ReplayEvent::Exposed {
+                        round_number,
+                        wave_number,
+                        player,
+                        ingredient,
+                        colorless,
+                    });
+                }
                 sink.emit(|| ReplayEvent::WaveResolved {
                     round_number,
                     wave_number,
-                    played: resolution.committed.iter().map(|(p, _)| *p).collect(),
+                    played: resolution.committed.iter().map(|(p, _, _)| *p).collect(),
                     passed: resolution.passers.clone(),
                     cauldron_card_count: resolution.pot_card_count,
                     contributions: pot_contributions(
@@ -503,22 +611,10 @@ impl<'a> Game<'a> {
                 let depile = &settlement.depile;
                 ReplayEvent::Depile {
                     round_number,
-                    reveals: depile
-                        .reveals
-                        .iter()
-                        .map(|item| DepileEntry {
-                            player: item.player,
-                            card: item.card.view(),
-                            running_volatility: item.running_volatility.max(0) as u8,
-                        })
-                        .collect(),
+                    reveals: depile_entries(depile),
                     exploded,
-                    boiling_point: exploded.then_some(depile.boiling_point),
-                    crossing_index: if exploded {
-                        depile.crossing_index
-                    } else {
-                        None
-                    },
+                    boiling_point: depile.boiling_point,
+                    crossing_index: depile.crossing_index,
                 }
             });
             match &settlement.scoring {
@@ -526,14 +622,9 @@ impl<'a> Game<'a> {
                     sink.emit(|| ReplayEvent::Explosion {
                         round_number,
                         pot_value: result.pot_value,
+                        detonators: result.detonators.clone(),
                         deltas: deltas_in_order(&result.deltas, &self.players),
-                        // Ordered by seat for a stable stream.
-                        shielded: self
-                            .players
-                            .iter()
-                            .map(|p| p.id)
-                            .filter(|id| result.shielded.contains(id))
-                            .collect(),
+                        fired: result.fired.clone(),
                     });
                 }
                 RoundScoring::Safe(result) => {
@@ -552,6 +643,7 @@ impl<'a> Game<'a> {
                             color_points: result.color_points.clone(),
                             outcome,
                             awards: deltas_in_order(&result.awards, &self.players),
+                            fired: result.fired.clone(),
                         }
                     });
                 }
@@ -561,7 +653,7 @@ impl<'a> Game<'a> {
             });
         }
         // A tie for the lead is broken by a Deathmatch among the tied players, using
-        // their remaining hands (whole-game hand management matters).
+        // their remaining ingredient hands (whole-game hand management matters).
         let leaders = self.leaders();
         let winners = if leaders.len() > 1 {
             self.break_tie(&leaders)
@@ -583,10 +675,11 @@ impl<'a> Game<'a> {
     }
 
     /// Open round `round_number`: draw the round's cumulative modifier (round 2+),
-    /// refill every hand to the [`crate::config::HAND_SIZE`] floor, roll the hidden
-    /// boiling point, and start the round with the players who still hold cards and
-    /// are not `absent` (the networked path passes its disconnected set; the sync
-    /// path passes an empty set). Returns what a presenter must announce.
+    /// draw each player's round-start spells (hoarded, carried over), top every
+    /// ingredient hand up to the floor, roll the hidden boiling point, and start
+    /// the round with the players who hold ingredients and are not `absent` (the
+    /// networked path passes its disconnected set; the sync path passes an empty
+    /// set). Returns what a presenter must announce.
     pub fn begin_round(&mut self, round_number: u8, absent: &HashSet<PlayerId>) -> RoundOpening {
         // Round 2+ draws one cumulative modifier.
         let modifier = if round_number >= 2 {
@@ -599,17 +692,19 @@ impl<'a> Game<'a> {
             None
         };
 
-        // Refill every hand to the 5-card floor (carryover kept), counting how many
-        // refills reshuffled the discard back in (a public table event).
+        // Round-start deal: spells (the hoard draw) and the wave-1 ingredient top-up.
         let ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
-        let mut reshuffles = 0usize;
         for id in &ids {
-            let len = self.hands[id].len();
-            let (drawn, reshuffled) = self.deck.refill(len);
-            self.hands.get_mut(id).unwrap().add(drawn);
-            if reshuffled {
-                reshuffles += 1;
-            }
+            let spells = self
+                .grimoires
+                .get_mut(id)
+                .expect("seated player has a grimoire")
+                .draw(self.spells_per_round as usize);
+            let hand = self.hands.get_mut(id).unwrap();
+            hand.add_spells(spells);
+            let len = hand.ingredients().len();
+            let drawn = self.pantries.get_mut(id).unwrap().top_up(len);
+            self.hands.get_mut(id).unwrap().add_ingredients(drawn);
         }
 
         // Hidden boiling point for the round (+ active modifier offsets).
@@ -620,7 +715,7 @@ impl<'a> Game<'a> {
         let active: Vec<PlayerId> = ids
             .iter()
             .copied()
-            .filter(|id| !self.hands[id].is_empty() && !absent.contains(id))
+            .filter(|id| !self.hands[id].no_ingredients() && !absent.contains(id))
             .collect();
         let round = Round::start(active, effective_boiling_point, start_vol);
         self.current = Some(ActiveRound {
@@ -631,16 +726,48 @@ impl<'a> Game<'a> {
         });
         RoundOpening {
             modifier,
-            reshuffles,
             effective_boiling_point,
         }
     }
 
+    /// Top every active player's ingredient hand up to the floor (the start-of-wave
+    /// deal; refill-only). Idempotent for wave 1, whose top-up happened at round
+    /// open. Returns the active players (whose private hands a presenter
+    /// re-sends).
+    pub fn top_up_active(&mut self) -> Vec<PlayerId> {
+        let active: Vec<PlayerId> = self.active().to_vec();
+        for id in &active {
+            let len = self.hands[id].ingredients().len();
+            let drawn = self.pantries.get_mut(id).unwrap().top_up(len);
+            self.hands.get_mut(id).unwrap().add_ingredients(drawn);
+        }
+        active
+    }
+
+    /// Whether a spell's target is legal: the kind's required target shape, a
+    /// seated non-self player for player targets, a player colour for colour
+    /// targets.
+    fn target_valid(&self, kind: SpellKind, target: Option<SpellTarget>, caster: PlayerId) -> bool {
+        match kind.target_kind() {
+            TargetKind::None => target.is_none(),
+            TargetKind::Player => matches!(
+                target,
+                Some(SpellTarget::Player { player })
+                    if player != caster && self.players.iter().any(|p| p.id == player)
+            ),
+            TargetKind::Color => matches!(
+                target,
+                Some(SpellTarget::Color { color }) if color != Color::Wild
+            ),
+        }
+    }
+
     /// Resolve one wave from each acting player's `choices`. Validates every choice
-    /// against the player's hand (an unheld card is treated as a pass), removes the
-    /// committed cards, applies the wave to the round, and returns any recalled cards
-    /// to their owners. Reports what a presenter must surface. Panics if no round is
-    /// open (drive after [`Game::begin_round`]).
+    /// against the player's hand (an unheld ingredient is treated as a pass; an
+    /// unheld spell or an illegal target drops the cast), removes the committed
+    /// cards, applies the wave to the round, and draws Forage spells. Reports what
+    /// a presenter must surface. Panics if no round is open (drive after
+    /// [`Game::begin_round`]).
     pub fn resolve_wave(&mut self, choices: &HashMap<PlayerId, WaveChoice>) -> WaveResolution {
         let acting: Vec<PlayerId> = self
             .current
@@ -650,63 +777,104 @@ impl<'a> Game<'a> {
             .active()
             .to_vec();
 
-        let mut committed = Vec::new();
-        let mut passers = Vec::new();
-        let mut emptied = Vec::new();
+        let mut committed: Vec<(PlayerId, Ingredient, bool)> = Vec::new();
+        let mut passers: Vec<PlayerId> = Vec::new();
+        let mut spells: Vec<CastCommit> = Vec::new();
         for player in &acting {
-            match choices.get(player) {
-                Some(WaveChoice::Play(card_id)) => {
-                    if let Some(card) = self.hands.get_mut(player).and_then(|h| h.take(*card_id)) {
+            let choice = choices
+                .get(player)
+                .copied()
+                .unwrap_or_else(WaveChoice::pass);
+
+            // The mandatory ingredient-or-pass.
+            let logged_action = match choice.action {
+                WaveAction::Play { card, colorless } => {
+                    let taken = self
+                        .hands
+                        .get_mut(player)
+                        .and_then(|h| h.take_ingredient(card));
+                    if let Some(ingredient) = taken {
                         *self.cards_played.get_mut(player).unwrap() += 1;
-                        // Record the effective decision in acting order — the
-                        // deterministic replay input. A committed card replays as
-                        // itself; an unheld card (below) replays as a safe pass.
-                        self.action_log.push(WaveChoice::Play(*card_id));
-                        if self.hands[player].is_empty() {
-                            emptied.push(*player);
-                        }
-                        committed.push((*player, card));
+                        committed.push((*player, ingredient, colorless));
+                        WaveAction::Play { card, colorless }
                     } else {
-                        self.action_log.push(WaveChoice::Pass);
-                        passers.push(*player); // invalid / unheld card → treated as a pass
+                        passers.push(*player); // unheld card → a safe pass
+                        WaveAction::Pass
                     }
                 }
-                _ => {
-                    self.action_log.push(WaveChoice::Pass);
+                WaveAction::Pass => {
                     passers.push(*player);
+                    WaveAction::Pass
                 }
-            }
+            };
+
+            // The optional spell (≤1; a spell never keeps a passed player in).
+            let logged_spell: Option<SpellChoice> = choice.spell.and_then(|sc| {
+                let kind = self
+                    .hands
+                    .get(player)?
+                    .spells()
+                    .iter()
+                    .find(|s| s.id == sc.spell)?
+                    .kind;
+                if !self.target_valid(kind, sc.target, *player) {
+                    return None;
+                }
+                let spell = self.hands.get_mut(player)?.take_spell(sc.spell)?;
+                spells.push(CastCommit {
+                    player: *player,
+                    spell,
+                    target: sc.target,
+                });
+                Some(sc)
+            });
+
+            // Record the effective decision in acting order — the deterministic
+            // replay input (invalid inputs replay as their safe normalisation).
+            self.action_log.push(WaveChoice {
+                action: logged_action,
+                spell: logged_spell,
+            });
         }
 
-        // A snapshot of the committed (player, card) pairs for the presenter's spans;
-        // `Card` is `Copy`, so this is cheap and taken before the cards move into the pot.
+        // Players who played but can never act again (hand and pantry both empty).
+        let exhausted: Vec<PlayerId> = committed
+            .iter()
+            .map(|(p, _, _)| *p)
+            .filter(|p| self.hands[p].no_ingredients() && self.pantries[p].is_exhausted())
+            .collect();
+
+        // A snapshot for the presenter's spans; `Ingredient` is `Copy`, so this is
+        // cheap and taken before the cards move into the pot.
         let committed_report = committed.clone();
 
-        // Copy the registry reference out before borrowing `self.current` mutably.
-        let registry = self.registry;
+        let values = *self.registry.spell_values();
         let round = &mut self.current.as_mut().expect("a round is open").round;
         let report = round.apply_wave(
-            registry,
+            &values,
             WaveInput {
                 committed,
+                spells,
                 passers: passers.clone(),
-                emptied,
-                recalls: HashMap::new(),
+                exhausted,
             },
         );
         let ended = report.ended;
-        let peeked = report.outcome.peeked;
-        let exposed = report.outcome.exposed;
+        let outcome = report.outcome;
 
-        // Return recalled cards to their owners' hands; their hand grew, so the owner
-        // must be told (D3 — the presenter re-sends them a private hand view).
-        let mut recalled_to = Vec::new();
-        for (player, card) in report.outcome.recalled {
-            if let Some(hand) = self.hands.get_mut(&player) {
-                hand.add([card]);
-                if !recalled_to.contains(&player) {
-                    recalled_to.push(player);
-                }
+        // Forage draws: grow the casters' spell hands; the owners must be told.
+        let mut hand_changed: Vec<PlayerId> = Vec::new();
+        for player in &outcome.foragers {
+            let drawn = self
+                .grimoires
+                .get_mut(player)
+                .expect("seated player has a grimoire")
+                .draw(values.forage_draws as usize);
+            if let Some(hand) = self.hands.get_mut(player) {
+                hand.add_spells(drawn);
+            }
+            if !hand_changed.contains(player) {
+                hand_changed.push(*player);
             }
         }
 
@@ -714,68 +882,82 @@ impl<'a> Game<'a> {
         WaveResolution {
             committed: committed_report,
             passers,
-            peeked,
-            exposed,
-            recalled_to,
+            casts: outcome.casts,
+            peeked: outcome.peeked,
+            assays: outcome.assays,
+            exposed: outcome.exposed,
+            hand_changed,
             pot_card_count: pot.card_count() as u8,
-            pot_volatility: pot.volatility,
+            pot_volatility: pot.total_volatility(),
             ended,
         }
     }
 
-    /// Settle the open round: depile, score it (explosion or safe brew), fold the
-    /// deltas into the cumulative scores, log the round for analytics/persistence, and
-    /// return the spent cards to the discard. Hands the depile + scoring back for a
-    /// presenter. Panics if no round is open.
+    /// Settle the open round: depile, score it (detonator explosion or safe brew,
+    /// firing wards / Hex / Harvest), fold the deltas into the cumulative scores,
+    /// log the round for analytics/persistence, and return the spent ingredients
+    /// to their owners' pantry discards. Panics if no round is open.
     pub fn settle_round(&mut self) -> RoundSettlement {
         let ActiveRound {
-            round,
+            mut round,
             round_number,
             modifier,
             effective_boiling_point,
         } = self.current.take().expect("a round is open to settle");
 
         let all: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
-        let shielded = round.shielded().clone();
-        let ctx = ScoringContext {
-            modifiers: &self.modifiers,
-            registry: self.registry,
-            color_owner: &self.color_owner,
-            shielded: &shielded,
-            all_players: &all,
-        };
+        let depile = round.depile();
         let exploded = round.ended() == Some(RoundEnd::Exploded);
-        let scoring = if exploded {
-            let result = explosion(round.pot(), &ctx);
-            for (player, delta) in &result.deltas {
-                *self.scores.get_mut(player).unwrap() += *delta;
+        let detonators = round.detonators();
+
+        let scoring = {
+            let ctx = ScoringContext {
+                modifiers: &self.modifiers,
+                registry: self.registry,
+                color_owner: &self.color_owner,
+                player_color: &self.player_color,
+                all_players: &all,
+            };
+            let (pot, primed) = round.pot_and_primed_mut();
+            if exploded {
+                let result = explosion(pot, &ctx, detonators.clone(), primed);
+                for (player, delta) in &result.deltas {
+                    *self.scores.get_mut(player).unwrap() += *delta;
+                }
+                RoundScoring::Exploded(result)
+            } else {
+                let result = score_safe(pot, &ctx, primed);
+                for (player, delta) in &result.awards {
+                    *self.scores.get_mut(player).unwrap() += *delta;
+                }
+                RoundScoring::Safe(result)
             }
-            RoundScoring::Exploded(result)
-        } else {
-            let result = score_safe(round.pot(), &ctx);
-            for (player, delta) in &result.awards {
-                *self.scores.get_mut(player).unwrap() += *delta;
-            }
-            RoundScoring::Safe(result)
         };
 
         self.rounds.push(RoundLog {
             round_number,
             effective_boiling_point,
             exploded,
-            final_volatility: round.pot().volatility,
+            detonators,
+            final_volatility: round.pot().total_volatility(),
             cards_played: round.pot().card_count(),
             modifier,
         });
 
-        // Return the pot's cards to the discard for future reshuffles.
-        let spent: Vec<_> = round.pot().cards.iter().map(|pc| pc.card).collect();
-        self.deck.discard_cards(spent);
-
-        RoundSettlement {
-            depile: round.depile(),
-            scoring,
+        // Return the pot's ingredients (and any skimmed ones) to their owners'
+        // pantry discards for future reshuffles.
+        for pc in round.pot().cards.iter() {
+            if let Some(pantry) = self.pantries.get_mut(&pc.player) {
+                pantry.discard_cards([pc.ingredient]);
+            }
         }
+        for (player, ingredient) in round.removed() {
+            if let Some(pantry) = self.pantries.get_mut(player) {
+                pantry.discard_cards([*ingredient]);
+            }
+        }
+
+        RoundSettlement { depile, scoring }
     }
 
     /// The players tied for the lead (highest cumulative score), in seating order.
@@ -790,8 +972,8 @@ impl<'a> Game<'a> {
     }
 
     /// Resolve a tie for the lead via a Deathmatch among `leaders`, shedding the
-    /// lowest-volatility card each forced wave. Falls back to co-winners if the
-    /// Deathmatch can produce no champion (e.g. all tied hands are empty). The
+    /// lowest-volatility ingredient each forced wave. Falls back to co-winners if
+    /// the Deathmatch can produce no champion (e.g. all tied hands are empty). The
     /// networked path announces `DeathmatchStarted` before calling this; the result
     /// is identical because both paths share this single tiebreak core.
     pub fn break_tie(&self, leaders: &[PlayerId]) -> Vec<PlayerId> {
@@ -800,14 +982,13 @@ impl<'a> Game<'a> {
             .map(|id| (*id, self.hands[id].clone()))
             .collect();
         let mut shed_lowest = |_p: PlayerId, hand: &Hand| {
-            hand.views()
+            hand.ingredients()
                 .iter()
-                .min_by_key(|c| c.view.volatility)
+                .min_by_key(|c| c.volatility)
                 .unwrap()
                 .id
         };
         let result = run_deathmatch(
-            self.registry,
             tied,
             self.bp_min,
             self.bp_max,
@@ -831,7 +1012,7 @@ impl<'a> Game<'a> {
         &self.hands
     }
 
-    /// Total cards each player has committed so far.
+    /// Total ingredients each player has committed so far.
     pub fn cards_played(&self) -> &HashMap<PlayerId, u32> {
         &self.cards_played
     }
@@ -920,8 +1101,6 @@ impl<'a> Game<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::card::Card;
-    use boiling_point_protocol::CardId;
     use boiling_point_protocol::vocab::Color;
     use uuid::Uuid;
 
@@ -943,14 +1122,43 @@ mod tests {
             .collect()
     }
 
-    /// A decider that always plays the first card in hand, else passes.
+    /// A decider that always plays the first ingredient in hand as a Vote, no
+    /// spells, else passes.
     fn eager() -> impl FnMut(PlayerId, &Hand) -> WaveChoice {
-        |_player, hand| {
-            if let Some(first) = hand.views().first() {
-                WaveChoice::Play(first.id)
-            } else {
-                WaveChoice::Pass
-            }
+        |_player, hand| match hand.ingredients().first() {
+            Some(first) => WaveChoice {
+                action: WaveAction::Play {
+                    card: first.id,
+                    colorless: false,
+                },
+                spell: None,
+            },
+            None => WaveChoice::pass(),
+        }
+    }
+
+    /// A decider that also casts its first spell every wave (legal targets only).
+    fn spell_happy() -> impl FnMut(PlayerId, &Hand) -> WaveChoice {
+        |player, hand| {
+            let action = match hand.ingredients().first() {
+                Some(first) => WaveAction::Play {
+                    card: first.id,
+                    colorless: false,
+                },
+                None => WaveAction::Pass,
+            };
+            let spell = hand.spells().first().map(|s| SpellChoice {
+                spell: s.id,
+                target: match s.kind.target_kind() {
+                    TargetKind::None => None,
+                    TargetKind::Color => Some(SpellTarget::Color { color: Color::Ruby }),
+                    TargetKind::Player => Some(SpellTarget::Player {
+                        // Target the next seat (never self).
+                        player: PlayerId(Uuid::from_u128((player.0.as_u128() % 4) + 1)),
+                    }),
+                },
+            });
+            WaveChoice { action, spell }
         }
     }
 
@@ -977,15 +1185,55 @@ mod tests {
             let outcome = game.play_out(&mut decider);
             assert_eq!(outcome.rounds.len(), ROUND_COUNT as usize, "seed {seed}");
             assert!(!outcome.winners.is_empty(), "seed {seed}");
-            // No illegal state: every player has a recorded score.
             assert_eq!(outcome.scores.len(), 4, "seed {seed}");
         }
     }
 
+    #[test]
+    fn many_spell_heavy_games_complete_without_panics() {
+        let (reg, cfg) = registry_and_config();
+        for seed in 0..150u64 {
+            let mut game = Game::new(&reg, &cfg, four_players(), seed);
+            let mut decider = spell_happy();
+            let outcome = game.play_out(&mut decider);
+            assert_eq!(outcome.rounds.len(), ROUND_COUNT as usize, "seed {seed}");
+            assert!(!outcome.winners.is_empty(), "seed {seed}");
+        }
+    }
+
+    /// Only detonators ever lose points on an explosion (the P-symmetry on the
+    /// full engine): in every exploded round, every negative delta belongs to a
+    /// detonator or a Hex target — and with no spells in play, exactly to the
+    /// detonators.
+    #[test]
+    fn explosions_cost_only_detonators_without_spells() {
+        let (reg, cfg) = registry_and_config();
+        for seed in 0..50u64 {
+            let mut game = Game::new(&reg, &cfg, four_players(), seed);
+            let mut decider = eager();
+            let outcome = game.play_out(&mut decider);
+            for round in outcome.rounds.iter().filter(|r| r.exploded) {
+                assert!(
+                    !round.detonators.is_empty(),
+                    "an ingredient-driven explosion names its detonators (seed {seed})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn games_are_deterministic_under_a_seed() {
+        let (reg, cfg) = registry_and_config();
+        let run = || {
+            let mut g = Game::new(&reg, &cfg, four_players(), 999);
+            let mut d = spell_happy();
+            g.play_out(&mut d).scores
+        };
+        assert_eq!(run(), run());
+    }
+
     /// The orchestration core carries the per-player analytics and the summary
-    /// stats that feed a persistable [`CompletedGame`] — the data the
-    /// pre-convergence async path dropped. Both paths drive this same `Game`, so
-    /// the converged async loop now has it too (converge-game-loops 2.3).
+    /// stats that feed a persistable [`CompletedGame`].
     #[test]
     fn completed_game_carries_per_player_analytics_and_stats() {
         let (reg, cfg) = registry_and_config();
@@ -1009,19 +1257,12 @@ mod tests {
         .expect("encode");
         let completed = game.to_completed_game(&outcome, replay, game_id, now, now);
 
-        // Summary stats: five rounds, four players.
         assert_eq!(completed.stats.round_count, ROUND_COUNT as i16);
         assert_eq!(completed.stats.player_count, 4);
-        // Every player has a result line, and cards committed are tracked (the eager
-        // decider plays whenever it holds a card).
         assert_eq!(completed.players.len(), 4);
         let total_cards: i16 = completed.players.iter().map(|p| p.cards_played).sum();
-        assert!(
-            total_cards > 0,
-            "the converged analytics tracked cards played"
-        );
+        assert!(total_cards > 0, "cards played are tracked");
         assert_eq!(completed.stats.cards_played, total_cards as i32);
-        // Finishing positions are a permutation of 1..=4.
         let mut positions: Vec<i16> = completed
             .players
             .iter()
@@ -1029,19 +1270,7 @@ mod tests {
             .collect();
         positions.sort();
         assert_eq!(positions, vec![1, 2, 3, 4]);
-        // The winner(s) are recorded.
         assert!(completed.winner_ids.is_some_and(|w| !w.is_empty()));
-    }
-
-    #[test]
-    fn games_are_deterministic_under_a_seed() {
-        let (reg, cfg) = registry_and_config();
-        let run = || {
-            let mut g = Game::new(&reg, &cfg, four_players(), 999);
-            let mut d = eager();
-            g.play_out(&mut d).scores
-        };
-        assert_eq!(run(), run());
     }
 
     #[test]
@@ -1051,23 +1280,21 @@ mod tests {
             let mut g = Game::new(&reg, &cfg, four_players(), 5);
             let p1 = PlayerId(Uuid::from_u128(1));
             let p2 = PlayerId(Uuid::from_u128(2));
-            // p1 carries a huge-volatility card; p2 a tiny one. A forced wave
-            // explodes for sure (21 > any bp), so p1 is the Detonator.
+            // p1 carries a huge-volatility ingredient; p2 a tiny one. A forced
+            // wave explodes for sure, so p1 is the Detonator.
             let mut h1 = Hand::new();
-            h1.add([Card {
-                id: CardId(100),
+            h1.add_ingredients([Ingredient {
+                id: boiling_point_protocol::CardId(100_000),
                 color: Color::Ruby,
-                volatility: 20,
+                volatility: 99,
                 points: 0,
-                effect: None,
             }]);
             let mut h2 = Hand::new();
-            h2.add([Card {
-                id: CardId(101),
+            h2.add_ingredients([Ingredient {
+                id: boiling_point_protocol::CardId(100_001),
                 color: Color::Sapphire,
                 volatility: 1,
                 points: 0,
-                effect: None,
             }]);
             g.hands.insert(p1, h1);
             g.hands.insert(p2, h2);
@@ -1077,65 +1304,5 @@ mod tests {
         let p2 = PlayerId(Uuid::from_u128(2));
         let winners = game.break_tie(&[p1, p2]);
         assert_eq!(winners, vec![p2], "the lower-volatility player survives");
-    }
-
-    /// End-to-end (Tasks 5.1/5.2): play a complete game in-process, persist its
-    /// result **and** replay payload in one completion write, then load the
-    /// replay by game id, verify its integrity, and reconstruct the public event
-    /// stream — asserting it matches the originally-played game. Ignored by
-    /// default (needs a live DB); run with `--ignored`.
-    #[tokio::test]
-    #[ignore = "requires a local PostgreSQL (DATABASE_URL)"]
-    async fn full_game_persists_results_and_replay_to_db() {
-        let (reg, cfg) = registry_and_config();
-        let roster = four_players();
-        let mut game = Game::new(&reg, &cfg, roster.clone(), 777);
-        let mut decider = eager();
-        let (outcome, events) = game.play_out_with_events(&mut decider);
-
-        let game_id = Uuid::new_v4();
-        let now = chrono::Utc::now();
-        let replay = crate::replay::encode_replay(
-            game_id,
-            outcome.seed,
-            &cfg,
-            roster
-                .iter()
-                .map(|p| (p.id, p.color, p.display_name.clone())),
-            &outcome.action_log,
-            &[],
-        )
-        .expect("encode replay");
-        let completed = game.to_completed_game(&outcome, replay, game_id, now, now);
-
-        let url = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://postgres@localhost:5432/boiling_point".to_string());
-        let pool = crate::persistence::connect(&url).await.expect("connect");
-        crate::persistence::run_migrations(&pool)
-            .await
-            .expect("migrate");
-        // One completion write: the consolidated game_replays row (+ player records).
-        crate::persistence::persist_game(&pool, &completed)
-            .await
-            .expect("persist");
-
-        // Per-player results round-trip (positions 1..=4, unique).
-        let fetched = crate::persistence::fetch_player_results(&pool, game_id)
-            .await
-            .expect("fetch");
-        assert_eq!(fetched.len(), 4);
-        let mut positions: Vec<i16> = fetched.iter().map(|r| r.2).collect();
-        positions.sort();
-        assert_eq!(positions, vec![1, 2, 3, 4]);
-
-        // The replay loads by game id, verifies, and reconstructs the same game.
-        let loaded = crate::persistence::fetch_replay(&pool, game_id)
-            .await
-            .expect("fetch replay")
-            .expect("a replay row exists");
-        let recon = crate::replay::reconstruct(&loaded, &reg, &cfg).expect("reconstruct");
-        assert_eq!(recon.events, events, "reconstructed event stream differs");
-        assert_eq!(recon.outcome.scores, outcome.scores, "scores differ");
-        assert_eq!(recon.outcome.winners, outcome.winners, "winners differ");
     }
 }

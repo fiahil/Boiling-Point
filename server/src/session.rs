@@ -1,13 +1,15 @@
 //! The in-group networked game loop: drives the (synchronous, tested) engine over
 //! the wire for one full game.
 //!
-//! For each round it deals refill-to-5 hands (private `YourHand`), reveals a
-//! modifier from round 2, then runs waves: it broadcasts `WaveOpened` with the
-//! timer budget, collects hidden commits until the timer expires or every active
-//! player has locked in, resolves the wave through the engine, and broadcasts the
-//! public outcome (never card identities). Effects stay silent except the
-//! Peek/Expose/Recall tells. Each round ends with a depile and scoring; a tie
-//! after the final round is settled by a Deathmatch.
+//! For each round it draws spells and deals ingredient hands (private
+//! `YourHand`), reveals a modifier from round 2, then runs waves: it tops every
+//! active hand up to the floor, broadcasts `WaveOpened` with the timer budget,
+//! collects hidden commits (ingredient-or-pass plus up to one spell) until the
+//! timer expires or every active player has locked in, resolves the wave through
+//! the engine, and broadcasts the public outcome (never card identities; Instant
+//! spell activations are public, primed Actives stay silent). Each round ends
+//! with the volatility-sorted depile — the boiling point revealed every round —
+//! and scoring; a tie after the final round is settled by a Deathmatch.
 //!
 //! Resilience: a disconnected player auto-passes while absent (the seat is held
 //! for the game); a reconnecting player reattaches their channel and receives a
@@ -24,16 +26,15 @@ use uuid::Uuid;
 use crate::observability::span_schema::SPAN_SCHEMA_VERSION;
 
 use boiling_point_protocol::server::{
-    Audience, Contribution, DepileEntry, ErrorCode, Outbound, PlayerPublic, PlayerScore,
-    ScoringOutcome,
+    Audience, Contribution, ErrorCode, Outbound, PlayerPublic, PlayerScore, ScoringOutcome,
 };
-use boiling_point_protocol::vocab::Color;
+use boiling_point_protocol::vocab::{Color, SpellTarget, TargetKind};
 use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
-use crate::game::round::WaveChoice;
-use crate::game::runner::{Game, RoundLog, RoundScoring, build_completed_game};
+use crate::game::round::{SpellChoice, WaveAction, WaveChoice};
+use crate::game::runner::{Game, RoundLog, RoundScoring, build_completed_game, depile_entries};
 use crate::game::state::{Hand, Player};
 use crate::lobby::group::GroupCommand;
 use crate::persistence::persist_game;
@@ -71,9 +72,10 @@ pub struct GameEnd {
 
 /// What one wave's collection yielded.
 struct WaveCollection {
-    /// Each acting player's chosen action this wave (commit a card, or pass).
-    /// Validated against hands at commit time; the engine ([`Game::resolve_wave`])
-    /// removes the committed cards — collection itself never mutates a hand.
+    /// Each acting player's chosen action this wave (ingredient-or-pass plus the
+    /// optional spell). Validated against hands at commit time; the engine
+    /// ([`Game::resolve_wave`]) removes the committed cards — collection itself
+    /// never mutates a hand.
     choices: HashMap<PlayerId, WaveChoice>,
     /// Players who reconnected during the commit window (they resume next round).
     reconnected: Vec<PlayerId>,
@@ -85,17 +87,19 @@ struct WaveCollection {
 /// A compact, in-process-only rendering of a hand for the `hand` span's secret
 /// attribute — read by the privileged reveal, never exported.
 fn fmt_hand(hand: &Hand) -> String {
-    hand.views()
+    let ingredients = hand
+        .ingredients()
         .iter()
-        .map(|c| {
-            let eff = c.view.effect.map(|e| format!(":{e:?}")).unwrap_or_default();
-            format!(
-                "{:?}(v{},p{}){}",
-                c.view.color, c.view.volatility, c.view.points, eff
-            )
-        })
+        .map(|c| format!("{:?}(v{},p{})", c.color, c.volatility, c.points))
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    let spells = hand
+        .spells()
+        .iter()
+        .map(|s| format!("{:?}", s.kind))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("[{ingredients}] grimoire[{spells}]")
 }
 
 /// Public table view, marking disconnected (gone) players as not connected.
@@ -153,6 +157,23 @@ fn scores_vec(scores: &HashMap<PlayerId, i32>, order: &[PlayerId]) -> Vec<Player
         .collect()
 }
 
+/// Send `player` their current private hand (ingredients + spells).
+async fn send_hand(players: &[SeatInfo], game: &Game<'_>, player: PlayerId) {
+    let (ingredients, spells) = game
+        .hand(player)
+        .map(|h| (h.ingredient_views(), h.spell_views()))
+        .unwrap_or_default();
+    send_to(
+        players,
+        player,
+        ServerMessage::YourHand {
+            ingredients,
+            spells,
+        },
+    )
+    .await;
+}
+
 /// Run one full game to completion for the given seats. Owns the group's command
 /// receiver for the duration so it can collect commits within wave timers. When
 /// `pool` is `Some`, the completed game and its replay are persisted at `GameOver`.
@@ -172,12 +193,12 @@ pub async fn run_game(
 
     // The single orchestration core: `run_game` owns no game state of its own. It
     // drives a `Game` — the same engine `Game::play_out` is tested against — through
-    // its `begin_round` / `resolve_wave` / `settle_round` / `break_tie` steps, adding
-    // only the wire I/O (collect commits within a timer, broadcast the public outcome)
-    // and the observability spans. The hands, deck, scores, modifiers, RNG, round
-    // bookkeeping, per-player/per-round analytics, and the replay action log all live
-    // in `Game`, so the shipping path cannot drift from the tested one (F2) and the
-    // post-game write feeds straight off the engine.
+    // its `begin_round` / `top_up_active` / `resolve_wave` / `settle_round` /
+    // `break_tie` steps, adding only the wire I/O (collect commits within a timer,
+    // broadcast the public outcome) and the observability spans. The hands, decks,
+    // scores, modifiers, RNG, round bookkeeping, per-player/per-round analytics, and
+    // the replay action log all live in `Game`, so the shipping path cannot drift
+    // from the tested one and the post-game write feeds straight off the engine.
     let game_players: Vec<Player> = players
         .iter()
         .map(|s| Player {
@@ -211,8 +232,9 @@ pub async fn run_game(
     );
 
     for round_number in 1..=ROUND_COUNT {
-        // Open the round through the engine (modifier draw, refill, hidden boiling
-        // point, active set excluding the disconnected), then announce it on the wire.
+        // Open the round through the engine (modifier draw, spell draw + top-up,
+        // hidden boiling point, active set excluding the disconnected), then
+        // announce it on the wire.
         let opening = game.begin_round(round_number, &gone);
         let effective_bp = opening.effective_boiling_point;
         if let Some(kind) = opening.modifier {
@@ -225,19 +247,8 @@ pub async fn run_game(
             )
             .await;
         }
-        for _ in 0..opening.reshuffles {
-            crate::observability::metric::deck_reshuffled();
-            broadcast(&players, ServerMessage::DeckReshuffled).await;
-        }
         for id in &ids {
-            send_to(
-                &players,
-                *id,
-                ServerMessage::YourHand {
-                    cards: game.hand(*id).map(|h| h.views()).unwrap_or_default(),
-                },
-            )
-            .await;
+            send_hand(&players, &game, *id).await;
         }
 
         let round_start = std::time::Instant::now();
@@ -274,9 +285,21 @@ pub async fn run_game(
             })
             .collect();
 
+        let mut first_wave = true;
         while game.round_is_open() {
-            let acting: Vec<PlayerId> = game.active().to_vec();
             let wave_no = game.wave_number();
+            // The start-of-wave ingredient top-up (idempotent for wave 1, whose
+            // deal happened at round open) — then refresh each active player's
+            // private hand so they pick from true state.
+            let topped = game.top_up_active();
+            if !first_wave {
+                for id in &topped {
+                    send_hand(&players, &game, *id).await;
+                }
+            }
+            first_wave = false;
+
+            let acting: Vec<PlayerId> = game.active().to_vec();
             let timer_ms = if wave_no == 1 {
                 config.timing.wave1_ms
             } else {
@@ -324,6 +347,10 @@ pub async fn run_game(
                     game_span.in_scope(|| tracing::info_span!("reconnect", player.id = %player.0));
                 crate::observability::metric::player_reconnected();
                 gone.remove(player);
+                let (your_ingredients, your_spells) = game
+                    .hand(*player)
+                    .map(|h| (h.ingredient_views(), h.spell_views()))
+                    .unwrap_or_default();
                 let snapshot = ServerMessage::StateSnapshot {
                     group_code: group_code.clone(),
                     your_player_id: *player,
@@ -332,7 +359,8 @@ pub async fn run_game(
                     scores: scores_vec(game.scores(), &ids),
                     active_modifiers: game.active_modifiers().to_vec(),
                     contributions: to_contributions(game.contributions(&ids)),
-                    your_hand: game.hand(*player).map(|h| h.views()).unwrap_or_default(),
+                    your_ingredients,
+                    your_spells,
                 };
                 send_to(&players, *player, snapshot).await;
                 tracing::info!(player = %player.0, "player reconnected");
@@ -340,8 +368,8 @@ pub async fn run_game(
 
             // `resolve` span — child of the wave; pot.card_count is public. The engine
             // validates choices against hands, removes the committed cards, applies the
-            // wave, returns recalled cards to their owners, and records the per-wave
-            // action log (the deterministic replay input) on the shared `Game`.
+            // wave, draws Forage spells, and records the per-wave action log (the
+            // deterministic replay input) on the shared `Game`.
             let resolve_span = wave_span.in_scope(|| {
                 tracing::info_span!("resolve", pot.card_count = tracing::field::Empty)
             });
@@ -349,14 +377,18 @@ pub async fn run_game(
             resolve_span.record("pot.card_count", resolution.pot_card_count as u64);
             drop(resolve_span);
 
-            let played: Vec<PlayerId> = resolution.committed.iter().map(|(p, _)| *p).collect();
+            let played: Vec<PlayerId> = resolution.committed.iter().map(|(p, _, _)| *p).collect();
             // `commit` leaf spans (one per committed card) — children of the wave.
             // The committed card identity rides as a secret attribute (in-process
             // only); it is never broadcast until public resolution.
             wave_span.in_scope(|| {
-                for (player, card) in &resolution.committed {
-                    let _commit =
-                        tracing::info_span!("commit", player.id = %player.0, committed_card = ?card);
+                for (player, card, colorless) in &resolution.committed {
+                    let _commit = tracing::info_span!(
+                        "commit",
+                        player.id = %player.0,
+                        committed_card = ?card,
+                        colorless = colorless,
+                    );
                 }
             });
 
@@ -367,33 +399,55 @@ pub async fn run_game(
             crate::observability::metric::wave_resolved(wave_timed_out);
             crate::observability::metric::cards_committed(played.len() as u64);
 
-            // A recall grew an owner's hand: re-send each affected owner a private
-            // `YourHand` (D3) so the owning client tracks its true hand.
-            for player in &resolution.recalled_to {
-                send_to(
+            // Visible-when-activated: Instant casts are public (caster + spell +
+            // any colour target), in resolution order. Primed Actives stay silent.
+            for (caster, spell, color_target) in &resolution.casts {
+                broadcast(
                     &players,
-                    *player,
-                    ServerMessage::YourHand {
-                        cards: game.hand(*player).map(|h| h.views()).unwrap_or_default(),
+                    ServerMessage::SpellCast {
+                        player: *caster,
+                        spell: *spell,
+                        color_target: *color_target,
                     },
                 )
                 .await;
             }
-            if !resolution.peeked.is_empty() {
-                broadcast(&players, ServerMessage::SomeonePeeked).await;
-                for peeker in &resolution.peeked {
-                    send_to(
-                        &players,
-                        *peeker,
-                        ServerMessage::PeekResult {
-                            boiling_point: effective_bp.max(0) as u8,
-                        },
-                    )
-                    .await;
-                }
+            for (owner, ingredient, colorless) in &resolution.exposed {
+                broadcast(
+                    &players,
+                    ServerMessage::Exposed {
+                        player: *owner,
+                        ingredient: *ingredient,
+                        colorless: *colorless,
+                    },
+                )
+                .await;
             }
-            for card in resolution.exposed {
-                broadcast(&players, ServerMessage::Exposed { card }).await;
+            for (caster, dominant, lead) in &resolution.assays {
+                send_to(
+                    &players,
+                    *caster,
+                    ServerMessage::AssayResult {
+                        dominant: *dominant,
+                        lead: *lead,
+                    },
+                )
+                .await;
+            }
+            for peeker in &resolution.peeked {
+                send_to(
+                    &players,
+                    *peeker,
+                    ServerMessage::PeekResult {
+                        boiling_point: effective_bp.max(0) as u8,
+                    },
+                )
+                .await;
+            }
+            // A Forage grew an owner's spell hand: re-send each affected owner a
+            // private `YourHand` so the owning client tracks its true hand.
+            for player in &resolution.hand_changed {
+                send_hand(&players, &game, *player).await;
             }
 
             broadcast(
@@ -428,22 +482,12 @@ pub async fn run_game(
         broadcast(
             &players,
             ServerMessage::Depile {
-                reveals: depile
-                    .reveals
-                    .iter()
-                    .map(|item| DepileEntry {
-                        player: item.player,
-                        card: item.card.view(),
-                        running_volatility: item.running_volatility.max(0) as u8,
-                    })
-                    .collect(),
+                reveals: depile_entries(&depile),
                 exploded,
-                boiling_point: exploded.then_some(depile.boiling_point),
-                crossing_index: if exploded {
-                    depile.crossing_index
-                } else {
-                    None
-                },
+                // The boiling point is revealed EVERY round (boom and safe) — the
+                // near-miss payoff; it is no longer a secret once the pot settles.
+                boiling_point: depile.boiling_point,
+                crossing_index: depile.crossing_index,
             },
         )
         .await;
@@ -466,6 +510,7 @@ pub async fn run_game(
                     &players,
                     ServerMessage::Explosion {
                         pot_value: result.pot_value,
+                        detonators: result.detonators,
                         deltas: result
                             .deltas
                             .iter()
@@ -474,7 +519,7 @@ pub async fn run_game(
                                 score: *d,
                             })
                             .collect(),
-                        shielded: result.shielded,
+                        fired: result.fired,
                     },
                 )
                 .await;
@@ -513,6 +558,7 @@ pub async fn run_game(
                                 score: *s,
                             })
                             .collect(),
+                        fired: result.fired,
                     },
                 )
                 .await;
@@ -658,7 +704,16 @@ async fn persist_completed_game(
 /// messages that are not in-game player inputs (heartbeats, lobby/entry messages).
 fn recorded_input(msg: &ClientMessage) -> Option<RecordedInput> {
     match msg {
-        ClientMessage::CommitCard { card } => Some(RecordedInput::CommitCard { card: *card }),
+        ClientMessage::CommitIngredient { card, colorless } => {
+            Some(RecordedInput::CommitIngredient {
+                card: *card,
+                colorless: *colorless,
+            })
+        }
+        ClientMessage::CastSpell { spell, target } => Some(RecordedInput::CastSpell {
+            spell: *spell,
+            target: *target,
+        }),
         ClientMessage::CommitPass => Some(RecordedInput::CommitPass),
         ClientMessage::LockIn => Some(RecordedInput::LockIn),
         ClientMessage::Emote { emote } => Some(RecordedInput::Emote { emote: *emote }),
@@ -666,13 +721,44 @@ fn recorded_input(msg: &ClientMessage) -> Option<RecordedInput> {
     }
 }
 
+/// A player's pending choice as a wave collects: the ingredient-or-pass slot may
+/// be revised until lock-in; the spell slot is one-shot (a second cast is
+/// rejected — at most one spell resolves per player per wave).
+#[derive(Default)]
+struct Pending {
+    action: Option<WaveAction>,
+    spell: Option<SpellChoice>,
+}
+
+/// Validate a spell's target shape on the wire (the engine re-validates).
+fn target_shape_ok(
+    kind: boiling_point_protocol::vocab::SpellKind,
+    target: Option<SpellTarget>,
+    caster: PlayerId,
+    seated: &[PlayerId],
+) -> bool {
+    match kind.target_kind() {
+        TargetKind::None => target.is_none(),
+        TargetKind::Player => matches!(
+            target,
+            Some(SpellTarget::Player { player })
+                if player != caster && seated.contains(&player)
+        ),
+        TargetKind::Color => matches!(
+            target,
+            Some(SpellTarget::Color { color }) if color != Color::Wild
+        ),
+    }
+}
+
 /// Collect one wave's hidden commits until the timer expires or every active
 /// player has locked in. Heartbeats and emotes are serviced live; a disconnect
 /// (`Leave`) auto-passes the player for the rest of the game.
 ///
-/// Every raw in-game input (commit/pass/lock-in/emote) is appended to `input_log`
-/// as it arrives — *before* validation, so rejected/off-palette attempts are
-/// captured too — stamped with `game_start.elapsed()` for the replay payload.
+/// Every raw in-game input (commit/cast/pass/lock-in/emote) is appended to
+/// `input_log` as it arrives — *before* validation, so rejected/off-palette
+/// attempts are captured too — stamped with `game_start.elapsed()` for the
+/// replay payload.
 #[allow(clippy::too_many_arguments)]
 async fn collect_wave(
     rx: &mut mpsc::Receiver<GroupCommand>,
@@ -685,13 +771,14 @@ async fn collect_wave(
     game_start: std::time::Instant,
     input_log: &mut Vec<TimedInput>,
 ) -> WaveCollection {
-    let mut choice: HashMap<PlayerId, WaveChoice> = HashMap::new();
+    let seated: Vec<PlayerId> = players.iter().map(|s| s.id).collect();
+    let mut pending: HashMap<PlayerId, Pending> = HashMap::new();
     let mut locked: HashSet<PlayerId> = HashSet::new();
     let mut reconnected: Vec<PlayerId> = Vec::new();
     // Disconnected players auto-pass and are considered locked in.
     for p in acting {
         if gone.contains(p) {
-            choice.insert(*p, WaveChoice::Pass);
+            pending.entry(*p).or_default().action = Some(WaveAction::Pass);
             locked.insert(*p);
         }
     }
@@ -717,35 +804,85 @@ async fn collect_wave(
                             });
                         }
                         match msg {
-                            ClientMessage::CommitCard { card } if active => {
+                            ClientMessage::CommitIngredient { card, colorless } if active => {
                                 // §I: a card the player doesn't hold is an invalid
                                 // action, not a silent drop. The reply carries only the
                                 // reason — never pot/volatility/boiling-point state — so
                                 // it cannot weaken blind volatility.
-                                if hands.get(&player).is_some_and(|h| h.contains(card)) {
-                                    choice.insert(player, WaveChoice::Play(card));
+                                if hands.get(&player).is_some_and(|h| h.contains_ingredient(card)) {
+                                    pending.entry(player).or_default().action =
+                                        Some(WaveAction::Play { card, colorless });
                                 } else {
                                     send_to(
                                         players,
                                         player,
                                         ServerMessage::Error {
                                             code: ErrorCode::NotYourCard,
-                                            message: "that card is not in your hand".into(),
+                                            message: "that ingredient is not in your hand".into(),
                                         },
                                     )
                                     .await;
                                 }
                             }
+                            ClientMessage::CastSpell { spell, target } if active => {
+                                let entry = pending.entry(player).or_default();
+                                if entry.spell.is_some() {
+                                    // At most one spell resolves per player per wave.
+                                    send_to(
+                                        players,
+                                        player,
+                                        ServerMessage::Error {
+                                            code: ErrorCode::SpellLimit,
+                                            message: "you already cast a spell this wave".into(),
+                                        },
+                                    )
+                                    .await;
+                                } else {
+                                    let kind = hands
+                                        .get(&player)
+                                        .and_then(|h| h.spells().iter().find(|s| s.id == spell))
+                                        .map(|s| s.kind);
+                                    match kind {
+                                        None => {
+                                            send_to(
+                                                players,
+                                                player,
+                                                ServerMessage::Error {
+                                                    code: ErrorCode::NotYourSpell,
+                                                    message: "that spell is not in your grimoire hand".into(),
+                                                },
+                                            )
+                                            .await;
+                                        }
+                                        Some(kind) if !target_shape_ok(kind, target, player, &seated) => {
+                                            send_to(
+                                                players,
+                                                player,
+                                                ServerMessage::Error {
+                                                    code: ErrorCode::InvalidTarget,
+                                                    message: "that spell cannot take that target".into(),
+                                                },
+                                            )
+                                            .await;
+                                        }
+                                        Some(_) => {
+                                            pending.entry(player).or_default().spell =
+                                                Some(SpellChoice { spell, target });
+                                        }
+                                    }
+                                }
+                            }
                             ClientMessage::CommitPass if active => {
-                                choice.insert(player, WaveChoice::Pass);
+                                pending.entry(player).or_default().action = Some(WaveAction::Pass);
                             }
                             ClientMessage::LockIn if active => {
                                 locked.insert(player);
                             }
-                            // A commit/pass/lock-in from a player who has already passed,
-                            // timed out, or is otherwise not acting this round: reply
-                            // LockedOut rather than drop it (§I). No state changes.
-                            ClientMessage::CommitCard { .. }
+                            // A commit/cast/pass/lock-in from a player who has already
+                            // passed, timed out, or is otherwise not acting this round:
+                            // reply LockedOut rather than drop it (§I). No state changes.
+                            ClientMessage::CommitIngredient { .. }
+                            | ClientMessage::CastSpell { .. }
                             | ClientMessage::CommitPass
                             | ClientMessage::LockIn => {
                                 send_to(
@@ -768,8 +905,7 @@ async fn collect_wave(
                                 )
                                 .await;
                             }
-                            // An off-palette emote is rejected exactly as in the lobby,
-                            // resolving the lobby-vs-wave inconsistency (F1/§I).
+                            // An off-palette emote is rejected exactly as in the lobby.
                             ClientMessage::Emote { .. } => {
                                 send_to(
                                     players,
@@ -783,7 +919,7 @@ async fn collect_wave(
                             }
                             // Entry and group-lobby messages (create/join/enqueue,
                             // play-again, fill, leave) are never valid mid-game:
-                            // reply WrongPhase, never silently drop (§I/F1).
+                            // reply WrongPhase, never silently drop (§I).
                             ClientMessage::CreateGroup { .. }
                             | ClientMessage::JoinGroup { .. }
                             | ClientMessage::EnqueueMatch { .. }
@@ -806,7 +942,8 @@ async fn collect_wave(
                     Some(GroupCommand::Leave { player }) => {
                         gone.insert(player);
                         if acting.contains(&player) {
-                            choice.insert(player, WaveChoice::Pass);
+                            let entry = pending.entry(player).or_default();
+                            entry.action = Some(WaveAction::Pass);
                             locked.insert(player);
                         }
                     }
@@ -838,9 +975,23 @@ async fn collect_wave(
     }
 
     // The collected intents are handed to the engine, which validates them against
-    // hands again, removes the committed cards, and detects emptied hands.
+    // hands again, removes the committed cards, and normalises invalid inputs.
+    // A player with a spell but no action by close auto-passes — the spell still
+    // resolves (a spell never keeps a passed player in).
+    let choices: HashMap<PlayerId, WaveChoice> = pending
+        .into_iter()
+        .map(|(player, p)| {
+            (
+                player,
+                WaveChoice {
+                    action: p.action.unwrap_or(WaveAction::Pass),
+                    spell: p.spell,
+                },
+            )
+        })
+        .collect();
     WaveCollection {
-        choices: choice,
+        choices,
         reconnected,
         timed_out,
     }
@@ -850,8 +1001,9 @@ async fn collect_wave(
 mod tests {
     use super::*;
     use crate::config::ContentConfig;
-    use crate::game::card::Card;
+    use crate::game::card::Ingredient;
     use boiling_point_protocol::server::PlayerScore;
+    use boiling_point_protocol::vocab::SpellKind;
     use boiling_point_protocol::{CardId, EmoteId};
 
     /// A seated player wired to a fresh outbound channel; the returned receiver
@@ -870,13 +1022,12 @@ mod tests {
         )
     }
 
-    fn card(id: u32, color: Color, vol: u8, pts: u8) -> Card {
-        Card {
+    fn ing(id: u32, color: Color, vol: u8, pts: u8) -> Ingredient {
+        Ingredient {
             id: CardId(id),
             color,
             volatility: vol,
             points: pts,
-            effect: None,
         }
     }
 
@@ -888,16 +1039,16 @@ mod tests {
         out
     }
 
-    // ---- F1: invalid in-wave actions get an error, never a silent drop (§I) ----
+    // ---- invalid in-wave actions get an error, never a silent drop (§I) ----
 
     #[tokio::test]
-    async fn bad_commit_card_replies_not_your_card_and_changes_no_state() {
+    async fn bad_commit_replies_not_your_card_and_changes_no_state() {
         let (s1, mut rx1) = seat(1, Color::Ruby);
         let id1 = s1.id;
         let mut players = vec![s1];
         let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
         let mut h = Hand::new();
-        h.add([card(10, Color::Ruby, 2, 1)]);
+        h.add_ingredients([ing(10, Color::Ruby, 2, 1)]);
         hands.insert(id1, h);
         let mut gone = HashSet::new();
         let palette: HashSet<u16> = HashSet::new();
@@ -906,7 +1057,10 @@ mod tests {
         cmd_tx
             .send(GroupCommand::Action {
                 player: id1,
-                msg: ClientMessage::CommitCard { card: CardId(99) },
+                msg: ClientMessage::CommitIngredient {
+                    card: CardId(99),
+                    colorless: false,
+                },
             })
             .await
             .unwrap();
@@ -932,8 +1086,7 @@ mod tests {
             collection.choices.is_empty(),
             "an unheld card must not record a choice"
         );
-        assert!(hands[&id1].contains(CardId(10)));
-        assert_eq!(hands[&id1].len(), 1);
+        assert!(hands[&id1].contains_ingredient(CardId(10)));
 
         // The only reply is the NotYourCard error (reason only — no hidden state).
         let msgs = drain(&mut rx1);
@@ -950,6 +1103,158 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn second_spell_in_a_wave_is_rejected_with_spell_limit() {
+        let (s1, mut rx1) = seat(1, Color::Ruby);
+        let id1 = s1.id;
+        let mut players = vec![s1];
+        let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
+        let mut h = Hand::new();
+        h.add_ingredients([ing(10, Color::Ruby, 2, 1)]);
+        h.add_spells([
+            crate::game::card::Spell {
+                id: CardId(20),
+                kind: SpellKind::Peek,
+            },
+            crate::game::card::Spell {
+                id: CardId(21),
+                kind: SpellKind::Surge,
+            },
+        ]);
+        hands.insert(id1, h);
+        let mut gone = HashSet::new();
+        let palette: HashSet<u16> = HashSet::new();
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        for spell in [CardId(20), CardId(21)] {
+            cmd_tx
+                .send(GroupCommand::Action {
+                    player: id1,
+                    msg: ClientMessage::CastSpell {
+                        spell,
+                        target: None,
+                    },
+                })
+                .await
+                .unwrap();
+        }
+        drop(cmd_tx);
+
+        let collection = collect_wave(
+            &mut cmd_rx,
+            &mut players,
+            &[id1],
+            &hands,
+            &mut gone,
+            &palette,
+            5_000,
+            std::time::Instant::now(),
+            &mut Vec::new(),
+        )
+        .await;
+
+        // Only the first cast is kept; the second got a SpellLimit error.
+        let choice = collection.choices.get(&id1).expect("a choice was recorded");
+        assert_eq!(
+            choice.spell,
+            Some(SpellChoice {
+                spell: CardId(20),
+                target: None
+            })
+        );
+        // No ingredient was committed → the action normalises to a pass, but the
+        // spell still rides with it (pass + spell is legal; the spell never keeps
+        // the passed player in).
+        assert_eq!(choice.action, WaveAction::Pass);
+
+        let msgs = drain(&mut rx1);
+        assert!(
+            matches!(
+                msgs.as_slice(),
+                [ServerMessage::Error {
+                    code: ErrorCode::SpellLimit,
+                    ..
+                }]
+            ),
+            "expected one SpellLimit error, got {msgs:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn illegal_spell_targets_are_rejected() {
+        let (s1, mut rx1) = seat(1, Color::Ruby);
+        let (s2, _rx2) = seat(2, Color::Sapphire);
+        let id1 = s1.id;
+        let mut players = vec![s1, s2];
+        let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
+        let mut h = Hand::new();
+        h.add_spells([
+            crate::game::card::Spell {
+                id: CardId(30),
+                kind: SpellKind::Hex,
+            },
+            crate::game::card::Spell {
+                id: CardId(31),
+                kind: SpellKind::Sour,
+            },
+        ]);
+        hands.insert(id1, h);
+        let mut gone = HashSet::new();
+        let palette: HashSet<u16> = HashSet::new();
+
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(8);
+        // Hex aimed at self: illegal.
+        cmd_tx
+            .send(GroupCommand::Action {
+                player: id1,
+                msg: ClientMessage::CastSpell {
+                    spell: CardId(30),
+                    target: Some(SpellTarget::Player { player: id1 }),
+                },
+            })
+            .await
+            .unwrap();
+        // Sour aimed at Wild: illegal.
+        cmd_tx
+            .send(GroupCommand::Action {
+                player: id1,
+                msg: ClientMessage::CastSpell {
+                    spell: CardId(31),
+                    target: Some(SpellTarget::Color { color: Color::Wild }),
+                },
+            })
+            .await
+            .unwrap();
+        drop(cmd_tx);
+
+        let collection = collect_wave(
+            &mut cmd_rx,
+            &mut players,
+            &[id1],
+            &hands,
+            &mut gone,
+            &palette,
+            5_000,
+            std::time::Instant::now(),
+            &mut Vec::new(),
+        )
+        .await;
+
+        assert!(
+            collection.choices.get(&id1).and_then(|c| c.spell).is_none(),
+            "no illegal cast may be recorded"
+        );
+        let msgs = drain(&mut rx1);
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs.iter().all(|m| matches!(
+            m,
+            ServerMessage::Error {
+                code: ErrorCode::InvalidTarget,
+                ..
+            }
+        )));
+    }
+
+    #[tokio::test]
     async fn action_from_locked_out_player_replies_locked_out_and_changes_no_state() {
         let (s1, _rx1) = seat(1, Color::Ruby);
         let (s2, mut rx2) = seat(2, Color::Sapphire);
@@ -959,7 +1264,7 @@ mod tests {
         let mut hands: HashMap<PlayerId, Hand> = HashMap::new();
         hands.insert(id1, Hand::new());
         let mut h2 = Hand::new();
-        h2.add([card(20, Color::Sapphire, 1, 1)]);
+        h2.add_ingredients([ing(20, Color::Sapphire, 1, 1)]);
         hands.insert(id2, h2);
         let mut gone = HashSet::new();
         let palette: HashSet<u16> = HashSet::new();
@@ -991,7 +1296,7 @@ mod tests {
         // id2 takes no part in this wave's bookkeeping: its locked-out action records
         // no choice, and its hand is untouched.
         assert!(!collection.choices.contains_key(&id2));
-        assert!(hands[&id2].contains(CardId(20)));
+        assert!(hands[&id2].contains_ingredient(CardId(20)));
 
         let msgs = drain(&mut rx2);
         assert!(
@@ -1089,35 +1394,46 @@ mod tests {
         assert!(input_log.windows(2).all(|w| w[0].at_ms <= w[1].at_ms));
     }
 
-    // ---- F2: the shipping (async) path is the tested engine path ----
+    // ---- the shipping (async) path is the tested engine path ----
     //
     // `run_game` drives the same orchestration core as `Game::play_out`, so a fixed
     // seed produces identical final scores (the parity test). A no-panic stress test
     // over many seeds keeps the live loop honest.
 
-    /// A scripted in-process client: plays its hand in order, one card per wave,
-    /// locking in so waves close as soon as every acting player has. Returns the
-    /// final scores it observed at `GameOver`.
+    /// A scripted in-process client: plays its first hand ingredient each wave
+    /// (as a Vote), locking in so waves close as soon as every acting player has.
+    /// Returns the final scores it observed at `GameOver`.
     async fn client_loop(
         id: PlayerId,
         mut rx: mpsc::Receiver<ServerMessage>,
         cmd_tx: mpsc::Sender<GroupCommand>,
     ) -> Option<Vec<PlayerScore>> {
         let mut hand: Vec<CardId> = Vec::new();
-        let mut idx = 0usize;
+        let mut passed = false;
         while let Some(msg) = rx.recv().await {
             match msg {
-                ServerMessage::YourHand { cards } => {
-                    hand = cards.iter().map(|c| c.id).collect();
-                    idx = 0;
+                ServerMessage::YourHand { ingredients, .. } => {
+                    hand = ingredients.iter().map(|c| c.id).collect();
                 }
-                ServerMessage::WaveOpened { .. } => {
-                    let action = if idx < hand.len() {
-                        let c = hand[idx];
-                        idx += 1;
-                        ClientMessage::CommitCard { card: c }
-                    } else {
-                        ClientMessage::CommitPass
+                ServerMessage::WaveOpened { wave_number, .. } => {
+                    if wave_number == 1 {
+                        passed = false;
+                    }
+                    if passed {
+                        continue;
+                    }
+                    let action = match hand.first() {
+                        Some(&c) => {
+                            hand.remove(0);
+                            ClientMessage::CommitIngredient {
+                                card: c,
+                                colorless: false,
+                            }
+                        }
+                        None => {
+                            passed = true;
+                            ClientMessage::CommitPass
+                        }
                     };
                     let _ = cmd_tx
                         .send(GroupCommand::Action {
@@ -1132,6 +1448,9 @@ mod tests {
                         })
                         .await;
                 }
+                ServerMessage::WaveResolved {
+                    passed: passers, ..
+                } if passers.contains(&id) => passed = true,
                 ServerMessage::GameOver { final_scores, .. } => return Some(final_scores),
                 _ => {}
             }
@@ -1193,14 +1512,18 @@ mod tests {
         scores[0].clone()
     }
 
-    /// The sync-engine analogue of the scripted `client_loop`: play the first card
-    /// of the live hand, else pass. `client_loop` walks the hand it last received in
-    /// order — and because a recall re-sends `YourHand` (D3), that is exactly the
-    /// live hand `Game` hands the decider each wave — so the two drive identical plays.
+    /// The sync-engine analogue of the scripted `client_loop`: play the first
+    /// ingredient of the live hand as a Vote, else pass.
     fn play_first_else_pass() -> impl FnMut(PlayerId, &Hand) -> WaveChoice {
-        |_player, hand| match hand.views().first() {
-            Some(first) => WaveChoice::Play(first.id),
-            None => WaveChoice::Pass,
+        |_player, hand| match hand.ingredients().first() {
+            Some(first) => WaveChoice {
+                action: WaveAction::Play {
+                    card: first.id,
+                    colorless: false,
+                },
+                spell: None,
+            },
+            None => WaveChoice::pass(),
         }
     }
 
@@ -1223,7 +1546,7 @@ mod tests {
         use crate::game::runner::Game;
 
         // The single orchestration core means the shipping (async) loop and the tested
-        // sync engine must agree on the final scores for any fixed seed (F2). This is
+        // sync engine must agree on the final scores for any fixed seed. This is
         // the safety net for the convergence: a real divergence fails loudly here.
         let cfg = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
         let registry = cfg.build_registry().unwrap();

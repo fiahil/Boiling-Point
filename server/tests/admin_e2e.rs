@@ -51,18 +51,18 @@ async fn bot(
     mut out: mpsc::Receiver<ServerMessage>,
 ) -> bool {
     let mut hand: Vec<CardId> = Vec::new();
-    let mut idx = 0usize;
     while let Some(msg) = out.recv().await {
         match msg {
-            ServerMessage::YourHand { cards } => {
-                hand = cards.iter().map(|c| c.id).collect();
-                idx = 0;
+            ServerMessage::YourHand { ingredients, .. } => {
+                hand = ingredients.iter().map(|c| c.id).collect();
             }
             ServerMessage::WaveOpened { .. } => {
-                let action = if idx < hand.len() {
-                    let card = hand[idx];
-                    idx += 1;
-                    ClientMessage::CommitCard { card }
+                let action = if let Some(&card) = hand.first() {
+                    hand.remove(0);
+                    ClientMessage::CommitIngredient {
+                        card,
+                        colorless: false,
+                    }
                 } else {
                     ClientMessage::CommitPass
                 };

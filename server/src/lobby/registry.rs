@@ -21,7 +21,7 @@ use sqlx::PgPool;
 use tokio::sync::mpsc;
 
 use boiling_point_protocol::GroupCode;
-use boiling_point_protocol::vocab::{EffectKind, ModifierKind};
+use boiling_point_protocol::vocab::{ModifierKind, SpellKind};
 
 use crate::config::{ConfigError, ContentConfig};
 use crate::content::ContentRegistry;
@@ -57,12 +57,12 @@ impl Content {
     }
 }
 
-/// Names a single content item to enable/disable. Cards are addressed by their
-/// effect (the deck's special cards); plain colour cards carry no stable id.
+/// Names a single content item to enable/disable. Spells are addressed by their
+/// kind; plain ingredient archetypes carry no stable id.
 #[derive(Debug, Clone, Copy)]
 pub enum ContentSelector {
-    /// All cards carrying this effect.
-    Effect(EffectKind),
+    /// All grimoire entries of this spell.
+    Spell(SpellKind),
     /// A modifier pool entry.
     Modifier(ModifierKind),
     /// A preset emote, by id.
@@ -73,9 +73,9 @@ impl ContentSelector {
     /// Set the `enabled` flag on the selected item(s) within `config`.
     fn apply(self, config: &mut ContentConfig, enabled: bool) {
         match self {
-            ContentSelector::Effect(kind) => {
-                for c in config.card.iter_mut().filter(|c| c.effect == Some(kind)) {
-                    c.enabled = enabled;
+            ContentSelector::Spell(kind) => {
+                for s in config.spell.iter_mut().filter(|s| s.kind == kind) {
+                    s.enabled = enabled;
                 }
             }
             ContentSelector::Modifier(kind) => {
@@ -227,9 +227,9 @@ impl GroupRegistry {
     }
 
     /// Enable/disable a single content item, re-validating exactly as a reload. The
-    /// deck-size invariant is kept in step with the enabled cards so disabling a
-    /// card is accepted while a toggle that breaks a rule (e.g. emptying a pool) is
-    /// rejected with the running config unchanged.
+    /// size invariants are kept in step with the enabled items so disabling a spell
+    /// is accepted while a toggle that breaks a rule (e.g. emptying a pool or
+    /// removing a required spell kind) is rejected with the running config unchanged.
     pub fn toggle_item(
         &self,
         selector: ContentSelector,
@@ -246,11 +246,11 @@ impl GroupRegistry {
         let _enter = span.enter();
         let mut config = (*self.content.load_full().config).clone();
         selector.apply(&mut config, enabled);
-        config.deck.size = config
-            .card
+        config.grimoire.size = config
+            .spell
             .iter()
-            .filter(|c| c.enabled)
-            .map(|c| c.copies)
+            .filter(|s| s.enabled)
+            .map(|s| s.copies)
             .sum();
         let outcome = Content::build(config).map(|content| self.content.store(Arc::new(content)));
         record_config_outcome(&span, &outcome);
@@ -348,38 +348,43 @@ mod tests {
             reg.reload(include_str!("../../content.toml"), "tester")
                 .is_ok()
         );
-        assert_eq!(reg.content.load().registry.deck_size(), 90);
+        assert_eq!(reg.content.load().registry.pantry_size(), 30);
+        assert_eq!(reg.content.load().registry.grimoire_size(), 20);
     }
 
     #[test]
     fn invalid_reload_is_rejected_and_config_unchanged() {
         let reg = default_registry();
-        let before = reg.content.load().registry.deck_size();
+        let before = reg.content.load().registry.pantry_size();
         assert!(
             reg.reload("this is not valid config {{{", "tester")
                 .is_err()
         );
         assert_eq!(
-            reg.content.load().registry.deck_size(),
+            reg.content.load().registry.pantry_size(),
             before,
             "a rejected reload must leave the running config unchanged"
         );
     }
 
     #[test]
-    fn disabling_a_card_takes_effect_for_new_groups() {
+    fn disabling_a_spell_takes_effect_for_new_groups() {
         let reg = default_registry();
-        let outcome = reg.toggle_item(ContentSelector::Effect(EffectKind::Shield), false, "tester");
-        assert!(outcome.is_ok(), "disabling one effect card should validate");
+        let outcome = reg.toggle_item(ContentSelector::Spell(SpellKind::Quench), false, "tester");
+        assert!(outcome.is_ok(), "disabling one spell should validate");
         let content = reg.content.load();
         assert!(
-            content.registry.effect(EffectKind::Shield).is_none(),
-            "Shield should be gone from the running registry"
+            !content
+                .registry
+                .spells()
+                .iter()
+                .any(|s| s.kind == SpellKind::Quench),
+            "Quench should be gone from the running registry"
         );
         assert_eq!(
-            content.registry.deck_size(),
-            89,
-            "deck shrank by the disabled card"
+            content.registry.grimoire_size(),
+            19,
+            "grimoire shrank by the disabled spell"
         );
     }
 

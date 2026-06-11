@@ -105,7 +105,8 @@ fn is_entry(msg: &ClientMessage) -> bool {
 fn is_table_action(msg: &ClientMessage) -> bool {
     matches!(
         msg,
-        ClientMessage::CommitCard { .. }
+        ClientMessage::CommitIngredient { .. }
+            | ClientMessage::CastSpell { .. }
             | ClientMessage::CommitPass
             | ClientMessage::LockIn
             | ClientMessage::Emote { .. }
@@ -380,7 +381,8 @@ fn message_kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::CreateGroup { .. } => "CreateGroup",
         ClientMessage::JoinGroup { .. } => "JoinGroup",
         ClientMessage::EnqueueMatch { .. } => "EnqueueMatch",
-        ClientMessage::CommitCard { .. } => "CommitCard",
+        ClientMessage::CommitIngredient { .. } => "CommitIngredient",
+        ClientMessage::CastSpell { .. } => "CastSpell",
         ClientMessage::CommitPass => "CommitPass",
         ClientMessage::LockIn => "LockIn",
         ClientMessage::Emote { .. } => "Emote",
@@ -529,26 +531,32 @@ mod tests {
         assert!(all, "all four queued players reached a started game");
     }
 
-    /// A trivial auto-player: each round it plays its hand by index, one card per
-    /// wave, then passes; it stops at `GameOver`. Returns whether it saw GameOver.
+    /// A trivial auto-player: each wave it plays the first ingredient of its
+    /// (freshly topped-up) hand as a Vote, else passes; it stops at `GameOver`.
+    /// Returns whether it saw GameOver.
     async fn play_loop(ws: &mut Ws) -> bool {
         let mut hand: Vec<boiling_point_protocol::CardId> = Vec::new();
-        let mut idx = 0usize;
         loop {
             let Some(msg) = recv_opt(ws).await else {
                 return false;
             };
             match msg {
-                ServerMessage::YourHand { cards } => {
-                    hand = cards.iter().map(|c| c.id).collect();
-                    idx = 0;
+                ServerMessage::YourHand { ingredients, .. } => {
+                    hand = ingredients.iter().map(|c| c.id).collect();
                 }
                 ServerMessage::WaveOpened { .. } => {
                     // Rely on the (short, in tests) wave timer to close; sending a
                     // LockIn here would be dropped by the 100ms rate limit anyway.
-                    if idx < hand.len() {
-                        send(ws, &ClientMessage::CommitCard { card: hand[idx] }).await;
-                        idx += 1;
+                    if let Some(&card) = hand.first() {
+                        hand.remove(0);
+                        send(
+                            ws,
+                            &ClientMessage::CommitIngredient {
+                                card,
+                                colorless: false,
+                            },
+                        )
+                        .await;
                     } else {
                         send(ws, &ClientMessage::CommitPass).await;
                     }
@@ -710,7 +718,6 @@ mod tests {
     /// game's stream can be scanned for leaked secrets.
     async fn play_and_capture(ws: &mut Ws) -> Vec<ServerMessage> {
         let mut hand: Vec<boiling_point_protocol::CardId> = Vec::new();
-        let mut idx = 0usize;
         let mut frames = Vec::new();
         loop {
             let Some(msg) = recv_opt(ws).await else {
@@ -718,14 +725,20 @@ mod tests {
             };
             frames.push(msg.clone());
             match msg {
-                ServerMessage::YourHand { cards } => {
-                    hand = cards.iter().map(|c| c.id).collect();
-                    idx = 0;
+                ServerMessage::YourHand { ingredients, .. } => {
+                    hand = ingredients.iter().map(|c| c.id).collect();
                 }
                 ServerMessage::WaveOpened { .. } => {
-                    if idx < hand.len() {
-                        send(ws, &ClientMessage::CommitCard { card: hand[idx] }).await;
-                        idx += 1;
+                    if let Some(&card) = hand.first() {
+                        hand.remove(0);
+                        send(
+                            ws,
+                            &ClientMessage::CommitIngredient {
+                                card,
+                                colorless: false,
+                            },
+                        )
+                        .await;
                     } else {
                         send(ws, &ClientMessage::CommitPass).await;
                     }
@@ -773,25 +786,16 @@ mod tests {
             .expect("game completed before timeout");
 
         // Scan every frame any client received. The boiling point may appear ONLY
-        // in a private `PeekResult` or an exploded `Depile`; no broadcast carries a
-        // secret. (Opponents' hands and the deck have no wire field at all, so they
+        // in a private `PeekResult` or the post-round `Depile` (which reveals it
+        // every round, boom and safe); no other message carries it. (Opponents'
+        // hands, the decks, and primed Actives have no wire field at all, so they
         // cannot be broadcast by construction — see `protocol::server`.)
         let mut saw_game_over = false;
         for frames in &all_frames {
             for msg in frames {
                 match msg {
                     ServerMessage::PeekResult { .. } => {} // legitimate private disclosure
-                    ServerMessage::Depile {
-                        exploded,
-                        boiling_point,
-                        ..
-                    } => {
-                        assert_eq!(
-                            boiling_point.is_some(),
-                            *exploded,
-                            "boiling point disclosed on a safe brew: {msg:?}"
-                        );
-                    }
+                    ServerMessage::Depile { .. } => {}     // post-round reveal, every round
                     ServerMessage::GameOver { .. } => saw_game_over = true,
                     other => {
                         let json = codec::encode_json(other).unwrap();
@@ -856,21 +860,26 @@ mod tests {
     /// `GameOver`s it saw.
     async fn play_n_games(ws: &mut Ws, n: usize) -> usize {
         let mut hand: Vec<boiling_point_protocol::CardId> = Vec::new();
-        let mut idx = 0usize;
         let mut games = 0usize;
         loop {
             let Some(msg) = recv_opt(ws).await else {
                 return games;
             };
             match msg {
-                ServerMessage::YourHand { cards } => {
-                    hand = cards.iter().map(|c| c.id).collect();
-                    idx = 0;
+                ServerMessage::YourHand { ingredients, .. } => {
+                    hand = ingredients.iter().map(|c| c.id).collect();
                 }
                 ServerMessage::WaveOpened { .. } => {
-                    if idx < hand.len() {
-                        send(ws, &ClientMessage::CommitCard { card: hand[idx] }).await;
-                        idx += 1;
+                    if let Some(&card) = hand.first() {
+                        hand.remove(0);
+                        send(
+                            ws,
+                            &ClientMessage::CommitIngredient {
+                                card,
+                                colorless: false,
+                            },
+                        )
+                        .await;
                     } else {
                         send(ws, &ClientMessage::CommitPass).await;
                     }

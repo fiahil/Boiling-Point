@@ -4,8 +4,10 @@
 //! client or bot. It contains ONLY the message DTOs that cross the wire, the
 //! public value-types they reference, and the [`codec`] helpers — no game logic
 //! and no server-only secrets. In particular, the boiling point is never a field
-//! of a general state message; it surfaces only via [`server::ServerMessage::PeekResult`]
-//! (private) and an exploded [`server::ServerMessage::Depile`].
+//! of a general state message; in-round it surfaces only via the private
+//! [`server::ServerMessage::PeekResult`], and post-round via the
+//! [`server::ServerMessage::Depile`] (which reveals it **every** round, boom and
+//! safe, per the boom2 combat core).
 
 pub mod client;
 pub mod codec;
@@ -17,7 +19,10 @@ pub use client::{ClientMessage, PROTOCOL_VERSION, ProtocolVersion};
 pub use codec::{CodecError, decode, decode_json, encode, encode_json};
 pub use ids::{CardId, EmoteId, GroupCode, PlayerId};
 pub use server::{Audience, Outbound, ServerMessage};
-pub use vocab::{CardView, Color, EffectKind, HandCard, ModifierKind};
+pub use vocab::{
+    Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellMode,
+    SpellTarget, TargetKind,
+};
 
 #[cfg(test)]
 mod tests {
@@ -29,12 +34,11 @@ mod tests {
         PlayerId(uuid::Uuid::from_u128(1))
     }
 
-    fn sample_card() -> CardView {
-        CardView {
+    fn sample_ingredient() -> IngredientView {
+        IngredientView {
             color: Color::Ruby,
-            volatility: 2,
+            volatility: 5,
             points: 3,
-            effect: Some(EffectKind::Peek),
         }
     }
 
@@ -58,7 +62,30 @@ mod tests {
                 display_name: "cara".into(),
                 session_token: None,
             },
-            ClientMessage::CommitCard { card: CardId(7) },
+            ClientMessage::CommitIngredient {
+                card: CardId(7),
+                colorless: false,
+            },
+            ClientMessage::CommitIngredient {
+                card: CardId(8),
+                colorless: true,
+            },
+            ClientMessage::CastSpell {
+                spell: CardId(9),
+                target: None,
+            },
+            ClientMessage::CastSpell {
+                spell: CardId(10),
+                target: Some(SpellTarget::Player {
+                    player: sample_player(),
+                }),
+            },
+            ClientMessage::CastSpell {
+                spell: CardId(11),
+                target: Some(SpellTarget::Color {
+                    color: Color::Emerald,
+                }),
+            },
             ClientMessage::CommitPass,
             ClientMessage::LockIn,
             ClientMessage::Emote { emote: EmoteId(3) },
@@ -105,16 +132,30 @@ mod tests {
                 guest_wins: 0,
             },
             ServerMessage::YourHand {
-                cards: vec![HandCard {
+                ingredients: vec![HandIngredient {
                     id: CardId(1),
-                    view: sample_card(),
+                    view: sample_ingredient(),
+                }],
+                spells: vec![HandSpell {
+                    id: CardId(2),
+                    kind: SpellKind::Peek,
                 }],
             },
             ServerMessage::WaveOpened {
                 round_number: 1,
                 wave_number: 1,
-                timer_ms: 30_000,
+                timer_ms: 25_000,
                 final_wave: false,
+            },
+            ServerMessage::SpellCast {
+                player: p,
+                spell: SpellKind::Surge,
+                color_target: None,
+            },
+            ServerMessage::SpellCast {
+                player: p,
+                spell: SpellKind::DoubleDown,
+                color_target: Some(Color::Ruby),
             },
             ServerMessage::WaveResolved {
                 played: vec![p],
@@ -129,24 +170,31 @@ mod tests {
                 modifier: ModifierKind::ThinIce,
                 round_number: 2,
             },
-            ServerMessage::SomeonePeeked,
             ServerMessage::Exposed {
-                card: sample_card(),
+                player: p,
+                ingredient: sample_ingredient(),
+                colorless: true,
             },
-            ServerMessage::DeckReshuffled,
             ServerMessage::EmoteBroadcast {
                 from: p,
                 emote: EmoteId(2),
             },
-            ServerMessage::PeekResult { boiling_point: 11 },
+            ServerMessage::PeekResult { boiling_point: 26 },
+            ServerMessage::AssayResult {
+                dominant: Some(Color::Ruby),
+                lead: 4,
+            },
             ServerMessage::Depile {
                 reveals: vec![DepileEntry {
                     player: p,
-                    card: sample_card(),
-                    running_volatility: 2,
+                    ingredient: sample_ingredient(),
+                    colorless: false,
+                    wave_number: 2,
+                    running_volatility: 5,
+                    liable: true,
                 }],
                 exploded: true,
-                boiling_point: Some(10),
+                boiling_point: 24,
                 crossing_index: Some(0),
             },
             ServerMessage::RoundScored {
@@ -158,14 +206,24 @@ mod tests {
                     player: p,
                     score: 3,
                 }],
+                fired: vec![SpellFire {
+                    player: p,
+                    spell: SpellKind::Harvest,
+                    target: None,
+                }],
             },
             ServerMessage::Explosion {
                 pot_value: 9,
+                detonators: vec![p],
                 deltas: vec![PlayerScore {
                     player: p,
                     score: -9,
                 }],
-                shielded: vec![],
+                fired: vec![SpellFire {
+                    player: p,
+                    spell: SpellKind::Redirect,
+                    target: Some(p),
+                }],
             },
             ServerMessage::ScoreUpdate {
                 scores: vec![PlayerScore {
@@ -202,9 +260,13 @@ mod tests {
                     player: p,
                     count: 2,
                 }],
-                your_hand: vec![HandCard {
+                your_ingredients: vec![HandIngredient {
                     id: CardId(1),
-                    view: sample_card(),
+                    view: sample_ingredient(),
+                }],
+                your_spells: vec![HandSpell {
+                    id: CardId(3),
+                    kind: SpellKind::Hex,
                 }],
             },
             ServerMessage::DeathmatchStarted {
@@ -220,8 +282,9 @@ mod tests {
         }
     }
 
-    /// The boiling point must appear ONLY in `PeekResult` and an exploded `Depile`.
-    /// Serialising any other variant must not produce a `boiling_point` field.
+    /// The boiling point must appear ONLY in `PeekResult` (private, in-round) and
+    /// the `Depile` (post-round, every round). Serialising any other variant must
+    /// not produce a `boiling_point` field.
     #[test]
     fn boiling_point_only_in_allowed_messages() {
         let p = sample_player();
@@ -233,17 +296,16 @@ mod tests {
                 cauldron_card_count: 3,
                 contributions: vec![],
             },
+            ServerMessage::SpellCast {
+                player: p,
+                spell: SpellKind::Surge,
+                color_target: None,
+            },
             ServerMessage::ScoreUpdate {
                 scores: vec![PlayerScore {
                     player: p,
                     score: 0,
                 }],
-            },
-            ServerMessage::Depile {
-                reveals: vec![],
-                exploded: false,
-                boiling_point: None, // safe brew: must be None
-                crossing_index: None,
             },
             ServerMessage::StateSnapshot {
                 group_code: GroupCode("BREW-7K3F".into()),
@@ -253,31 +315,96 @@ mod tests {
                 scores: vec![],
                 active_modifiers: vec![],
                 contributions: vec![],
-                your_hand: vec![],
+                your_ingredients: vec![],
+                your_spells: vec![],
             },
         ];
         for m in non_secret {
             let json = encode_json(&m).unwrap();
             assert!(
-                !json.contains("boiling_point") || json.contains("\"boiling_point\":null"),
+                !json.contains("boiling_point"),
                 "non-secret message leaked a boiling point: {json}"
             );
         }
-        // The two allowed carriers do contain it.
-        let peek = encode_json(&ServerMessage::PeekResult { boiling_point: 12 }).unwrap();
+        // The two allowed carriers do contain it — including the SAFE depile,
+        // which reveals the line every round (the near-miss payoff).
+        let peek = encode_json(&ServerMessage::PeekResult { boiling_point: 26 }).unwrap();
         assert!(peek.contains("boiling_point"));
+        let safe_depile = encode_json(&ServerMessage::Depile {
+            reveals: vec![],
+            exploded: false,
+            boiling_point: 26,
+            crossing_index: None,
+        })
+        .unwrap();
+        assert!(safe_depile.contains("boiling_point"));
+    }
+
+    /// Spell metadata is total: every one of the 15 spells has a mode and a
+    /// target kind, and Actives are exactly the ward/cash-in/curse five.
+    #[test]
+    fn spell_metadata_is_total_and_matches_design() {
+        assert_eq!(SpellKind::ALL.len(), 15);
+        let actives: Vec<SpellKind> = SpellKind::ALL
+            .into_iter()
+            .filter(|s| s.mode() == SpellMode::Active)
+            .collect();
+        assert_eq!(
+            actives,
+            vec![
+                SpellKind::Cap,
+                SpellKind::Halve,
+                SpellKind::Redirect,
+                SpellKind::Harvest,
+                SpellKind::Hex,
+            ]
+        );
+        for kind in SpellKind::ALL {
+            match kind {
+                SpellKind::Redirect | SpellKind::Hex => {
+                    assert_eq!(kind.target_kind(), TargetKind::Player)
+                }
+                SpellKind::DoubleDown | SpellKind::Sour => {
+                    assert_eq!(kind.target_kind(), TargetKind::Color)
+                }
+                _ => assert_eq!(kind.target_kind(), TargetKind::None),
+            }
+        }
     }
 
     /// Building an `Outbound` must classify audiences correctly.
     #[test]
     fn audience_routing_is_explicit() {
         let p = sample_player();
-        let private = ServerMessage::YourHand { cards: vec![] }.to(p);
+        let private = ServerMessage::YourHand {
+            ingredients: vec![],
+            spells: vec![],
+        }
+        .to(p);
         assert!(matches!(private.audience, Audience::Private(_)));
-        let public = ServerMessage::SomeonePeeked.broadcast();
+        let public = ServerMessage::SpellCast {
+            player: p,
+            spell: SpellKind::Peek,
+            color_target: None,
+        }
+        .broadcast();
         assert!(matches!(public.audience, Audience::Broadcast));
         assert!(ServerMessage::PeekResult { boiling_point: 1 }.is_private_only());
-        assert!(!ServerMessage::SomeonePeeked.is_private_only());
+        assert!(
+            ServerMessage::AssayResult {
+                dominant: None,
+                lead: 0
+            }
+            .is_private_only()
+        );
+        assert!(
+            !ServerMessage::SpellCast {
+                player: p,
+                spell: SpellKind::Peek,
+                color_target: None,
+            }
+            .is_private_only()
+        );
     }
 
     /// The secret-routing rail must be load-bearing: broadcasting a private-only

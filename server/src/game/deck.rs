@@ -1,95 +1,160 @@
-//! The shared deck: builds concrete cards from the content registry, deals a
-//! refill-to-5 floor with carryover, and reshuffles the discard back in when the
-//! draw pile is exhausted (D-R5). Seeded for reproducible games.
+//! The per-player decks: the colour-anchored **pantry** (30 ingredients, ~75%
+//! own colour) and the fixed **grimoire** (20 spells). Both are instantiated
+//! per seat from the content registry's archetypes and seeded for reproducible
+//! games.
+//!
+//! Dealing rules (boom2 combat core): ingredients top up to the
+//! [`crate::config::INGREDIENT_HAND`] floor at the start of every wave
+//! (refill-only); spells are drawn only at round start (a fixed count), are not
+//! replenished in-round except by Forage, and unused ones carry over. The pantry
+//! reshuffles its discard (depiled cards) back in when the draw pile empties;
+//! the grimoire never reshuffles — cast spells are spent for the game, and a
+//! short draw simply yields fewer spells.
 
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 
 use boiling_point_protocol::CardId;
+use boiling_point_protocol::vocab::Color;
 
-use crate::config::HAND_SIZE;
-use crate::content::ContentRegistry;
+use crate::config::INGREDIENT_HAND;
+use crate::content::card::PantrySlot;
+use crate::content::registry::ContentRegistry;
 
-use super::card::Card;
+use super::card::{Ingredient, Spell};
 
-/// The draw/discard deck. Cards leave the draw pile into hands/pot, are revealed
-/// at the depile, then return to the discard; when the draw pile empties, the
-/// discard is reshuffled into it (a visible table event — card counting resets).
-pub struct Deck {
-    draw: Vec<Card>,
-    discard: Vec<Card>,
+/// A player's personal ingredient deck (draw + discard), colour-anchored to its
+/// owner.
+pub struct Pantry {
+    draw: Vec<Ingredient>,
+    discard: Vec<Ingredient>,
     rng: StdRng,
 }
 
-impl Deck {
-    /// Build a shuffled deck from the registry's enabled card archetypes, seeded
-    /// for reproducibility. Card ids are assigned sequentially.
-    pub fn build(registry: &ContentRegistry, seed: u64) -> Self {
+impl Pantry {
+    /// Build one seat's shuffled pantry from the registry's archetypes. `Own`
+    /// slots take the owner's colour; `OffColor` slots cycle deterministically
+    /// through the other player colours; `Wild` slots are colourless. Instance
+    /// ids are pulled from the shared `next_id` counter so ids stay unique
+    /// across all decks in a game.
+    pub fn build(
+        registry: &ContentRegistry,
+        own_color: Color,
+        next_id: &mut u32,
+        seed: u64,
+    ) -> Self {
+        let off_colors: Vec<Color> = Color::PLAYER_COLORS
+            .into_iter()
+            .filter(|c| *c != own_color)
+            .collect();
+        let mut off_cursor = 0usize;
         let mut cards = Vec::new();
-        let mut next_id = 0u32;
-        for def in registry.cards() {
+        for def in registry.ingredients() {
             for _ in 0..def.copies {
-                cards.push(Card {
-                    id: CardId(next_id),
-                    color: def.color,
+                let color = match def.slot {
+                    PantrySlot::Own => own_color,
+                    PantrySlot::OffColor => {
+                        let c = off_colors[off_cursor % off_colors.len()];
+                        off_cursor += 1;
+                        c
+                    }
+                    PantrySlot::Wild => Color::Wild,
+                };
+                cards.push(Ingredient {
+                    id: CardId(*next_id),
+                    color,
                     volatility: def.volatility,
                     points: def.points,
-                    effect: def.effect,
                 });
-                next_id += 1;
+                *next_id += 1;
             }
         }
         let mut rng = StdRng::seed_from_u64(seed);
         cards.shuffle(&mut rng);
-        Deck {
+        Pantry {
             draw: cards,
             discard: Vec::new(),
             rng,
         }
     }
 
-    /// Number of cards remaining in the draw pile.
+    /// Number of ingredients remaining in the draw pile.
     pub fn draw_remaining(&self) -> usize {
         self.draw.len()
     }
 
-    /// Draw a single card, reshuffling the discard in if the draw pile is empty.
-    /// Returns the card and whether a reshuffle happened. `None` only if both
-    /// piles are empty (which a validated deck size avoids in practice).
-    pub fn draw_one(&mut self) -> Option<(Card, bool)> {
+    /// Whether both piles are empty (the owner can never act again this game).
+    pub fn is_exhausted(&self) -> bool {
+        self.draw.is_empty() && self.discard.is_empty()
+    }
+
+    /// Draw a single ingredient, reshuffling the discard in if the draw pile is
+    /// empty. `None` only if both piles are empty.
+    fn draw_one(&mut self) -> Option<Ingredient> {
         if self.draw.is_empty() {
             if self.discard.is_empty() {
                 return None;
             }
             std::mem::swap(&mut self.draw, &mut self.discard);
             self.draw.shuffle(&mut self.rng);
-            let card = self.draw.pop().expect("non-empty after reshuffle");
-            return Some((card, true));
         }
-        Some((self.draw.pop().expect("non-empty"), false))
+        self.draw.pop()
     }
 
-    /// Return cards to the discard pile (e.g. after a depile).
-    pub fn discard_cards(&mut self, cards: impl IntoIterator<Item = Card>) {
+    /// Return spent ingredients (depiled or skimmed) to the discard pile.
+    pub fn discard_cards(&mut self, cards: impl IntoIterator<Item = Ingredient>) {
         self.discard.extend(cards);
     }
 
-    /// Refill a hand of `current_len` cards up to [`HAND_SIZE`] — a floor that
-    /// only ever adds. Returns the drawn cards and whether a reshuffle occurred.
-    pub fn refill(&mut self, current_len: usize) -> (Vec<Card>, bool) {
+    /// Top up a hand of `current_len` ingredients to the [`INGREDIENT_HAND`]
+    /// floor — refill-only, never trimming. Returns the drawn cards (possibly
+    /// short if the pantry exhausted).
+    pub fn top_up(&mut self, current_len: usize) -> Vec<Ingredient> {
         let mut drawn = Vec::new();
-        let mut reshuffled = false;
-        while current_len + drawn.len() < HAND_SIZE as usize {
+        while current_len + drawn.len() < INGREDIENT_HAND as usize {
             match self.draw_one() {
-                Some((card, r)) => {
-                    reshuffled |= r;
-                    drawn.push(card);
-                }
+                Some(card) => drawn.push(card),
                 None => break,
             }
         }
-        (drawn, reshuffled)
+        drawn
+    }
+}
+
+/// A player's personal spell deck. No reshuffle: cast spells are spent.
+pub struct Grimoire {
+    draw: Vec<Spell>,
+}
+
+impl Grimoire {
+    /// Build one seat's shuffled grimoire from the registry's spell archetypes,
+    /// pulling instance ids from the shared `next_id` counter.
+    pub fn build(registry: &ContentRegistry, next_id: &mut u32, seed: u64) -> Self {
+        let mut spells = Vec::new();
+        for def in registry.spells() {
+            for _ in 0..def.copies {
+                spells.push(Spell {
+                    id: CardId(*next_id),
+                    kind: def.kind,
+                });
+                *next_id += 1;
+            }
+        }
+        let mut rng = StdRng::seed_from_u64(seed);
+        spells.shuffle(&mut rng);
+        Grimoire { draw: spells }
+    }
+
+    /// Number of spells remaining to draw.
+    pub fn draw_remaining(&self) -> usize {
+        self.draw.len()
+    }
+
+    /// Draw up to `n` spells (short if the grimoire is exhausted).
+    pub fn draw(&mut self, n: usize) -> Vec<Spell> {
+        let take = n.min(self.draw.len());
+        self.draw.split_off(self.draw.len() - take)
     }
 }
 
@@ -104,36 +169,94 @@ mod tests {
     }
 
     #[test]
-    fn build_yields_full_deck() {
-        let deck = Deck::build(&registry(), 42);
-        assert_eq!(deck.draw_remaining(), 90);
+    fn pantry_is_color_anchored() {
+        let reg = registry();
+        let mut next_id = 0;
+        let pantry = Pantry::build(&reg, Color::Ruby, &mut next_id, 42);
+        assert_eq!(pantry.draw_remaining(), 30);
+        let own = pantry
+            .draw
+            .iter()
+            .filter(|c| c.color == Color::Ruby)
+            .count();
+        let wild = pantry
+            .draw
+            .iter()
+            .filter(|c| c.color == Color::Wild)
+            .count();
+        // ~75% own colour; wilds are colourless; the rest are other players' colours.
+        assert_eq!(own, 22);
+        assert_eq!(wild, 3);
+        assert!(
+            pantry
+                .draw
+                .iter()
+                .all(|c| c.volatility <= 7 && c.points <= 3)
+        );
     }
 
     #[test]
-    fn refill_tops_up_to_five() {
-        let mut deck = Deck::build(&registry(), 1);
-        let (drawn, reshuffled) = deck.refill(2);
-        assert_eq!(drawn.len(), 3); // 2 carried over + 3 drawn = 5
-        assert!(!reshuffled);
-        let (none, _) = deck.refill(5);
+    fn top_up_refills_to_three() {
+        let reg = registry();
+        let mut next_id = 0;
+        let mut pantry = Pantry::build(&reg, Color::Ruby, &mut next_id, 1);
+        let drawn = pantry.top_up(1);
+        assert_eq!(drawn.len(), 2); // 1 carried over + 2 drawn = 3
+        let none = pantry.top_up(3);
         assert!(none.is_empty()); // already at the floor, draw nothing
     }
 
     #[test]
-    fn reshuffles_discard_when_draw_empties() {
-        let mut deck = Deck::build(&registry(), 7);
-        // Drain the draw pile into the discard.
+    fn pantry_reshuffles_discard_when_exhausted() {
+        let reg = registry();
+        let mut next_id = 0;
+        let mut pantry = Pantry::build(&reg, Color::Emerald, &mut next_id, 7);
+        // Drain the whole draw pile.
         let mut pulled = Vec::new();
-        while let Some((c, r)) = deck.draw_one() {
-            assert!(!r, "no reshuffle while cards remain");
+        while let Some(c) = pantry.draw_one() {
             pulled.push(c);
-            if deck.draw_remaining() == 0 {
-                break;
-            }
         }
-        deck.discard_cards(pulled);
-        // Next draw must reshuffle the discard back in.
-        let (_, reshuffled) = deck.draw_one().expect("card after reshuffle");
-        assert!(reshuffled);
+        assert_eq!(pulled.len(), 30);
+        assert!(pantry.is_exhausted());
+        pantry.discard_cards(pulled);
+        assert!(!pantry.is_exhausted());
+        // The next top-up reshuffles the discard back in.
+        let drawn = pantry.top_up(0);
+        assert_eq!(drawn.len(), 3);
+    }
+
+    #[test]
+    fn grimoire_draws_short_when_exhausted_and_never_reshuffles() {
+        let reg = registry();
+        let mut next_id = 100;
+        let mut grimoire = Grimoire::build(&reg, &mut next_id, 9);
+        assert_eq!(grimoire.draw_remaining(), 20);
+        let first = grimoire.draw(18);
+        assert_eq!(first.len(), 18);
+        // Only 2 left: the draw comes up short, with no reshuffle.
+        let last = grimoire.draw(3);
+        assert_eq!(last.len(), 2);
+        assert_eq!(grimoire.draw_remaining(), 0);
+        assert!(grimoire.draw(1).is_empty());
+    }
+
+    #[test]
+    fn card_ids_are_unique_across_decks() {
+        let reg = registry();
+        let mut next_id = 0;
+        let p1 = Pantry::build(&reg, Color::Ruby, &mut next_id, 1);
+        let g1 = Grimoire::build(&reg, &mut next_id, 2);
+        let p2 = Pantry::build(&reg, Color::Sapphire, &mut next_id, 3);
+        let mut ids: Vec<u32> = p1
+            .draw
+            .iter()
+            .map(|c| c.id.0)
+            .chain(g1.draw.iter().map(|s| s.id.0))
+            .chain(p2.draw.iter().map(|c| c.id.0))
+            .collect();
+        let total = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), total, "duplicate card ids across decks");
     }
 }

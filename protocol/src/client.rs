@@ -1,11 +1,13 @@
 //! Messages sent from a client (or bot) to the server.
 //!
 //! All client messages are fire-and-forget: the server validates each one and
-//! either applies it or replies with an [`crate::server::Error`], never partially.
+//! either applies it or replies with an [`crate::server::ServerMessage::Error`],
+//! never partially.
 
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{CardId, EmoteId, GroupCode};
+use crate::vocab::SpellTarget;
 
 /// The protocol version a client speaks, sent on the first (entry) message so
 /// the server can reject incompatible clients before sharing any state.
@@ -19,7 +21,11 @@ pub type ProtocolVersion = u16;
 /// v3: group matchmaking fill (`FillGroup`/`CancelFill`, `GroupSearching`), the
 /// member/guest distinction (`PlayerPublic.guest`), and group standings
 /// (`StandingsUpdate`).
-pub const PROTOCOL_VERSION: ProtocolVersion = 3;
+/// v4: the boom2 combat core — the ingredient/spell card split
+/// (`CommitIngredient` with the colorless Vote choice, `CastSpell`), the
+/// detonator-only explosion, and the volatility-sorted depile that reveals the
+/// boiling point every round.
+pub const PROTOCOL_VERSION: ProtocolVersion = 4;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays
 /// human-readable for debugging.
@@ -55,13 +61,28 @@ pub enum ClientMessage {
         /// Prior session token, to resume an existing identity if presented.
         session_token: Option<String>,
     },
-    /// Commit a card into the current wave (hidden until the wave reveals).
-    CommitCard {
-        /// The hand card to commit.
+    /// Commit an ingredient into the current wave (hidden until the wave reveals).
+    /// Playing keeps the player active; the ingredient-or-pass choice is mandatory
+    /// each wave.
+    CommitIngredient {
+        /// The hand ingredient to commit.
         card: CardId,
+        /// Play it colorless (a wild / go-neutral push): its volatility still
+        /// enters the cauldron but it scores **zero** points and serves no colour.
+        colorless: bool,
     },
     /// Commit to passing this wave (permanent lockout for the round).
     CommitPass,
+    /// Cast a spell this wave (at most one per player per wave; optional, layered
+    /// on the ingredient-or-pass choice — a spell never substitutes for it and
+    /// never keeps a passed player active). Hidden until the wave reveals; an
+    /// Instant fires at reveal, an Active primes face-down.
+    CastSpell {
+        /// The grimoire spell to cast.
+        spell: CardId,
+        /// The target, when the spell's [`crate::vocab::TargetKind`] requires one.
+        target: Option<SpellTarget>,
+    },
     /// Lock in the current selection; if all active players lock in, the wave closes early.
     LockIn,
     /// Send a preset emote to the table (the only communication channel).

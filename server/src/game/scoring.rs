@@ -1,28 +1,35 @@
-//! Scoring and explosion: dominance by total colour points, winner-takes-all
-//! with Alliance/Commune splits (round down), and shared-loss explosions — all
-//! honouring the active modifiers (Bountiful additive, Double Stakes multiplier,
-//! Reversal flip) and Shield (immunity / safe-resolution forfeit).
+//! Scoring: the P-symmetry. Every pot is worth `P = Σ colored Vote points`. A
+//! safe brew pays the dominant colour **+P** (winner-takes-all, ties split
+//! rounded down, integer-only); an explosion makes the **detonator(s)** split
+//! **−P** (modified by wards, plus Hex extras) and awards no colour. A player
+//! who contributed nothing scores 0 either way.
+//!
+//! Cauldron modifiers still compose onto the pot's value (Bountiful additive,
+//! Double Stakes multiplier, Reversal flip); their magnitudes are v1-scaled and
+//! flagged for a follow-up rescale.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use boiling_point_protocol::PlayerId;
+use boiling_point_protocol::server::SpellFire;
 use boiling_point_protocol::vocab::Color;
 
-use crate::content::ContentRegistry;
+use crate::content::registry::ContentRegistry;
 
 use super::modifiers::ActiveModifiers;
 use super::pot::Pot;
+use super::spells::{PrimedSpell, resolve_explosion, resolve_harvests};
 
 /// Everything scoring needs that lives outside the pot.
 pub struct ScoringContext<'a> {
     /// Active cauldron modifiers for the round.
     pub modifiers: &'a ActiveModifiers,
-    /// Content registry (for modifier offsets/multipliers).
+    /// Content registry (for modifier offsets/multipliers and spell magnitudes).
     pub registry: &'a ContentRegistry,
     /// Which player owns each player colour.
     pub color_owner: &'a HashMap<Color, PlayerId>,
-    /// Players who played Shield this round.
-    pub shielded: &'a HashSet<PlayerId>,
+    /// Each player's colour (the Harvest check).
+    pub player_color: &'a HashMap<PlayerId, Color>,
     /// All players at the table.
     pub all_players: &'a [PlayerId],
 }
@@ -36,33 +43,38 @@ pub struct SafeScore {
     pub winners: Vec<Color>,
     /// The pot's scored value.
     pub pot_value: u32,
-    /// Net points awarded to each player this round.
+    /// Net points awarded to each player this round (incl. Harvest bonuses).
     pub awards: HashMap<PlayerId, i32>,
+    /// Harvests that fired, narrated in fire order.
+    pub fired: Vec<SpellFire>,
 }
 
 /// Result of an exploded pot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplosionResult {
-    /// The pot value every non-shielded player loses.
+    /// The pot value the detonators split.
     pub pot_value: u32,
-    /// Per-player score delta (negative loss, or 0 if shielded).
+    /// The liable players, in fatal-wave sort order.
+    pub detonators: Vec<PlayerId>,
+    /// Per-player score delta (zero for the unaffected).
     pub deltas: HashMap<PlayerId, i32>,
-    /// Players who were shielded and took no loss.
-    pub shielded: Vec<PlayerId>,
+    /// Wards and Hexes that fired, narrated in fire order.
+    pub fired: Vec<SpellFire>,
 }
 
-/// The pot's scored value: (sum of card points + Bountiful per-card bonus) ×
-/// Double Stakes multiplier. Used identically for a win payout and a blast loss.
+/// The pot's scored value: (P + Bountiful per-card bonus) × Double Stakes
+/// multiplier. Used identically for a win payout and a detonator loss.
 pub fn pot_value(pot: &Pot, ctx: &ScoringContext) -> u32 {
     let additive =
-        pot.base_points() + ctx.modifiers.pot_bonus_per_card(ctx.registry) * pot.card_count();
+        pot.vote_points() + ctx.modifiers.pot_bonus_per_card(ctx.registry) * pot.card_count();
     additive * ctx.modifiers.pot_multiplier(ctx.registry)
 }
 
-/// Score a safely-resolved pot: decide dominance on per-colour totals first
-/// (Reversal flips to the lowest present colour; Bountiful's colourless bonus is
-/// excluded from this step), then award the pot value, splitting on ties.
-pub fn score_safe(pot: &Pot, ctx: &ScoringContext) -> SafeScore {
+/// Score a safely-resolved pot: decide dominance on per-colour Vote totals
+/// (Reversal flips to the lowest present colour), award the pot value to the
+/// strictly-highest colour — splitting on ties, rounded down — then fire any
+/// winning Harvests.
+pub fn score_safe(pot: &Pot, ctx: &ScoringContext, primed: &mut [PrimedSpell]) -> SafeScore {
     // Per-colour totals for player colours actually present in the pot.
     let present: Vec<(Color, u32)> = Color::PLAYER_COLORS
         .into_iter()
@@ -81,6 +93,7 @@ pub fn score_safe(pot: &Pot, ctx: &ScoringContext) -> SafeScore {
             winners: Vec::new(),
             pot_value: value,
             awards,
+            fired: Vec::new(),
         };
     }
 
@@ -96,16 +109,28 @@ pub fn score_safe(pot: &Pot, ctx: &ScoringContext) -> SafeScore {
         .map(|(c, _)| *c)
         .collect();
 
-    // Split the pot equally among winning colours, rounding down.
+    // Split the pot equally among winning colours, rounding down (integer-only).
     let share = (value / winners.len() as u32) as i32;
     for color in &winners {
         if let Some(owner) = ctx.color_owner.get(color) {
+            // A player who contributed nothing scores 0 either way (P-symmetry).
             let contributed = pot.cards.iter().any(|pc| pc.player == *owner);
-            // Absent (0 cards) or shielded → forfeit the share.
-            if contributed && !ctx.shielded.contains(owner) {
+            if contributed {
                 *awards.entry(*owner).or_insert(0) += share;
             }
         }
+    }
+
+    // Winning Harvests cash in on top of the take.
+    let (bonuses, fired) = resolve_harvests(
+        &winners,
+        &awards,
+        ctx.player_color,
+        ctx.registry.spell_values(),
+        primed,
+    );
+    for (player, bonus) in bonuses {
+        *awards.entry(player).or_insert(0) += bonus;
     }
 
     SafeScore {
@@ -113,37 +138,42 @@ pub fn score_safe(pot: &Pot, ctx: &ScoringContext) -> SafeScore {
         winners,
         pot_value: value,
         awards,
+        fired,
     }
 }
 
-/// Compute the shared-loss explosion: every non-shielded player loses the full
-/// pot value; shielded players lose nothing.
-pub fn explosion(pot: &Pot, ctx: &ScoringContext) -> ExplosionResult {
+/// Compute the detonator-only explosion: the liable players split −P (rounded
+/// down), each loss modified by their wards (Redirect cascading); every primed
+/// Hex then lands its extra on its target. Non-liable, un-hexed players lose
+/// nothing.
+pub fn explosion(
+    pot: &Pot,
+    ctx: &ScoringContext,
+    detonators: Vec<PlayerId>,
+    primed: &mut [PrimedSpell],
+) -> ExplosionResult {
     let value = pot_value(pot, ctx);
-    let mut deltas = HashMap::new();
-    let mut shielded = Vec::new();
-    for &player in ctx.all_players {
-        if ctx.shielded.contains(&player) {
-            deltas.insert(player, 0);
-            shielded.push(player);
-        } else {
-            deltas.insert(player, -(value as i32));
-        }
+    let (mut deltas, fired) =
+        resolve_explosion(&detonators, value, ctx.registry.spell_values(), primed);
+    // Every player gets an explicit (possibly zero) delta for a stable wire shape.
+    for player in ctx.all_players {
+        deltas.entry(*player).or_insert(0);
     }
     ExplosionResult {
         pot_value: value,
+        detonators,
         deltas,
-        shielded,
+        fired,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::card::Card;
-    use crate::game::pot::PotCard;
+    use crate::game::card::{Ingredient, Spell};
+    use crate::game::pot::PotIngredient;
     use boiling_point_protocol::CardId;
-    use boiling_point_protocol::vocab::ModifierKind;
+    use boiling_point_protocol::vocab::{ModifierKind, SpellKind};
     use uuid::Uuid;
 
     fn pid(n: u128) -> PlayerId {
@@ -157,35 +187,40 @@ mod tests {
             .unwrap()
     }
 
-    /// Four players, one per colour; returns (players, color_owner).
-    fn players() -> (Vec<PlayerId>, HashMap<Color, PlayerId>) {
+    /// Four players, one per colour; returns (players, color_owner, player_color).
+    fn players() -> (
+        Vec<PlayerId>,
+        HashMap<Color, PlayerId>,
+        HashMap<PlayerId, Color>,
+    ) {
         let ps: Vec<PlayerId> = (1..=4).map(pid).collect();
-        let owner = Color::PLAYER_COLORS
+        let owner: HashMap<Color, PlayerId> = Color::PLAYER_COLORS
             .into_iter()
             .zip(ps.iter().copied())
             .collect();
-        (ps, owner)
+        let player_color: HashMap<PlayerId, Color> = owner.iter().map(|(c, p)| (*p, *c)).collect();
+        (ps, owner, player_color)
     }
 
-    fn card(color: Color, points: u8) -> Card {
-        Card {
-            id: CardId(0),
-            color,
-            volatility: 1,
-            points,
-            effect: None,
+    fn vote(player: PlayerId, color: Color, points: u8) -> PotIngredient {
+        PotIngredient {
+            player,
+            ingredient: Ingredient {
+                id: CardId(0),
+                color,
+                volatility: 1,
+                points,
+            },
+            colorless: false,
+            wave_number: 1,
+            exposed: false,
         }
     }
 
     fn pot_with(cards: &[(PlayerId, Color, u8)]) -> Pot {
         let mut pot = Pot::new(0);
         for &(player, color, points) in cards {
-            pot.cards.push(PotCard {
-                player,
-                card: card(color, points),
-                color,
-                points,
-            });
+            pot.cards.push(vote(player, color, points));
         }
         pot
     }
@@ -194,14 +229,14 @@ mod tests {
         mods: &'a ActiveModifiers,
         reg: &'a ContentRegistry,
         owner: &'a HashMap<Color, PlayerId>,
-        shielded: &'a HashSet<PlayerId>,
+        player_color: &'a HashMap<PlayerId, Color>,
         all: &'a [PlayerId],
     ) -> ScoringContext<'a> {
         ScoringContext {
             modifiers: mods,
             registry: reg,
             color_owner: owner,
-            shielded,
+            player_color,
             all_players: all,
         }
     }
@@ -209,16 +244,15 @@ mod tests {
     #[test]
     fn sole_dominant_takes_all() {
         let reg = registry();
-        let (all, owner) = players();
+        let (all, owner, pc) = players();
         let mods = ActiveModifiers::new();
-        let shielded = HashSet::new();
-        // Ruby 6 (two 3s), Sapphire 3.
         let pot = pot_with(&[
             (all[0], Color::Ruby, 3),
             (all[0], Color::Ruby, 3),
             (all[1], Color::Sapphire, 3),
         ]);
-        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &shielded, &all));
+        let mut primed = Vec::new();
+        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &pc, &all), &mut primed);
         assert_eq!(s.winners, vec![Color::Ruby]);
         assert_eq!(s.pot_value, 9);
         assert_eq!(s.awards[&all[0]], 9);
@@ -228,32 +262,49 @@ mod tests {
     #[test]
     fn two_way_tie_splits_round_down() {
         let reg = registry();
-        let (all, owner) = players();
+        let (all, owner, pc) = players();
         let mods = ActiveModifiers::new();
-        let shielded = HashSet::new();
-        // Ruby 3, Sapphire 3, plus a wild worth 1 → pot value 7, split 3 each.
+        // Ruby 3, Sapphire 3, plus a third vote worth 1 → pot value 7, split 3 each.
         let pot = pot_with(&[
             (all[0], Color::Ruby, 3),
             (all[1], Color::Sapphire, 3),
-            (all[2], Color::Wild, 1),
+            (all[2], Color::Emerald, 1),
         ]);
-        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &shielded, &all));
+        let mut primed = Vec::new();
+        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &pc, &all), &mut primed);
         assert_eq!(s.pot_value, 7);
         assert_eq!(s.awards[&all[0]], 3);
         assert_eq!(s.awards[&all[1]], 3);
-        // Leftover point evaporates; wild owner contributed but isn't a winner.
+        // Leftover point evaporates; the third player isn't a winner.
         assert_eq!(s.awards[&all[2]], 0);
+    }
+
+    /// Wilds and colorless plays swell nothing: P counts colored Votes only.
+    #[test]
+    fn pot_value_counts_colored_votes_only() {
+        let reg = registry();
+        let (all, owner, pc) = players();
+        let mods = ActiveModifiers::new();
+        let mut pot = pot_with(&[(all[0], Color::Ruby, 2)]);
+        // A wild with printed points and a colorless play with printed points.
+        pot.cards.push(vote(all[1], Color::Wild, 3));
+        pot.cards.push(PotIngredient {
+            colorless: true,
+            ..vote(all[2], Color::Emerald, 3)
+        });
+        let s_ctx = ctx(&mods, &reg, &owner, &pc, &all);
+        assert_eq!(pot_value(&pot, &s_ctx), 2);
     }
 
     #[test]
     fn reversal_picks_lowest_present_colour() {
         let reg = registry();
-        let (all, owner) = players();
+        let (all, owner, pc) = players();
         let mut mods = ActiveModifiers::new();
         mods.push(ModifierKind::Reversal);
-        let shielded = HashSet::new();
         let pot = pot_with(&[(all[0], Color::Ruby, 6), (all[1], Color::Sapphire, 3)]);
-        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &shielded, &all));
+        let mut primed = Vec::new();
+        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &pc, &all), &mut primed);
         assert_eq!(s.winners, vec![Color::Sapphire]);
         assert_eq!(s.awards[&all[1]], 9);
     }
@@ -261,45 +312,62 @@ mod tests {
     #[test]
     fn bountiful_then_double_stakes_compose() {
         let reg = registry();
-        let (all, owner) = players();
+        let (all, owner, pc) = players();
         let mut mods = ActiveModifiers::new();
         mods.push(ModifierKind::BountifulBrew);
         mods.push(ModifierKind::DoubleStakes);
-        let shielded = HashSet::new();
-        // Two cards: Ruby 3, Sapphire 1. base=4, +1/card*2cards=+2 → 6, ×2 → 12.
+        // Two votes: Ruby 3, Sapphire 1. base=4, +1/card*2cards=+2 → 6, ×2 → 12.
         let pot = pot_with(&[(all[0], Color::Ruby, 3), (all[1], Color::Sapphire, 1)]);
-        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &shielded, &all));
+        let mut primed = Vec::new();
+        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &pc, &all), &mut primed);
         assert_eq!(s.pot_value, 12);
         assert_eq!(s.winners, vec![Color::Ruby]);
         assert_eq!(s.awards[&all[0]], 12);
     }
 
+    /// The P-symmetry: an explosion costs only the detonators, who split −P.
     #[test]
-    fn explosion_hits_everyone_but_shielded() {
+    fn explosion_costs_only_the_detonators() {
         let reg = registry();
-        let (all, owner) = players();
+        let (all, owner, pc) = players();
         let mods = ActiveModifiers::new();
-        let mut shielded = HashSet::new();
-        shielded.insert(all[2]);
-        let pot = pot_with(&[(all[0], Color::Ruby, 5), (all[1], Color::Sapphire, 4)]);
-        let e = explosion(&pot, &ctx(&mods, &reg, &owner, &shielded, &all));
+        let pot = pot_with(&[
+            (all[0], Color::Ruby, 5),
+            (all[1], Color::Sapphire, 4),
+            (all[2], Color::Emerald, 0),
+        ]);
+        let mut primed = Vec::new();
+        let e = explosion(
+            &pot,
+            &ctx(&mods, &reg, &owner, &pc, &all),
+            vec![all[0], all[2]],
+            &mut primed,
+        );
         assert_eq!(e.pot_value, 9);
-        assert_eq!(e.deltas[&all[0]], -9);
-        assert_eq!(e.deltas[&all[1]], -9);
-        assert_eq!(e.deltas[&all[2]], 0); // shielded
-        assert_eq!(e.deltas[&all[3]], -9); // spectator still loses
+        assert_eq!(e.deltas[&all[0]], -4); // 9 / 2 rounded down
+        assert_eq!(e.deltas[&all[2]], -4);
+        assert_eq!(e.deltas[&all[1]], 0, "non-detonators lose nothing");
+        assert_eq!(e.deltas[&all[3]], 0, "spectators lose nothing");
     }
 
+    /// A winning Harvest cashes in on top of the take.
     #[test]
-    fn shielded_winner_forfeits_on_safe_brew() {
+    fn winning_harvest_pays_its_bonus() {
         let reg = registry();
-        let (all, owner) = players();
+        let (all, owner, pc) = players();
         let mods = ActiveModifiers::new();
-        let mut shielded = HashSet::new();
-        shielded.insert(all[0]); // Ruby owner shielded
-        let pot = pot_with(&[(all[0], Color::Ruby, 6), (all[1], Color::Sapphire, 3)]);
-        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &shielded, &all));
-        assert_eq!(s.winners, vec![Color::Ruby]);
-        assert_eq!(s.awards[&all[0]], 0); // forfeited despite winning
+        let pot = pot_with(&[(all[0], Color::Ruby, 5)]);
+        let mut primed = vec![PrimedSpell {
+            player: all[0],
+            spell: Spell {
+                id: CardId(50),
+                kind: SpellKind::Harvest,
+            },
+            target: None,
+            fired: false,
+        }];
+        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &pc, &all), &mut primed);
+        assert_eq!(s.awards[&all[0]], 5 + 3);
+        assert_eq!(s.fired.len(), 1);
     }
 }

@@ -1,15 +1,15 @@
-//! The content registry: the single id→definition lookup the rest of the engine
-//! consults, built once at startup from validated config with disabled items
-//! filtered out. This is the only seam between churning content and the stable
-//! loop (Registry pattern).
+//! The content registry: the single lookup the rest of the engine consults,
+//! built once at startup from validated config with disabled items filtered
+//! out. This is the only seam between churning content and the stable loop
+//! (Registry pattern).
 
 use std::collections::HashMap;
 
-use boiling_point_protocol::vocab::{EffectKind, ModifierKind};
+use boiling_point_protocol::vocab::ModifierKind;
 
-use super::card::CardDef;
-use super::effect::{Effect, behavior_for as effect_behavior};
+use super::card::IngredientDef;
 use super::modifier::{Modifier, behavior_for as modifier_behavior};
+use super::spell::{SpellDef, SpellValues};
 
 /// One entry in the weighted modifier draw pool.
 pub struct ModifierPoolEntry {
@@ -21,10 +21,12 @@ pub struct ModifierPoolEntry {
 
 /// Built, validated content ready for play. Holds only enabled items.
 pub struct ContentRegistry {
-    /// Enabled card archetypes, expanded into instances by the deck builder.
-    cards: Vec<CardDef>,
-    /// Enabled effect behaviours, keyed by kind.
-    effects: HashMap<EffectKind, Box<dyn Effect>>,
+    /// Enabled ingredient archetypes, expanded into instances by the pantry builder.
+    ingredients: Vec<IngredientDef>,
+    /// Enabled spell archetypes, expanded into instances by the grimoire builder.
+    spells: Vec<SpellDef>,
+    /// The tunable spell magnitudes.
+    spell_values: SpellValues,
     /// Enabled modifier pool (kind → entry) for weighted draws.
     modifiers: HashMap<ModifierKind, ModifierPoolEntry>,
 }
@@ -33,14 +35,11 @@ impl ContentRegistry {
     /// Assemble a registry from already-validated parts. `enabled_*` inputs must
     /// already exclude disabled items.
     pub fn new(
-        cards: Vec<CardDef>,
-        enabled_effects: &[EffectKind],
+        ingredients: Vec<IngredientDef>,
+        spells: Vec<SpellDef>,
+        spell_values: SpellValues,
         enabled_modifiers: &[(ModifierKind, u16)],
     ) -> Self {
-        let mut effects: HashMap<EffectKind, Box<dyn Effect>> = HashMap::new();
-        for &kind in enabled_effects {
-            effects.entry(kind).or_insert_with(|| effect_behavior(kind));
-        }
         let mut modifiers: HashMap<ModifierKind, ModifierPoolEntry> = HashMap::new();
         for &(kind, copies) in enabled_modifiers {
             modifiers
@@ -52,20 +51,26 @@ impl ContentRegistry {
                 });
         }
         ContentRegistry {
-            cards,
-            effects,
+            ingredients,
+            spells,
+            spell_values,
             modifiers,
         }
     }
 
-    /// The enabled card archetypes that make up the deck.
-    pub fn cards(&self) -> &[CardDef] {
-        &self.cards
+    /// The enabled ingredient archetypes that make up each player's pantry.
+    pub fn ingredients(&self) -> &[IngredientDef] {
+        &self.ingredients
     }
 
-    /// The behaviour for an effect kind, if that effect is enabled.
-    pub fn effect(&self, kind: EffectKind) -> Option<&dyn Effect> {
-        self.effects.get(&kind).map(|b| b.as_ref())
+    /// The enabled spell archetypes that make up each player's grimoire.
+    pub fn spells(&self) -> &[SpellDef] {
+        &self.spells
+    }
+
+    /// The tunable spell magnitudes.
+    pub fn spell_values(&self) -> &SpellValues {
+        &self.spell_values
     }
 
     /// The behaviour for a modifier kind, if that modifier is enabled.
@@ -89,8 +94,13 @@ impl ContentRegistry {
         pool
     }
 
-    /// Total physical cards in the deck (sum of enabled archetype copies).
-    pub fn deck_size(&self) -> u32 {
-        self.cards.iter().map(|c| c.copies as u32).sum()
+    /// Total physical ingredients in one pantry (sum of enabled archetype copies).
+    pub fn pantry_size(&self) -> u32 {
+        self.ingredients.iter().map(|c| c.copies as u32).sum()
+    }
+
+    /// Total physical spells in one grimoire (sum of enabled archetype copies).
+    pub fn grimoire_size(&self) -> u32 {
+        self.spells.iter().map(|s| s.copies as u32).sum()
     }
 }
