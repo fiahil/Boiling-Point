@@ -1,14 +1,13 @@
 # Boiling Point — cargo workspace.
 #
 # `protocol/` is the narrow wire waist (DTOs + codec, no secrets); `server/` is
-# the authoritative engine that owns the full domain model. `tui-client/` is the
-# terminal client — an untrusted renderer over `protocol/` (no game logic, no
-# secrets). `bot-harness/` is the Layer-1 headless balance harness that drives the
-# server over the same public protocol a real client uses (the
-# `bot-balance-harness` change).
+# the authoritative engine that owns the full domain model. Retired v1 components
+# (tui-client, bot-harness, agent-harness) live under `archive/` — excluded, not
+# members; see archive/README.md for the revival recipe.
 [workspace]
 resolver = "2"
-members = ["protocol", "server", "tui-client", "bot-harness"]
+members = ["protocol", "server"]
+exclude = ["archive"]
 
 [workspace.package]
 edition = "2024"
@@ -22,8 +21,8 @@ rmp-serde = "1"
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2"
-# Command-line parsing for the binaries (server, tui-client, bot-harness). The
-# derive feature lets each binary declare its args as a documented struct.
+# Command-line parsing for the server binary. The derive feature lets the
+# binary declare its args as a documented struct.
 clap = { version = "4", features = ["derive"] }
 
 # Workspace-wide lints. `missing_docs` enforces Constraint #5 (a purpose

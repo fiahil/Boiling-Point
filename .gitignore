@@ -2,7 +2,7 @@
 **/*.rs.bk
 Cargo.lock.orig
 .DS_Store
-# Runtime logs from scripts/playtest.sh
+# archived agent-harness Node dependencies (guards a revival `npm install`)
+/archive/agent-harness/node_modules/
+# legacy playtest logs (the script is archived; local clones may still have these)
 /.playtest/
-# agent-harness Node dependencies
-/agent-harness/node_modules/
