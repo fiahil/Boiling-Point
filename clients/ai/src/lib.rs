@@ -25,6 +25,9 @@ pub mod seat;
 pub mod transport;
 pub mod view;
 
+#[cfg(feature = "harness")]
+pub mod harness;
+
 /// Errors an AI-client seat can hit.
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {

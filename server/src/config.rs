@@ -229,10 +229,20 @@ pub enum ConfigError {
     Parse(String),
 }
 
+/// The checked-in default content config (the same TOML the server binary
+/// embeds), exposed so harnesses boot against exactly the shipped balance.
+pub const DEFAULT_CONTENT_TOML: &str = include_str!("../content.toml");
+
 impl ContentConfig {
     /// Parse a config from a TOML string.
     pub fn from_toml(s: &str) -> Result<Self, ConfigError> {
         toml::from_str(s).map_err(|e| ConfigError::Parse(e.to_string()))
+    }
+
+    /// The checked-in default content config, parsed (panics only if the
+    /// embedded TOML is invalid, which the server's own tests gate).
+    pub fn default_content() -> Self {
+        ContentConfig::from_toml(DEFAULT_CONTENT_TOML).expect("embedded content.toml is valid")
     }
 
     /// Enabled ingredient archetypes only.

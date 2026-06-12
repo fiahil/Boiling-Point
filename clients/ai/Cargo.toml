@@ -37,7 +37,7 @@ required-features = ["harness"]
 default = []
 # Harness mode: pulls the server in for the headless in-process room boot. The
 # batch-runner binary and the transport-parity/batch tests require it.
-harness = ["dep:boiling-point-server"]
+harness = ["dep:boiling-point-server", "dep:axum"]
 
 [dependencies]
 # The wire protocol — the only crate shared with the server (firewall D2).
@@ -66,9 +66,10 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Embedded WS router serving for harness real-wire runs (harness feature only).
+axum = { version = "0.8", optional = true }
+
 [dev-dependencies]
-# Harness-feature tests embed the server's WS router for real-wire runs.
-axum = "0.8"
 # Paused-clock budget-race tests.
 tokio = { version = "1", features = ["test-util"] }
 

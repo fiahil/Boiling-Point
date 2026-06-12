@@ -9,8 +9,8 @@
 
 ## 2. Server in-process seam
 
-- [ ] 2.1 Expose a headless in-process room boot with per-seat channels carrying **encoded wire frames** through the production codec (no domain objects cross).
-- [ ] 2.2 Transport-parity test: same seeded scenario over in-process and WebSocket produces identical outcomes.
+- [x] 2.1 Expose a headless in-process room boot with per-seat channels carrying **encoded wire frames** through the production codec (no domain objects cross).
+- [x] 2.2 Transport-parity test: same seeded scenario over in-process and WebSocket produces identical outcomes.
 
 ## 3. Client core (`clients/ai/`)
 
@@ -39,11 +39,11 @@
 
 ## 6. Harness mode (Principle IV reinstatement)
 
-- [ ] 6.1 Batch runner over the in-process transport: matrix sample spec (cells × games), per-seat Brewer assignment and scripted deck-archetypes, root-seed reproducibility.
-- [ ] 6.2 Stats + reports (markdown + diffable JSON): explosion rate, detonator distribution, per-Brewer/per-archetype win rates, spell fire rates (Peek economy), fold-to-safety, freeze frequency, game length, fallback rates; non-reproducible marking for agent seats.
-- [ ] 6.3 Degenerate-strategy detection: random-baseline cells in samples; per-cell dominance visible in reports.
-- [ ] 6.4 Agent-in-batch behind an explicit flag (default all-bot, zero Claude calls).
-- [ ] 6.5 Validation tests: reproducibility, seed divergence, transport parity, 1000-game unattended run.
+- [x] 6.1 Batch runner over the in-process transport: matrix sample spec (cells × games), per-seat Brewer assignment and scripted deck-archetypes, root-seed reproducibility.
+- [x] 6.2 Stats + reports (markdown + diffable JSON): explosion rate, detonator distribution, per-Brewer/per-archetype win rates, spell fire rates (Peek economy), fold-to-safety, freeze frequency, game length, fallback rates; non-reproducible marking for agent seats. *(Per-archetype/per-label everywhere; the per-Brewer axis joins the report when `boom2-brewers` lands — the report states the pending axes explicitly.)*
+- [x] 6.3 Degenerate-strategy detection: random-baseline cells in samples; per-cell dominance visible in reports.
+- [x] 6.4 Agent-in-batch behind an explicit flag (default all-bot, zero Claude calls).
+- [x] 6.5 Validation tests: reproducibility, seed divergence, transport parity, 1000-game unattended run.
 
 ## 7. Seat-filler mode (product)
 
