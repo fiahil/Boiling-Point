@@ -1366,18 +1366,33 @@ mod tests {
                 .any(|e| e.name == "commit" && e.attributes.contains_key("vote.color")),
             "commit spans must carry the Vote colour (secret until the depile)"
         );
-        // group.lifetime both opens and (after teardown) closes.
+        // group.lifetime both opens and (after teardown) closes — asserted on
+        // THIS game's group code, so a sibling test's group can never satisfy it
+        // (the capture is process-global across the lib tests).
+        let this_group = |e: &crate::observability::lifecycle::SpanEvent, kind: SpanEventKind| {
+            e.name == "group.lifetime"
+                && e.kind == kind
+                && e.attributes.get("group.code").map(String::as_str) == Some(code.0.as_str())
+        };
         assert!(
-            events
-                .iter()
-                .any(|e| e.name == "group.lifetime" && e.kind == SpanEventKind::Start),
-            "no group.lifetime Start observed"
+            events.iter().any(|e| this_group(e, SpanEventKind::Start)),
+            "no group.lifetime Start observed for this game's group"
         );
-        assert!(
-            wait_until(|| cap
-                .events()
+        // The teardown needs the runtime to keep turning: the clients' sockets
+        // have closed, but the socket handlers must observe it and the group task
+        // must process the Leaves — all tasks on this (current-thread) test
+        // runtime. A blocking wait would starve them, so the wait must yield.
+        let group_ended = || {
+            cap.events()
                 .iter()
-                .any(|e| e.name == "group.lifetime" && e.kind == SpanEventKind::End)),
+                .any(|e| this_group(e, SpanEventKind::End))
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !group_ended() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            group_ended(),
             "group.lifetime never ended after the game completed"
         );
     }

@@ -1954,6 +1954,7 @@ mod tests {
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
+            &tracing::Span::none(),
         )
         .await;
         assert_eq!(
