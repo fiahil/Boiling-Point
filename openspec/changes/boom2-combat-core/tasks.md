@@ -40,7 +40,7 @@
 
 - [ ] 7.1 Web client (`clients/web/`): render the new wave actions (ingredient/spell/pass), the grimoire, and the volatility-sorted, boiling-point-revealing depile. *(Blocked: `clients/web/` does not exist yet — `adopt-pixi-client` has not been implemented. The v4 protocol this renders is shipped; this task lands with/after the web client.)*
 - [x] 7.2 Bot harness (revived from `archive/bot-harness/`, §IV): drive the new loop headlessly; emit explosion-rate, detonator-distribution, Peek-fire-rate, and freeze (all-pass) statistics.
-- [ ] 7.3 Claude-as-player harness (optional revival from `archive/agent-harness/`): expose the new intents over the structured JSON interface. *(Optional — not revived; constitution v2.1.x points agent-driven testing at `boom2-ai-client` instead.)*
+- [x] 7.3 Claude-as-player harness (optional revival from `archive/agent-harness/`): expose the new intents over the structured JSON interface. *(Superseded and satisfied by `boom2-ai-client`: the `clients/ai` agent brain exposes the full v2 intent surface to Claude via decision-frame-derived tool schemas — no TS revival needed.)*
 
 ## 8. Balance (Principle IV)
 

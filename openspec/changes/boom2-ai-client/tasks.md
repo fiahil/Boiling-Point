@@ -54,6 +54,6 @@
 
 ## 8. Integration, CI, docs
 
-- [ ] 8.1 Repoint `boom2-delivery` CI tasks at this client: pinned seeded harness sample in CI + an agent-brain smoke (mock or capped).
-- [ ] 8.2 Fold the per-change harness tasks (combat-core 7.2/7.3, brewers 4.2, apothecary 5.2) into runs of this client; record first balance findings in docs/06_boom2.
-- [ ] 8.3 README for `clients/ai/` (modes, brains, settings, firewall rules); update CLAUDE.md project structure and the Principle IV revival note to point at `clients/ai/`.
+- [x] 8.1 Repoint `boom2-delivery` CI tasks at this client: pinned seeded harness sample in CI + an agent-brain smoke (mock or capped).
+- [x] 8.2 Fold the per-change harness tasks (combat-core 7.2/7.3, brewers 4.2, apothecary 5.2) into runs of this client; record first balance findings in docs/06_boom2.
+- [x] 8.3 README for `clients/ai/` (modes, brains, settings, firewall rules); update CLAUDE.md project structure and the Principle IV revival note to point at `clients/ai/`.

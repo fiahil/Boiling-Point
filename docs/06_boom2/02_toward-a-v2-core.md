@@ -369,6 +369,46 @@ aggressor / diplomat / random), sweeping the boiling-point window from 20–32 t
 
 ---
 
+## Second harness derivation (2026-06-12, `boom2-ai-client`)
+
+The §IV instrument changed hands: the **AI client's harness mode**
+(`clients/ai`, `bp-harness`) supersedes the interim `bot-harness/` for boom2
+balance work. Same engine, different client architecture — seats now play off
+**server-enumerated decision frames** (no client-side rules rederivation) over
+the byte-frame in-process seam, with transport parity against the real
+WebSocket wire proven in CI-able tests. First standing run: 1000 games, seed 0,
+default content (`fingerprint b97f673fd4b6c6e3`), archetypes cautious /
+aggressive / political / random.
+
+**Cross-validation against the first derivation** — the frame-driven client
+reproduces the combat-core economy, so the instrument handover did not move the
+numbers: explosion rate **47.0%** (vs 44.8%; both inside the 40–50% band),
+detonators/boom **1.29** (vs 1.28), Peek casts/game **3.43** (vs ~3.4),
+waves/round **5.87** (vs ~5.8), avg scored pot **~33** (vs ~32, the fat-pot
+finding stands), freeze **0.0%** all-pass endings, 0 empty pots.
+
+**New signals this client adds:**
+
+- **Fold-to-safety is now measured directly:** ~1.59 fold-to-safety events per
+  round — folding pays as designed without freezing rounds (the Vulture stays
+  dead).
+- **Win spread shifted within the band:** political 39.7% · cautious 27.5% ·
+  aggressive 19.9% · random 12.9%. The political posture sits a hair under the
+  40% dominance line — the frame-driven political bot (colorless denial +
+  ward-to-stay-in) is stronger than v1's diplomat; watch it when the Brewer
+  axis lands.
+- **Random baseline is cleanly separated** (12.9% vs 25% parity), so the
+  heuristics demonstrably express strategy — the "bots can't express the
+  strategy" blocking risk is not in effect for the combat core.
+- **Timeliness floor:** 0 fallback commits across 20,000+ decisions (bot
+  brains answer inside every budget), and the run is byte-reproducible from
+  the root seed.
+
+Rerun: `make harness-sample` (CI-sized) or
+`cargo run -p boiling-point-ai-client --features harness --bin bp-harness -- --games 1000 --seed 0`.
+
+---
+
 ## Pointers
 
 - Rationale & alternatives: [`06_depth-and-complexity.md`](01_depth-and-complexity.md)

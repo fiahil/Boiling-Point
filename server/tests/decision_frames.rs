@@ -65,15 +65,11 @@ async fn frame_bot(
             ServerMessage::YourHand { ingredients, .. } => {
                 hand_ids = ingredients.iter().map(|c| c.id).collect();
             }
-            ServerMessage::WaveOpened { wave_number, .. } => {
-                if wave_number == 1 {
-                    locked_out = false;
-                }
+            ServerMessage::WaveOpened { wave_number: 1, .. } => {
+                locked_out = false;
             }
-            ServerMessage::WaveResolved { passed, .. } => {
-                if passed.contains(&me) {
-                    locked_out = true;
-                }
+            ServerMessage::WaveResolved { passed, .. } if passed.contains(&me) => {
+                locked_out = true;
             }
             ServerMessage::DecisionFrame {
                 round_number,
@@ -127,7 +123,7 @@ async fn frame_bot(
                     let p = &playable[pick];
                     send(ClientMessage::CommitIngredient {
                         card: p.ingredient.id,
-                        colorless: p.colorless_allowed && decision_count % 3 == 0,
+                        colorless: p.colorless_allowed && decision_count.is_multiple_of(3),
                     })
                     .await;
                 } else {
@@ -136,7 +132,7 @@ async fn frame_bot(
                 }
 
                 // Cast an enumerated spell on a rotation (≤1 per wave by rule).
-                if !spells.is_empty() && decision_count % 2 == 0 {
+                if !spells.is_empty() && decision_count.is_multiple_of(2) {
                     let s: &CastableSpell = &spells[decision_count % spells.len()];
                     let target = match &s.targets {
                         TargetOptions::None => None,

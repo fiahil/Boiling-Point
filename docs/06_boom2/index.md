@@ -20,14 +20,14 @@ canonical [`02_game-design.md`](../02_game-design.md).
 | [02_toward-a-v2-core.md](02_toward-a-v2-core.md) | **DECISION LOG** — the locked v2 core: the boom model, pantry/grimoire split, the 15-spell grimoire, the Apothecary draft, the 12 Brewers, and the starting numbers. The *what*. |
 
 Reading order: skim **01** for the direction and the alternatives, then **02** for the
-committed design. Everything in 02 is tagged `[needs playtesting]` — the bot harness
-re-derives the balance economy. (Since `retire-v1-harnesses`, 2026-06-11, the bot
-harness lives in [`archive/bot-harness/`](../../archive/README.md); constitution
-v2.0.0 §IV requires reviving it for these at-scale runs before boom2 balance ships.
-The revival is scoped in change
-[`boom2-benchmarking`](../../openspec/changes/boom2-benchmarking/), where the harness
-becomes the **balance study** instrument of the benchmarking suite — on-demand,
-purely observational — alongside the criterion server benchmarks.)
+committed design. Everything in 02 is tagged `[needs playtesting]` — the harness
+re-derives the balance economy. (The §IV at-scale instrument is the **AI client's
+harness mode** — [`clients/ai/`](../../clients/ai/README.md), change
+[`boom2-ai-client`](../../openspec/changes/boom2-ai-client/), superseding the interim
+`bot-harness/` revival that delivered the combat-core derivation. Change
+[`boom2-benchmarking`](../../openspec/changes/boom2-benchmarking/) folds its runs into
+the benchmarking suite as the **balance study** instrument — on-demand, purely
+observational — alongside the criterion server benchmarks.)
 
 ## Design → the boom2 core changes
 

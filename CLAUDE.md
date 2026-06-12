@@ -1,6 +1,6 @@
 # Boiling Point — Agent Guidelines
 
-## Constitution (v2.2.0)
+## Constitution (v2.2.1)
 
 ### I. Server-Authoritative
 
@@ -39,10 +39,13 @@ operating in a closed code-render-screenshot-adjust loop.
   design updates the corresponding docs (`openspec/` contracts, `docs/` rationale,
   this constitution for governance) in the same change
 - Agent testability is a first-class selection criterion for client technology decisions
-- The **bot harness is revived** as a live workspace member (`bot-harness/`,
-  change `boom2-combat-core`) — the at-scale balance instrument Principle IV
-  mandates. The Claude-as-player harness and the TUI reference client remain
-  retired to `archive/` — revivable, not deleted
+- The **AI client** (`clients/ai/`, change `boom2-ai-client`) is the standing
+  agent-driven test instrument: one firewalled Rust client whose bot and Claude
+  brains play off server-enumerated decision frames, serving both the §IV
+  balance harness and the seat-filler product mode. The interim `bot-harness/`
+  (revived for `boom2-combat-core`) is superseded by it for boom2 work; the
+  v1 Claude-as-player harness and the TUI reference client remain retired to
+  `archive/` — revivable, not deleted
 
 ### III. Start Simple, Scale Later
 
@@ -65,9 +68,10 @@ Game mechanics, scoring values, thresholds, and card effects are hypotheses unti
 - Balance changes MUST be data-informed — server telemetry, the admin balance
   dashboard, structured player feedback, or revived-harness statistics
 - Before large balance reworks (e.g. boom2) ship, at-scale automated playtesting MUST
-  run — the revived bot harness (`bot-harness/`, reinstated with `boom2-combat-core`)
-  is the standing instrument for running thousands of seeded games to surface
-  degenerate strategies and derive the balance numbers
+  run — the AI client's harness mode (`clients/ai/` `bp-harness`, change
+  `boom2-ai-client`) is the standing instrument for running thousands of seeded
+  games to surface degenerate strategies and derive the balance numbers (it
+  supersedes the interim `bot-harness/` for boom2 work)
 - No balance number is sacred — if data says change it, change it
 
 ## Technology Stack
@@ -104,8 +108,11 @@ first-class selection criterion for any client technology decision.
 ```
 ├── server/        # authoritative game logic (Axum + Tokio) — cargo workspace member
 ├── protocol/      # wire protocol types, game enums, serde derives (canonical source)
-├── bot-harness/   # headless balance harness (revived with boom2-combat-core) — workspace member
+├── bot-harness/   # interim v1-revived balance harness (boom2-combat-core) — superseded
+│                  # by clients/ai for boom2 work; retire once its callers re-point
 ├── clients/
+│   ├── ai/        # AI client — bot + Claude brains, §IV balance harness (bp-harness),
+│   │              # seat-filler (bp-seats); Rust workspace member, protocol-only firewall
 │   └── web/       # graphical client — TypeScript + PixiJS (lands with adopt-pixi-client)
 └── archive/       # retired v1 components — tui-client, agent-harness, playtest.sh —
                    # revivable, not deleted
@@ -131,6 +138,11 @@ When a practice conflicts with a principle above, the principle wins.
 Violations MUST be documented with justification and rejected simpler alternative.
 
 **Amendment log:**
+- **v2.2.1 (2026-06-12)** — PATCH. The `boom2-ai-client` change landed `clients/ai/`:
+  Principle II's instrument bullet and Principle IV's at-scale mandate now point at
+  the AI client's harness mode (which cross-validated the combat-core balance
+  numbers), and the project structure gains `clients/ai/` with `bot-harness/`
+  marked superseded for boom2 work. No principle changed meaning.
 - **v2.2.0 (2026-06-11)** — MINOR. Revived the bot harness from `archive/` to a
   live workspace member (`bot-harness/`), satisfying Principle IV's pre-ship
   mandate for the boom2 rework: Principle II's archive bullet and Principle IV's
