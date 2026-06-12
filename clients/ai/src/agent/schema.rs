@@ -52,7 +52,13 @@ pub fn tool_from_frame(decision: &PendingDecision) -> ToolDefinition {
         playable,
         can_pass,
         spells,
-    } = decision;
+        ..
+    } = decision
+    else {
+        // The agent brain answers the pre-game Brewer pick deterministically,
+        // without an API call — no tool is ever derived for it.
+        unreachable!("only wave commits build decision tools");
+    };
 
     let card_ids: Vec<u32> = playable.iter().map(|p| p.ingredient.id.0).collect();
     let mut actions: Vec<&str> = Vec::new();
@@ -194,7 +200,9 @@ pub fn tool_from_frame(decision: &PendingDecision) -> ToolDefinition {
 /// the frame. Returns `None` for anything unparseable or outside the legal set
 /// — the caller falls back and logs.
 pub fn answer_from_tool_input(decision: &PendingDecision, input: &Value) -> Option<Answer> {
-    let PendingDecision::WaveCommit { spells, .. } = decision;
+    let PendingDecision::WaveCommit { spells, .. } = decision else {
+        return None;
+    };
 
     let action = match input.get("action").and_then(Value::as_str)? {
         "pass" => WaveAction::Pass,
@@ -300,6 +308,7 @@ mod tests {
                     },
                 },
             ],
+            can_defer: false,
         }
     }
 
@@ -327,11 +336,15 @@ mod tests {
     fn spent_spell_slot_drops_the_spell_fields() {
         let PendingDecision::WaveCommit {
             playable, can_pass, ..
-        } = frame();
+        } = frame()
+        else {
+            panic!("a wave-commit frame");
+        };
         let bare = PendingDecision::WaveCommit {
             playable,
             can_pass,
             spells: vec![],
+            can_defer: false,
         };
         let tool = tool_from_frame(&bare);
         let props = tool.input_schema["properties"].as_object().unwrap();

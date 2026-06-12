@@ -196,6 +196,7 @@ mod tests {
         let mut cfg = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
         cfg.timing.wave1_ms = 2_000;
         cfg.timing.wave_ms = 2_000;
+        cfg.timing.brewer_pick_ms = 2_000;
         let reg = cfg.build_registry().unwrap();
         (Arc::new(reg), Arc::new(cfg))
     }
@@ -211,6 +212,13 @@ mod tests {
             match msg {
                 ServerMessage::YourHand { ingredients, .. } => {
                     hand = ingredients.iter().map(|c| c.id).collect();
+                }
+                ServerMessage::DecisionFrame {
+                    decision: boiling_point_protocol::PendingDecision::BrewerPick { options },
+                    ..
+                } => {
+                    let pick = ClientMessage::PickBrewer { brewer: options[0] };
+                    let _ = seat.to_server.send(codec::encode(&pick).unwrap()).await;
                 }
                 ServerMessage::WaveOpened { wave_number, .. } => {
                     if wave_number == 1 {

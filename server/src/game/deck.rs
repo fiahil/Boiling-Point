@@ -111,8 +111,14 @@ impl Pantry {
     /// floor — refill-only, never trimming. Returns the drawn cards (possibly
     /// short if the pantry exhausted).
     pub fn top_up(&mut self, current_len: usize) -> Vec<Ingredient> {
+        self.top_up_to(current_len, INGREDIENT_HAND as usize)
+    }
+
+    /// Top up to an explicit `floor` — the Forager's deeper hand
+    /// (`boom2-brewers`); refill-only, never trimming.
+    pub fn top_up_to(&mut self, current_len: usize, floor: usize) -> Vec<Ingredient> {
         let mut drawn = Vec::new();
-        while current_len + drawn.len() < INGREDIENT_HAND as usize {
+        while current_len + drawn.len() < floor {
             match self.draw_one() {
                 Some(card) => drawn.push(card),
                 None => break,
@@ -131,8 +137,25 @@ impl Grimoire {
     /// Build one seat's shuffled grimoire from the registry's spell archetypes,
     /// pulling instance ids from the shared `next_id` counter.
     pub fn build(registry: &ContentRegistry, next_id: &mut u32, seed: u64) -> Self {
+        Grimoire::build_excluding(registry, next_id, seed, &[])
+    }
+
+    /// Build a grimoire **without** the `excluded` spell kinds — the
+    /// Cinderwright's ward-free deck (`boom2-brewers`): "can never play a
+    /// Ward" is enforced at construction, so no dead card ever reaches the
+    /// hand. The deck is simply smaller; a short round-start draw degrades
+    /// gracefully like any exhausted grimoire.
+    pub fn build_excluding(
+        registry: &ContentRegistry,
+        next_id: &mut u32,
+        seed: u64,
+        excluded: &[boiling_point_protocol::vocab::SpellKind],
+    ) -> Self {
         let mut spells = Vec::new();
         for def in registry.spells() {
+            if excluded.contains(&def.kind) {
+                continue;
+            }
             for _ in 0..def.copies {
                 spells.push(Spell {
                     id: CardId(*next_id),
@@ -238,6 +261,33 @@ mod tests {
         assert_eq!(last.len(), 2);
         assert_eq!(grimoire.draw_remaining(), 0);
         assert!(grimoire.draw(1).is_empty());
+    }
+
+    /// The Cinderwright's grimoire is built without the three wards — "can
+    /// never play a Ward" enforced at construction (`boom2-brewers`).
+    #[test]
+    fn grimoire_excluding_wards_holds_none() {
+        use crate::game::brewers::WARDS;
+        let reg = registry();
+        let mut next_id = 0;
+        let grimoire = Grimoire::build_excluding(&reg, &mut next_id, 5, &WARDS);
+        // 20 spells minus the 4 ward copies (Cap 2, Halve 1, Redirect 1).
+        assert_eq!(grimoire.draw_remaining(), 16);
+        assert!(grimoire.draw.iter().all(|s| !WARDS.contains(&s.kind)));
+        // The empty exclusion is exactly the plain build.
+        let mut next_id = 100;
+        let plain = Grimoire::build_excluding(&reg, &mut next_id, 5, &[]);
+        assert_eq!(plain.draw_remaining(), 20);
+    }
+
+    /// The Forager's deeper floor: top_up_to refills to 4, never trimming.
+    #[test]
+    fn top_up_to_respects_a_deeper_floor() {
+        let reg = registry();
+        let mut next_id = 0;
+        let mut pantry = Pantry::build(&reg, Color::Sapphire, &mut next_id, 11);
+        assert_eq!(pantry.top_up_to(1, 4).len(), 3);
+        assert!(pantry.top_up_to(5, 4).is_empty(), "never trims");
     }
 
     #[test]

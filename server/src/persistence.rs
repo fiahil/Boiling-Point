@@ -428,7 +428,16 @@ mod tests {
     /// that only exercise the metadata/stats columns.
     fn dummy_replay(game_id: Uuid) -> StoredReplay {
         let cfg = crate::config::ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
-        encode_replay(game_id, 0, &cfg, std::iter::empty(), &[], &[]).expect("encode")
+        encode_replay(
+            game_id,
+            0,
+            &cfg,
+            std::iter::empty(),
+            std::iter::empty(),
+            &[],
+            &[],
+        )
+        .expect("encode")
     }
 
     /// The day series is zero-filled over the whole window, oldest first, with

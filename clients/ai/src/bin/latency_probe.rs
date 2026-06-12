@@ -89,6 +89,7 @@ fn fixture() -> (SeatView, FrameContext) {
                     },
                 },
             ],
+            can_defer: false,
         },
     };
     (view, frame)

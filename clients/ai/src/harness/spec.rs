@@ -2,13 +2,19 @@
 //! deck-archetype cells to run and how many games per cell — never only full
 //! factorial runs.
 //!
-//! The Brewer and deck-archetype axes are declared in the schema but rejected
-//! until `boom2-brewers` / `boom2-apothecary` land their decision kinds: a
-//! spec that sets them fails loudly instead of silently running a different
-//! experiment than the one written down. The persona axis (bot archetypes +
-//! epsilon, or an agent persona) is live today.
+//! The persona axis (bot archetypes + epsilon, or an agent persona) and the
+//! **Brewer axis** (`boom2-brewers`) are live. A seat's `brewer` is a pick
+//! *preference*: the server deals random disjoint pairs, so the seat picks the
+//! named Brewer whenever it is offered (else the first option), and the
+//! persona × Brewer matrix aggregates by the **actual** picks — every cell
+//! contributes signal regardless of the deal. The deck-archetype axis stays
+//! declared-but-rejected until `boom2-apothecary` lands: a spec that sets it
+//! fails loudly instead of silently running a different experiment than the
+//! one written down.
 
 use serde::Deserialize;
+
+use boiling_point_protocol::vocab::Brewer;
 
 use crate::ClientError;
 use crate::bot::Archetype;
@@ -19,14 +25,21 @@ pub struct SeatSpec {
     /// The brain for this seat.
     #[serde(flatten)]
     pub brain: BrainSpec,
-    /// Brewer assignment — reserved axis; rejected until `boom2-brewers`
-    /// lands the Brewer-pick decision kind.
+    /// Brewer pick preference (bot seats only): taken whenever the dealt pair
+    /// offers it. Must name one of the 12 Brewers.
     #[serde(default)]
     pub brewer: Option<String>,
     /// Scripted deck-archetype (the Apothecary draft as an experimental
     /// variable) — reserved axis; rejected until `boom2-apothecary` lands.
     #[serde(default)]
     pub deck_archetype: Option<String>,
+}
+
+impl SeatSpec {
+    /// The parsed Brewer preference (validated by [`SampleSpec::validate`]).
+    pub fn brewer_preference(&self) -> Option<Brewer> {
+        self.brewer.as_deref().and_then(Brewer::by_name)
+    }
 }
 
 /// Which brain a seat runs.
@@ -166,11 +179,24 @@ impl SampleSpec {
                         )));
                     }
                 }
-                if seat.brewer.is_some() {
-                    return Err(ClientError::Config(format!(
-                        "cell '{}': the Brewer axis is not yet available (lands with boom2-brewers)",
-                        cell.name
-                    )));
+                if let Some(name) = &seat.brewer {
+                    if Brewer::by_name(name).is_none() {
+                        return Err(ClientError::Config(format!(
+                            "cell '{}': unknown brewer '{name}' (one of: {})",
+                            cell.name,
+                            Brewer::ALL
+                                .iter()
+                                .map(|b| b.name())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )));
+                    }
+                    if seat.brain.is_agent() {
+                        return Err(ClientError::Config(format!(
+                            "cell '{}': a brewer preference requires a bot brain (the agent picks for itself)",
+                            cell.name
+                        )));
+                    }
                 }
                 if seat.deck_archetype.is_some() {
                     return Err(ClientError::Config(format!(
@@ -213,10 +239,12 @@ mod tests {
         assert!(!spec.has_agent_seats());
     }
 
-    /// The not-yet-landed axes fail loudly instead of silently no-oping.
+    /// The Brewer axis is live: a valid preference parses; an unknown name or
+    /// an agent-seat preference fails loudly; the deck-archetype axis is still
+    /// reserved.
     #[test]
-    fn reserved_axes_are_rejected() {
-        let err = SampleSpec::from_toml(
+    fn brewer_axis_is_live_and_validated() {
+        let spec = SampleSpec::from_toml(
             r#"
             root_seed = 7
             [[cells]]
@@ -230,8 +258,67 @@ mod tests {
             ]
             "#,
         )
+        .expect("a live brewer axis parses");
+        assert_eq!(
+            spec.cells[0].seats[0].brewer_preference(),
+            Some(Brewer::Cinderwright)
+        );
+
+        let unknown = SampleSpec::from_toml(
+            r#"
+            root_seed = 7
+            [[cells]]
+            name = "x"
+            games = 1
+            seats = [
+                { brain = "bot", archetype = "cautious", brewer = "Bartender" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+            ]
+            "#,
+        )
         .unwrap_err();
-        assert!(err.to_string().contains("boom2-brewers"), "{err}");
+        assert!(unknown.to_string().contains("unknown brewer"), "{unknown}");
+
+        let agent_pref = SampleSpec::from_toml(
+            r#"
+            root_seed = 7
+            [[cells]]
+            name = "x"
+            games = 1
+            seats = [
+                { brain = "agent", brewer = "Lurker" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+            ]
+            "#,
+        )
+        .unwrap_err();
+        assert!(agent_pref.to_string().contains("bot brain"), "{agent_pref}");
+    }
+
+    /// The not-yet-landed deck-archetype axis fails loudly instead of silently
+    /// no-oping.
+    #[test]
+    fn reserved_axes_are_rejected() {
+        let err = SampleSpec::from_toml(
+            r#"
+            root_seed = 7
+            [[cells]]
+            name = "x"
+            games = 1
+            seats = [
+                { brain = "bot", archetype = "cautious", deck_archetype = "rush" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+            ]
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("boom2-apothecary"), "{err}");
     }
 
     /// Bad shapes are rejected: seat counts, unknown archetypes, agent flags.

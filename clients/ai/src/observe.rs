@@ -3,7 +3,7 @@
 //! seat-filler logs. Broadcast-visible facts only; identical across seats.
 
 use boiling_point_protocol::PlayerId;
-use boiling_point_protocol::vocab::{Color, ModifierKind};
+use boiling_point_protocol::vocab::{Brewer, Color, ModifierKind};
 
 /// What a seat observed in one round.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,6 +60,9 @@ pub struct GameObservation {
     pub me: Option<PlayerId>,
     /// The observing seat's colour.
     pub my_color: Option<Color>,
+    /// The table's public Brewer assignments (`boom2-brewers`) — the harness's
+    /// persona × Brewer matrix keys on these actual picks.
+    pub brewers: Vec<(PlayerId, Brewer)>,
     /// Per-round observations, in order.
     pub rounds: Vec<RoundObservation>,
     /// The game's winner(s).

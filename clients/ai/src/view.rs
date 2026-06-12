@@ -17,9 +17,9 @@
 
 use boiling_point_protocol::ServerMessage;
 use boiling_point_protocol::frame::PendingDecision;
-use boiling_point_protocol::server::{Contribution, PlayerPublic, PlayerScore};
+use boiling_point_protocol::server::{Contribution, PlayerBrewer, PlayerPublic, PlayerScore};
 use boiling_point_protocol::vocab::{
-    Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind,
+    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind,
 };
 use boiling_point_protocol::{CardId, PlayerId};
 
@@ -45,6 +45,9 @@ pub struct SeatView {
     pub my_color: Color,
     /// Everyone at the table (public info only — never hand contents).
     pub players: Vec<PlayerPublic>,
+    /// Every player's public Brewer identity (empty until the pre-game pick
+    /// closes; `boom2-brewers`).
+    pub brewers: Vec<PlayerBrewer>,
     /// This seat's own private ingredient hand (topped up each wave).
     pub ingredients: Vec<HandIngredient>,
     /// This seat's own private spell hand (the hoard).
@@ -90,6 +93,7 @@ impl SeatView {
             me,
             my_color,
             players: Vec::new(),
+            brewers: Vec::new(),
             ingredients: Vec::new(),
             spells: Vec::new(),
             round_number: 0,
@@ -162,6 +166,14 @@ impl SeatView {
                 }
             })
             .unwrap_or_else(|| "?".into())
+    }
+
+    /// A player's public Brewer, once the pick has closed.
+    pub fn brewer_of(&self, id: PlayerId) -> Option<Brewer> {
+        self.brewers
+            .iter()
+            .find(|b| b.player == id)
+            .map(|b| b.brewer)
     }
 
     /// This seat's current cumulative score, if known.
@@ -409,9 +421,21 @@ impl SeatView {
                     p.connected = *connected;
                 }
             }
+            ServerMessage::BrewersRevealed { brewers } => {
+                self.brewers = brewers.clone();
+                let brewers = brewers.clone();
+                self.log(|v| {
+                    let lines: Vec<String> = brewers
+                        .iter()
+                        .map(|b| format!("{} is the {:?}", v.name_of(b.player), b.brewer))
+                        .collect();
+                    format!("Brewers revealed: {}.", lines.join("; "))
+                });
+            }
             ServerMessage::StateSnapshot {
                 round_number,
                 players,
+                brewers,
                 scores,
                 active_modifiers,
                 contributions,
@@ -423,6 +447,7 @@ impl SeatView {
                 // the pass lockout.
                 self.round_number = *round_number;
                 self.players = players.clone();
+                self.brewers = brewers.clone();
                 self.scores = scores.clone();
                 self.active_modifiers = active_modifiers.clone();
                 self.contributions = contributions.clone();
@@ -538,6 +563,34 @@ mod tests {
         assert!(
             secret_audit(&ServerMessage::ScoreUpdate { scores: vec![] }).is_ok(),
             "clean broadcasts pass"
+        );
+    }
+
+    /// The public Brewer assignments enter through the reveal (and a snapshot)
+    /// and are queryable per player.
+    #[test]
+    fn brewers_arrive_via_the_reveal() {
+        use boiling_point_protocol::server::PlayerBrewer;
+        use boiling_point_protocol::vocab::Brewer;
+        let mut v = SeatView::new(pid(1), Color::Ruby).with_transcript();
+        assert_eq!(v.brewer_of(pid(2)), None);
+        v.observe(&ServerMessage::BrewersRevealed {
+            brewers: vec![
+                PlayerBrewer {
+                    player: pid(1),
+                    brewer: Brewer::Forager,
+                },
+                PlayerBrewer {
+                    player: pid(2),
+                    brewer: Brewer::Lurker,
+                },
+            ],
+        });
+        assert_eq!(v.brewer_of(pid(1)), Some(Brewer::Forager));
+        assert_eq!(v.brewer_of(pid(2)), Some(Brewer::Lurker));
+        assert!(
+            v.transcript().last().unwrap().contains("Brewers revealed"),
+            "the reveal lands in the transcript"
         );
     }
 

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use boiling_point_protocol::vocab::{Color, SpellTarget};
+use boiling_point_protocol::vocab::{Brewer, Color, SpellTarget};
 use boiling_point_protocol::{CardId, EmoteId, PlayerId};
 
 use crate::config::ContentConfig;
@@ -46,14 +46,20 @@ use crate::persistence::StoredReplay;
 /// the payload column moved from base64 `TEXT` to raw `BYTEA`.
 /// v3: the boom2 combat core — `WaveChoice` became ingredient-or-pass + optional
 /// spell, and the recorded inputs gained `CommitIngredient`/`CastSpell`.
-pub const REPLAY_FORMAT_VERSION: u16 = 3;
+/// v4: the Brewers (`boom2-brewers`) — the body gained the table's brewer
+/// assignments (a reconstruction input: decks and bends key off them),
+/// `WaveChoice` gained the Channeler's `second_spell`, and the recorded inputs
+/// gained `PickBrewer`/`CommitDefer`.
+pub const REPLAY_FORMAT_VERSION: u16 = 4;
 
 /// Engine version the payload was recorded under. Bump when an engine change
 /// alters deterministic reconstruction; stored payloads then select a migration
 /// / re-render path keyed off this tag rather than being lost.
 ///
 /// v2: the boom2 combat-core engine (pantries/grimoire, detonator-only explosion).
-pub const ENGINE_VERSION: u16 = 2;
+/// v3: the Brewer bends (`boom2-brewers`) — per-Brewer rule hooks alter dealing,
+/// liability, and scoring.
+pub const ENGINE_VERSION: u16 = 3;
 
 /// A seated player as the replay must remember them to rebuild the roster.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,6 +93,13 @@ pub enum RecordedInput {
     },
     /// The player committed to passing the wave.
     CommitPass,
+    /// The player (a Lurker) deferred their commit past the wave reveal.
+    CommitDefer,
+    /// The player picked a Brewer from their dealt pre-game pair.
+    PickBrewer {
+        /// The Brewer picked.
+        brewer: Brewer,
+    },
     /// The player locked in their current selection.
     LockIn,
     /// The player sent a table-talk emote.
@@ -120,6 +133,11 @@ struct ReplayBody {
     seed: u64,
     /// The seated roster, in seating order.
     players: Vec<ReplayPlayer>,
+    /// Each player's picked Brewer — a reconstruction input (deck building and
+    /// the in-round bends key off it). Empty for brewerless games (and absent,
+    /// hence empty, in pre-v4 payloads).
+    #[serde(default)]
+    brewers: Vec<(PlayerId, Brewer)>,
     /// Ordered per-wave player actions in engine decision order — the
     /// deterministic input the reconstruction re-runs.
     action_log: Vec<WaveChoice>,
@@ -181,13 +199,15 @@ pub fn config_fingerprint(config: &ContentConfig) -> String {
 
 /// Assemble and encode a completed game's replay into its storable row. The
 /// `seed` and `action_log` come from the played game (e.g. [`GameOutcome`]);
-/// `players` is the seated roster in seating order; `input_log` is the
+/// `players` is the seated roster in seating order; `brewers` is the table's
+/// picked identities (empty for a brewerless game); `input_log` is the
 /// session-recorded raw inputs (commit/pass/lock-in/emote) with timestamps.
 pub fn encode_replay(
     game_id: Uuid,
     seed: u64,
     config: &ContentConfig,
     players: impl IntoIterator<Item = (PlayerId, Color, String)>,
+    brewers: impl IntoIterator<Item = (PlayerId, Brewer)>,
     action_log: &[WaveChoice],
     input_log: &[TimedInput],
 ) -> Result<StoredReplay, ReplayError> {
@@ -204,6 +224,7 @@ pub fn encode_replay(
                 display_name,
             })
             .collect(),
+        brewers: brewers.into_iter().collect(),
         action_log: action_log.to_vec(),
         input_log: input_log.to_vec(),
     };
@@ -252,7 +273,13 @@ pub fn reconstruct(
             display_name: p.display_name.clone(),
         })
         .collect();
-    let mut game = Game::new(registry, config, players, body.seed);
+    let mut game = Game::with_brewers(
+        registry,
+        config,
+        players,
+        body.brewers.iter().copied().collect(),
+        body.seed,
+    );
     let mut decider = ReplayDecider::new(body.action_log);
     let (outcome, events) = game.play_out_with_events(&mut decider);
     Ok(Reconstruction { events, outcome })
@@ -316,6 +343,7 @@ mod tests {
                     colorless: false,
                 },
                 spell: None,
+                second_spell: None,
             },
             None => WaveChoice::pass(),
         }
@@ -342,6 +370,7 @@ mod tests {
             roster
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
             &outcome.action_log,
             &[],
         )
@@ -398,6 +427,7 @@ mod tests {
             roster
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
             &outcome.action_log,
             &inputs,
         )
@@ -409,6 +439,62 @@ mod tests {
         // ...and the event stream is still reconstructed identically.
         let recon = reconstruct(&stored, &reg, &cfg).expect("reconstruct");
         assert_eq!(recon.events, events, "reconstructed event stream differs");
+    }
+
+    /// Brewer assignments are a reconstruction input: a game whose brewers
+    /// bend dealing (Forager) and the grimoire (Cinderwright) re-runs to the
+    /// identical stream only because the payload carries them.
+    #[test]
+    fn replay_with_brewers_round_trips() {
+        let (reg, cfg) = registry_and_config();
+        let roster = four_players();
+        let brewers: std::collections::HashMap<PlayerId, Brewer> = [
+            (roster[0].id, Brewer::Forager),
+            (roster[1].id, Brewer::Cinderwright),
+            (roster[2].id, Brewer::Featherhand),
+            (roster[3].id, Brewer::Broker),
+        ]
+        .into();
+
+        let mut original = Game::with_brewers(&reg, &cfg, roster.clone(), brewers.clone(), 0xB4E3);
+        let mut decider = eager();
+        let (outcome, events) = original.play_out_with_events(&mut decider);
+
+        let stored = encode_replay(
+            Uuid::new_v4(),
+            outcome.seed,
+            &cfg,
+            roster
+                .iter()
+                .map(|p| (p.id, p.color, p.display_name.clone())),
+            brewers.iter().map(|(p, b)| (*p, *b)),
+            &outcome.action_log,
+            &[],
+        )
+        .expect("encode");
+        let recon = reconstruct(&stored, &reg, &cfg).expect("reconstruct");
+        assert_eq!(recon.events, events, "reconstructed event stream differs");
+        assert_eq!(recon.outcome.scores, outcome.scores);
+
+        // Dropping the brewers from the payload yields a DIFFERENT game (the
+        // bends are load-bearing) — guarding against a silent omission.
+        let brewerless = encode_replay(
+            Uuid::new_v4(),
+            outcome.seed,
+            &cfg,
+            roster
+                .iter()
+                .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
+            &outcome.action_log,
+            &[],
+        )
+        .expect("encode");
+        let recon = reconstruct(&brewerless, &reg, &cfg).expect("reconstruct");
+        assert_ne!(
+            recon.events, events,
+            "brewer bends must be part of deterministic reconstruction"
+        );
     }
 
     /// A payload whose bytes have been tampered with fails the integrity check
@@ -428,6 +514,7 @@ mod tests {
             roster
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
             &outcome.action_log,
             &[],
         )

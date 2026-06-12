@@ -14,7 +14,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use boiling_point_protocol::frame::PendingDecision;
-use boiling_point_protocol::vocab::SpellTarget;
+use boiling_point_protocol::vocab::{Brewer, SpellTarget};
 use boiling_point_protocol::{CardId, ClientMessage, EmoteId};
 
 use crate::view::{FrameContext, SeatView};
@@ -43,7 +43,7 @@ pub struct SpellCast {
 }
 
 /// A brain's complete answer to one decision frame. Grows a variant per
-/// decision kind as the v2 surface lands (Brewer pick, Apothecary draft).
+/// decision kind as the v2 surface lands (the Apothecary draft is next).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
     /// The per-wave commit: ingredient-or-pass plus the optional spell.
@@ -53,15 +53,34 @@ pub enum Answer {
         /// The optional spell slot.
         spell: Option<SpellCast>,
     },
+    /// The pre-game Brewer pick (1 of the dealt pair).
+    BrewerPick {
+        /// The chosen Brewer.
+        brewer: Brewer,
+    },
 }
 
 impl Answer {
     /// A bare pass with no spell — legal on every wave-commit frame, the
-    /// fallback of last resort.
+    /// fallback of last resort (for a wave commit; see [`Answer::failsafe`]).
     pub fn pass() -> Self {
         Answer::WaveCommit {
             action: WaveAction::Pass,
             spell: None,
+        }
+    }
+
+    /// The always-legal answer of last resort for a frame: the bare pass for a
+    /// wave commit, the first offered option for a Brewer pick.
+    pub fn failsafe(decision: &PendingDecision) -> Self {
+        match decision {
+            PendingDecision::WaveCommit { .. } => Answer::pass(),
+            PendingDecision::BrewerPick { options } => Answer::BrewerPick {
+                brewer: options
+                    .first()
+                    .copied()
+                    .unwrap_or(boiling_point_protocol::Brewer::ALL[0]),
+            },
         }
     }
 
@@ -82,11 +101,13 @@ impl Answer {
                 };
                 action_ok && spell_ok
             }
+            Answer::BrewerPick { brewer } => decision.permits_pick(*brewer),
         }
     }
 
     /// The wire messages that submit this answer, in send order (the action,
-    /// then the optional cast, then the lock-in that closes the wave early).
+    /// then the optional cast, then the lock-in that closes the wave early; a
+    /// brewer pick is a single message, final on receipt).
     pub fn to_messages(&self) -> Vec<ClientMessage> {
         match self {
             Answer::WaveCommit { action, spell } => {
@@ -106,6 +127,9 @@ impl Answer {
                 }
                 msgs.push(ClientMessage::LockIn);
                 msgs
+            }
+            Answer::BrewerPick { brewer } => {
+                vec![ClientMessage::PickBrewer { brewer: *brewer }]
             }
         }
     }
@@ -167,9 +191,9 @@ pub async fn decide_with_budget(
     if answer.is_legal(&frame.decision) {
         (answer, resolution)
     } else {
-        // The fallback itself misbehaved (a brain bug): pass, which every
-        // wave-commit frame permits.
-        (Answer::pass(), resolution)
+        // The fallback itself misbehaved (a brain bug): the frame's failsafe —
+        // the bare pass for a wave commit, the first option for a brewer pick.
+        (Answer::failsafe(&frame.decision), resolution)
     }
 }
 
@@ -240,6 +264,7 @@ mod tests {
                     kind: SpellKind::Peek,
                     targets: TargetOptions::None,
                 }],
+                can_defer: false,
             },
         }
     }

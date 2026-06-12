@@ -162,17 +162,23 @@ pub async fn run_seat<C: Connection>(
                 for msg in answer.to_messages() {
                     conn.send(&msg).await?;
                 }
-                let Answer::WaveCommit { action, spell } = answer;
-                match action {
-                    WaveAction::Play { card, .. } => pending_commit = Some(card),
-                    WaveAction::Pass => {
-                        view.passed = true;
-                        pending_commit = None;
+                match answer {
+                    Answer::WaveCommit { action, spell } => {
+                        match action {
+                            WaveAction::Play { card, .. } => pending_commit = Some(card),
+                            WaveAction::Pass => {
+                                view.passed = true;
+                                pending_commit = None;
+                            }
+                        }
+                        if let Some(cast) = spell {
+                            // Optimistic removal; the next YourHand refresh re-syncs.
+                            view.remove_spell(cast.spell);
+                        }
                     }
-                }
-                if let Some(cast) = spell {
-                    // Optimistic removal; the next YourHand refresh re-syncs.
-                    view.remove_spell(cast.spell);
+                    // The pick is final on receipt; the table assignment
+                    // arrives in the BrewersRevealed broadcast.
+                    Answer::BrewerPick { .. } => {}
                 }
                 if let Some(emote) = brain.emote(&view, &cfg.emote_palette) {
                     conn.send(&ClientMessage::Emote { emote }).await?;
@@ -273,6 +279,7 @@ pub async fn run_seat<C: Connection>(
                 out.observation = GameObservation {
                     me: Some(view.me),
                     my_color: Some(view.my_color),
+                    brewers: view.brewers.iter().map(|b| (b.player, b.brewer)).collect(),
                     rounds: std::mem::take(&mut rounds),
                     winners,
                     final_scores: final_scores
@@ -294,6 +301,7 @@ pub async fn run_seat<C: Connection>(
     out.observation = GameObservation {
         me: Some(view.me),
         my_color: Some(view.my_color),
+        brewers: view.brewers.iter().map(|b| (b.player, b.brewer)).collect(),
         rounds,
         completed: false,
         ..GameObservation::default()
@@ -374,6 +382,7 @@ mod tests {
                 }],
                 can_pass: true,
                 spells: vec![],
+                can_defer: false,
             },
         }
     }
@@ -449,6 +458,7 @@ mod tests {
     async fn scripted_frames_bypass_the_brain() {
         let policy = HostPolicy {
             wave_commit: Policy::Scripted(Answer::pass()),
+            brewer_pick: Policy::Delegated,
         };
         let (outcome, sent, brain_calls, fallback_calls) = run_with_policy(policy).await;
         assert_eq!(brain_calls, 0, "the brain must never see a scripted kind");
@@ -471,6 +481,7 @@ mod tests {
                 },
                 spell: None,
             }),
+            brewer_pick: Policy::Delegated,
         };
         let (outcome, sent, brain_calls, fallback_calls) = run_with_policy(policy).await;
         assert_eq!(brain_calls, 0);

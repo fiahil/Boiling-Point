@@ -82,6 +82,9 @@ pub struct SeatRecord {
     pub player: PlayerId,
     /// The seat's colour.
     pub color: Color,
+    /// The Brewer this seat actually picked (from the public reveal) — the
+    /// persona × Brewer matrix key.
+    pub brewer: Option<String>,
     /// Decisions the seat answered.
     pub decisions: u32,
     /// Fallback commits (budget misses + illegal answers).
@@ -152,8 +155,14 @@ fn build_brains(
     match &seat_spec.brain {
         BrainSpec::Bot { archetype, epsilon } => {
             let archetype = Archetype::by_name(archetype).expect("validated by the spec");
-            let brain = BotBrain::new(archetype, seeds.bot_rng(seat)).with_epsilon(*epsilon);
-            (Box::new(brain), BotBrain::new(archetype, fallback_rng))
+            let preference = seat_spec.brewer_preference();
+            let brain = BotBrain::new(archetype, seeds.bot_rng(seat))
+                .with_epsilon(*epsilon)
+                .with_brewer_preference(preference);
+            (
+                Box::new(brain),
+                BotBrain::new(archetype, fallback_rng).with_brewer_preference(preference),
+            )
         }
         BrainSpec::Agent { model, persona } => {
             let mut settings = AgentSettings::default();
@@ -246,6 +255,11 @@ fn record_game(
             label,
             player,
             color,
+            brewer: observation
+                .brewers
+                .iter()
+                .find(|(p, _)| *p == player)
+                .map(|(_, b)| b.name().to_string()),
             decisions: o.decisions,
             fallbacks: o.fallbacks(),
         })

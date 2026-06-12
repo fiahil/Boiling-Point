@@ -21,7 +21,7 @@ use boiling_point_protocol::server::{
     Contribution, DepileEntry, PlayerScore, ScoringOutcome, SpellFire,
 };
 use boiling_point_protocol::vocab::{
-    Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellTarget,
+    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellTarget,
     TargetKind,
 };
 
@@ -29,6 +29,7 @@ use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::persistence::{CompletedGame, GameStats, PlayerOutcome, StoredReplay};
 
+use super::brewers;
 use super::card::Ingredient;
 use super::deathmatch::{DeathmatchResult, run_deathmatch};
 use super::deck::{Grimoire, Pantry};
@@ -403,6 +404,17 @@ struct ActiveRound {
     effective_boiling_point: i32,
 }
 
+/// The bookkeeping of a staged (Lurker-deferred) wave between
+/// [`Game::resolve_wave_partial`] and [`Game::resolve_wave_finalize`]: the
+/// wave's acting order and the already-validated effective choices, so the
+/// action log can be written in acting order once the late commit lands (a
+/// replay then re-runs the wave as a simultaneous one — same engine outcome).
+struct StagedWaveState {
+    acting: Vec<PlayerId>,
+    effective: HashMap<PlayerId, WaveChoice>,
+    deferrer: PlayerId,
+}
+
 /// A decision source: given a player and their hand, choose a wave action.
 pub trait Decider {
     /// Choose this wave's action (ingredient-or-pass + optional spell) for
@@ -426,6 +438,9 @@ pub struct Game<'a> {
     scores: HashMap<PlayerId, i32>,
     color_owner: HashMap<Color, PlayerId>,
     player_color: HashMap<PlayerId, Color>,
+    /// Each player's public Brewer (`boom2-brewers`); empty when no brewer
+    /// phase ran (the brewerless sync runner and pre-v6 replays).
+    brewers: HashMap<PlayerId, Brewer>,
     modifiers: ActiveModifiers,
     modifier_pile: Vec<ModifierKind>,
     rng: StdRng,
@@ -437,6 +452,8 @@ pub struct Game<'a> {
     seed: u64,
     /// The round currently in progress (None between rounds and at game end).
     current: Option<ActiveRound>,
+    /// The bookkeeping of an in-flight staged (Lurker-deferred) wave.
+    staged_wave: Option<StagedWaveState>,
     /// Per-wave player choices in decision order — the replay action log,
     /// recorded by [`Game::resolve_wave`] so both the sync and networked paths
     /// populate it identically.
@@ -444,11 +461,26 @@ pub struct Game<'a> {
 }
 
 impl<'a> Game<'a> {
-    /// Create a game for exactly four players (each a distinct colour), seeded.
+    /// Create a game for exactly four players (each a distinct colour), seeded,
+    /// with no Brewers (the brewerless baseline — sync tests, pre-v6 replays).
     pub fn new(
         registry: &'a ContentRegistry,
         config: &ContentConfig,
         players: Vec<Player>,
+        seed: u64,
+    ) -> Self {
+        Game::with_brewers(registry, config, players, HashMap::new(), seed)
+    }
+
+    /// Create a game whose players carry their picked Brewers. Brewer picks
+    /// MUST be settled before construction: deck building consults them (the
+    /// Cinderwright's grimoire is built ward-free), which is the engine half
+    /// of the brewer-before-deck ordering (spec `boom-brewers`).
+    pub fn with_brewers(
+        registry: &'a ContentRegistry,
+        config: &ContentConfig,
+        players: Vec<Player>,
+        brewers: HashMap<PlayerId, Brewer>,
         seed: u64,
     ) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
@@ -472,7 +504,15 @@ impl<'a> Game<'a> {
                 p.id,
                 Pantry::build(registry, p.color, &mut next_id, pantry_seed),
             );
-            grimoires.insert(p.id, Grimoire::build(registry, &mut next_id, grimoire_seed));
+            grimoires.insert(
+                p.id,
+                Grimoire::build_excluding(
+                    registry,
+                    &mut next_id,
+                    grimoire_seed,
+                    brewers::excluded_spells(brewers.get(&p.id).copied()),
+                ),
+            );
         }
 
         let color_owner: HashMap<Color, PlayerId> =
@@ -491,6 +531,7 @@ impl<'a> Game<'a> {
             scores,
             color_owner,
             player_color,
+            brewers,
             modifiers: ActiveModifiers::new(),
             modifier_pile,
             rng,
@@ -501,8 +542,19 @@ impl<'a> Game<'a> {
             cards_played,
             seed,
             current: None,
+            staged_wave: None,
             action_log: Vec::new(),
         }
+    }
+
+    /// Each player's public Brewer (empty when no brewer phase ran).
+    pub fn brewers(&self) -> &HashMap<PlayerId, Brewer> {
+        &self.brewers
+    }
+
+    /// A player's Brewer, if one was picked.
+    pub fn brewer_of(&self, player: PlayerId) -> Option<Brewer> {
+        self.brewers.get(&player).copied()
     }
 
     /// Play the whole game with the given decider, returning the outcome. The
@@ -692,7 +744,8 @@ impl<'a> Game<'a> {
             None
         };
 
-        // Round-start deal: spells (the hoard draw) and the wave-1 ingredient top-up.
+        // Round-start deal: spells (the hoard draw) and the wave-1 ingredient
+        // top-up (to the Forager's deeper floor where the bend applies).
         let ids: Vec<PlayerId> = self.players.iter().map(|p| p.id).collect();
         for id in &ids {
             let spells = self
@@ -703,7 +756,8 @@ impl<'a> Game<'a> {
             let hand = self.hands.get_mut(id).unwrap();
             hand.add_spells(spells);
             let len = hand.ingredients().len();
-            let drawn = self.pantries.get_mut(id).unwrap().top_up(len);
+            let floor = brewers::hand_floor(self.brewer_of(*id));
+            let drawn = self.pantries.get_mut(id).unwrap().top_up_to(len, floor);
             self.hands.get_mut(id).unwrap().add_ingredients(drawn);
         }
 
@@ -717,7 +771,14 @@ impl<'a> Game<'a> {
             .copied()
             .filter(|id| !self.hands[id].no_ingredients() && !absent.contains(id))
             .collect();
-        let round = Round::start(active, effective_boiling_point, start_vol);
+        let featherhands: HashSet<PlayerId> = self
+            .brewers
+            .iter()
+            .filter(|(_, b)| **b == Brewer::Featherhand)
+            .map(|(p, _)| *p)
+            .collect();
+        let round = Round::start(active, effective_boiling_point, start_vol)
+            .with_featherhands(featherhands);
         self.current = Some(ActiveRound {
             round,
             round_number,
@@ -731,14 +792,15 @@ impl<'a> Game<'a> {
     }
 
     /// Top every active player's ingredient hand up to the floor (the start-of-wave
-    /// deal; refill-only). Idempotent for wave 1, whose top-up happened at round
-    /// open. Returns the active players (whose private hands a presenter
-    /// re-sends).
+    /// deal; refill-only; the Forager's floor is 4). Idempotent for wave 1, whose
+    /// top-up happened at round open. Returns the active players (whose private
+    /// hands a presenter re-sends).
     pub fn top_up_active(&mut self) -> Vec<PlayerId> {
         let active: Vec<PlayerId> = self.active().to_vec();
         for id in &active {
             let len = self.hands[id].ingredients().len();
-            let drawn = self.pantries.get_mut(id).unwrap().top_up(len);
+            let floor = brewers::hand_floor(self.brewer_of(*id));
+            let drawn = self.pantries.get_mut(id).unwrap().top_up_to(len, floor);
             self.hands.get_mut(id).unwrap().add_ingredients(drawn);
         }
         active
@@ -759,6 +821,159 @@ impl<'a> Game<'a> {
                 target,
                 Some(SpellTarget::Color { color }) if color != Color::Wild
             ),
+        }
+    }
+
+    /// Validate one player's optional spell cast against their hand and Brewer
+    /// (an unheld spell, an illegal target, or a ward from the ward-banned
+    /// Cinderwright drops the cast), removing it from the hand and collecting
+    /// the commit. Returns the cast as logged.
+    fn take_spell_choice(
+        &mut self,
+        player: PlayerId,
+        sc: Option<SpellChoice>,
+        spells: &mut Vec<CastCommit>,
+    ) -> Option<SpellChoice> {
+        sc.and_then(|sc| {
+            let kind = self
+                .hands
+                .get(&player)?
+                .spells()
+                .iter()
+                .find(|s| s.id == sc.spell)?
+                .kind;
+            if !self.target_valid(kind, sc.target, player) {
+                return None;
+            }
+            // Defense in depth: a Cinderwright can never play a Ward (their
+            // grimoire is built without them, so this can only catch a bug).
+            if brewers::excluded_spells(self.brewer_of(player)).contains(&kind) {
+                return None;
+            }
+            let spell = self.hands.get_mut(&player)?.take_spell(sc.spell)?;
+            spells.push(CastCommit {
+                player,
+                spell,
+                target: sc.target,
+            });
+            Some(sc)
+        })
+    }
+
+    /// Validate one player's full wave choice against their hand: the
+    /// mandatory ingredient-or-pass (an unheld card is a safe pass), the
+    /// optional spell, and — for a Channeler only — the second cast. Removes
+    /// committed cards, collects the inputs, and returns the **effective**
+    /// choice (the deterministic replay form: invalid inputs replay as their
+    /// safe normalisation).
+    fn take_choice(
+        &mut self,
+        player: PlayerId,
+        choice: WaveChoice,
+        committed: &mut Vec<(PlayerId, Ingredient, bool)>,
+        passers: &mut Vec<PlayerId>,
+        spells: &mut Vec<CastCommit>,
+    ) -> WaveChoice {
+        let logged_action = match choice.action {
+            WaveAction::Play { card, colorless } => {
+                let taken = self
+                    .hands
+                    .get_mut(&player)
+                    .and_then(|h| h.take_ingredient(card));
+                if let Some(ingredient) = taken {
+                    *self.cards_played.get_mut(&player).unwrap() += 1;
+                    committed.push((player, ingredient, colorless));
+                    WaveAction::Play { card, colorless }
+                } else {
+                    passers.push(player); // unheld card → a safe pass
+                    WaveAction::Pass
+                }
+            }
+            WaveAction::Pass => {
+                passers.push(player);
+                WaveAction::Pass
+            }
+        };
+
+        // The optional spell (a spell never keeps a passed player in), plus the
+        // Channeler's second cast — dropped for everyone else (the per-wave
+        // allowance is one; `boom2-brewers`).
+        let logged_spell = self.take_spell_choice(player, choice.spell, spells);
+        let logged_second = if brewers::spell_limit(self.brewer_of(player)) >= 2 {
+            self.take_spell_choice(player, choice.second_spell, spells)
+        } else {
+            None
+        };
+
+        WaveChoice {
+            action: logged_action,
+            spell: logged_spell,
+            second_spell: logged_second,
+        }
+    }
+
+    /// Players in `committed` who can never act again (hand and pantry empty).
+    fn newly_exhausted(&self, committed: &[(PlayerId, Ingredient, bool)]) -> Vec<PlayerId> {
+        committed
+            .iter()
+            .map(|(p, _, _)| *p)
+            .filter(|p| self.hands[p].no_ingredients() && self.pantries[p].is_exhausted())
+            .collect()
+    }
+
+    /// Draw Forage spells for `outcome`'s casters and extend its private Peek
+    /// disclosures with every seated Eavesdropper (`boom2-brewers`) — strictly
+    /// conditional: no Peek this wave, no piggyback (the discipline's
+    /// no-free-perfect-information guardrail). Then assemble the presenter
+    /// report.
+    fn present_wave(
+        &mut self,
+        committed_report: Vec<(PlayerId, Ingredient, bool)>,
+        passers: Vec<PlayerId>,
+        mut outcome: super::spells::WaveSpellOutcome,
+        ended: Option<RoundEnd>,
+        forage_draws: u8,
+    ) -> WaveResolution {
+        // Forage draws: grow the casters' spell hands; the owners must be told.
+        let mut hand_changed: Vec<PlayerId> = Vec::new();
+        for player in &outcome.foragers {
+            let drawn = self
+                .grimoires
+                .get_mut(player)
+                .expect("seated player has a grimoire")
+                .draw(forage_draws as usize);
+            if let Some(hand) = self.hands.get_mut(player) {
+                hand.add_spells(drawn);
+            }
+            if !hand_changed.contains(player) {
+                hand_changed.push(*player);
+            }
+        }
+
+        // The Eavesdropper's bend: whenever ANYONE casts Peek, they privately
+        // learn the boiling point too (in seating order, no duplicates).
+        if !outcome.peeked.is_empty() {
+            for p in &self.players {
+                if self.brewers.get(&p.id) == Some(&Brewer::Eavesdropper)
+                    && !outcome.peeked.contains(&p.id)
+                {
+                    outcome.peeked.push(p.id);
+                }
+            }
+        }
+
+        let pot = self.current.as_ref().expect("a round is open").round.pot();
+        WaveResolution {
+            committed: committed_report,
+            passers,
+            casts: outcome.casts,
+            peeked: outcome.peeked,
+            assays: outcome.assays,
+            exposed: outcome.exposed,
+            hand_changed,
+            pot_card_count: pot.card_count() as u8,
+            pot_volatility: pot.total_volatility(),
+            ended,
         }
     }
 
@@ -785,64 +1000,14 @@ impl<'a> Game<'a> {
                 .get(player)
                 .copied()
                 .unwrap_or_else(WaveChoice::pass);
-
-            // The mandatory ingredient-or-pass.
-            let logged_action = match choice.action {
-                WaveAction::Play { card, colorless } => {
-                    let taken = self
-                        .hands
-                        .get_mut(player)
-                        .and_then(|h| h.take_ingredient(card));
-                    if let Some(ingredient) = taken {
-                        *self.cards_played.get_mut(player).unwrap() += 1;
-                        committed.push((*player, ingredient, colorless));
-                        WaveAction::Play { card, colorless }
-                    } else {
-                        passers.push(*player); // unheld card → a safe pass
-                        WaveAction::Pass
-                    }
-                }
-                WaveAction::Pass => {
-                    passers.push(*player);
-                    WaveAction::Pass
-                }
-            };
-
-            // The optional spell (≤1; a spell never keeps a passed player in).
-            let logged_spell: Option<SpellChoice> = choice.spell.and_then(|sc| {
-                let kind = self
-                    .hands
-                    .get(player)?
-                    .spells()
-                    .iter()
-                    .find(|s| s.id == sc.spell)?
-                    .kind;
-                if !self.target_valid(kind, sc.target, *player) {
-                    return None;
-                }
-                let spell = self.hands.get_mut(player)?.take_spell(sc.spell)?;
-                spells.push(CastCommit {
-                    player: *player,
-                    spell,
-                    target: sc.target,
-                });
-                Some(sc)
-            });
-
             // Record the effective decision in acting order — the deterministic
             // replay input (invalid inputs replay as their safe normalisation).
-            self.action_log.push(WaveChoice {
-                action: logged_action,
-                spell: logged_spell,
-            });
+            let effective =
+                self.take_choice(*player, choice, &mut committed, &mut passers, &mut spells);
+            self.action_log.push(effective);
         }
 
-        // Players who played but can never act again (hand and pantry both empty).
-        let exhausted: Vec<PlayerId> = committed
-            .iter()
-            .map(|(p, _, _)| *p)
-            .filter(|p| self.hands[p].no_ingredients() && self.pantries[p].is_exhausted())
-            .collect();
+        let exhausted = self.newly_exhausted(&committed);
 
         // A snapshot for the presenter's spans; `Ingredient` is `Copy`, so this is
         // cheap and taken before the cards move into the pot.
@@ -859,38 +1024,135 @@ impl<'a> Game<'a> {
                 exhausted,
             },
         );
-        let ended = report.ended;
-        let outcome = report.outcome;
 
-        // Forage draws: grow the casters' spell hands; the owners must be told.
-        let mut hand_changed: Vec<PlayerId> = Vec::new();
-        for player in &outcome.foragers {
-            let drawn = self
-                .grimoires
-                .get_mut(player)
-                .expect("seated player has a grimoire")
-                .draw(values.forage_draws as usize);
-            if let Some(hand) = self.hands.get_mut(player) {
-                hand.add_spells(drawn);
-            }
-            if !hand_changed.contains(player) {
-                hand_changed.push(*player);
-            }
-        }
-
-        let pot = self.current.as_ref().unwrap().round.pot();
-        WaveResolution {
-            committed: committed_report,
+        self.present_wave(
+            committed_report,
             passers,
-            casts: outcome.casts,
-            peeked: outcome.peeked,
-            assays: outcome.assays,
-            exposed: outcome.exposed,
-            hand_changed,
-            pot_card_count: pot.card_count() as u8,
-            pot_volatility: pot.total_volatility(),
-            ended,
+            report.outcome,
+            report.ended,
+            values.forage_draws,
+        )
+    }
+
+    /// Stage one wave whose `deferrer` (the Lurker, once per round) commits
+    /// after the reveal: apply everyone else's choices — cards land, spells
+    /// resolve, casts and the interim reveal go out — but defer the explosion
+    /// check and the wave's close until [`Game::resolve_wave_finalize`] lands
+    /// the late commit into this same wave. `ended` is always `None` here.
+    pub fn resolve_wave_partial(
+        &mut self,
+        choices: &HashMap<PlayerId, WaveChoice>,
+        deferrer: PlayerId,
+    ) -> WaveResolution {
+        let acting: Vec<PlayerId> = self
+            .current
+            .as_ref()
+            .expect("a round is open")
+            .round
+            .active()
+            .to_vec();
+        debug_assert!(acting.contains(&deferrer), "the deferrer must be acting");
+
+        let mut committed: Vec<(PlayerId, Ingredient, bool)> = Vec::new();
+        let mut passers: Vec<PlayerId> = Vec::new();
+        let mut spells: Vec<CastCommit> = Vec::new();
+        let mut effective: HashMap<PlayerId, WaveChoice> = HashMap::new();
+        for player in acting.iter().filter(|p| **p != deferrer) {
+            let choice = choices
+                .get(player)
+                .copied()
+                .unwrap_or_else(WaveChoice::pass);
+            let logged =
+                self.take_choice(*player, choice, &mut committed, &mut passers, &mut spells);
+            effective.insert(*player, logged);
         }
+
+        let exhausted = self.newly_exhausted(&committed);
+        let committed_report = committed.clone();
+
+        let values = *self.registry.spell_values();
+        let round = &mut self.current.as_mut().expect("a round is open").round;
+        let outcome = round.apply_wave_partial(
+            &values,
+            WaveInput {
+                committed,
+                spells,
+                passers: passers.clone(),
+                exhausted,
+            },
+        );
+        self.staged_wave = Some(StagedWaveState {
+            acting,
+            effective,
+            deferrer,
+        });
+
+        self.present_wave(
+            committed_report,
+            passers,
+            outcome,
+            None,
+            values.forage_draws,
+        )
+    }
+
+    /// Land the deferrer's post-reveal commit into the staged wave and close
+    /// it: the explosion check runs once over the full wave (the late card is
+    /// part of the fatal-wave liability sort), and the action log records the
+    /// whole wave in acting order — a replay re-runs it as a simultaneous
+    /// wave, which is outcome-identical. The late commit is ingredient-or-pass
+    /// only; any spell on `choice` is dropped.
+    pub fn resolve_wave_finalize(&mut self, choice: WaveChoice) -> WaveResolution {
+        let state = self.staged_wave.take().expect("a staged wave is in flight");
+
+        let mut committed: Vec<(PlayerId, Ingredient, bool)> = Vec::new();
+        let mut passers: Vec<PlayerId> = Vec::new();
+        let mut spells: Vec<CastCommit> = Vec::new();
+        let stripped = WaveChoice {
+            action: choice.action,
+            spell: None,
+            second_spell: None,
+        };
+        let late_effective = self.take_choice(
+            state.deferrer,
+            stripped,
+            &mut committed,
+            &mut passers,
+            &mut spells,
+        );
+
+        // The whole wave's effective choices, in acting order — the replay form.
+        for player in &state.acting {
+            let logged = if *player == state.deferrer {
+                late_effective
+            } else {
+                state.effective[player]
+            };
+            self.action_log.push(logged);
+        }
+
+        let exhausted = self.newly_exhausted(&committed);
+        let committed_report = committed.clone();
+
+        let values = *self.registry.spell_values();
+        let round = &mut self.current.as_mut().expect("a round is open").round;
+        let report = round.finalize_wave(
+            &values,
+            WaveInput {
+                committed,
+                spells,
+                passers: passers.clone(),
+                exhausted,
+            },
+        );
+
+        self.present_wave(
+            committed_report,
+            passers,
+            report.outcome,
+            report.ended,
+            values.forage_draws,
+        )
     }
 
     /// Settle the open round: depile, score it (detonator explosion or safe brew,
@@ -917,6 +1179,7 @@ impl<'a> Game<'a> {
                 color_owner: &self.color_owner,
                 player_color: &self.player_color,
                 all_players: &all,
+                brewers: &self.brewers,
             };
             let (pot, primed) = round.pot_and_primed_mut();
             if exploded {
@@ -1150,6 +1413,7 @@ mod tests {
                     colorless: false,
                 },
                 spell: None,
+                second_spell: None,
             },
             None => WaveChoice::pass(),
         }
@@ -1176,7 +1440,11 @@ mod tests {
                     }),
                 },
             });
-            WaveChoice { action, spell }
+            WaveChoice {
+                action,
+                spell,
+                second_spell: None,
+            }
         }
     }
 
@@ -1269,6 +1537,7 @@ mod tests {
             roster
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
             &outcome.action_log,
             &[],
         )
@@ -1289,6 +1558,273 @@ mod tests {
         positions.sort();
         assert_eq!(positions, vec![1, 2, 3, 4]);
         assert!(completed.winner_ids.is_some_and(|w| !w.is_empty()));
+    }
+
+    /// One (player → Brewer) assignment for the standard four-player roster.
+    fn brewers_for(assignments: &[(u128, Brewer)]) -> HashMap<PlayerId, Brewer> {
+        assignments
+            .iter()
+            .map(|(n, b)| (PlayerId(Uuid::from_u128(*n)), *b))
+            .collect()
+    }
+
+    /// The Forager's hand floor is 4 (everyone else stays at 3) — at the round
+    /// open and at every wave top-up.
+    #[test]
+    fn forager_tops_up_to_four() {
+        let (reg, cfg) = registry_and_config();
+        let brewers = brewers_for(&[(1, Brewer::Forager)]);
+        let mut game = Game::with_brewers(&reg, &cfg, four_players(), brewers, 9);
+        game.begin_round(1, &HashSet::new());
+        let forager = PlayerId(Uuid::from_u128(1));
+        let other = PlayerId(Uuid::from_u128(2));
+        assert_eq!(game.hand(forager).unwrap().ingredients().len(), 4);
+        assert_eq!(game.hand(other).unwrap().ingredients().len(), 3);
+        // After a wave the top-up refills back to the same floors.
+        let mut choices = HashMap::new();
+        for p in game.active().to_vec() {
+            let card = game.hand(p).unwrap().ingredients()[0].id;
+            choices.insert(
+                p,
+                WaveChoice {
+                    action: WaveAction::Play {
+                        card,
+                        colorless: false,
+                    },
+                    spell: None,
+                    second_spell: None,
+                },
+            );
+        }
+        let _ = game.resolve_wave(&choices);
+        game.top_up_active();
+        assert_eq!(game.hand(forager).unwrap().ingredients().len(), 4);
+        assert_eq!(game.hand(other).unwrap().ingredients().len(), 3);
+    }
+
+    /// The Eavesdropper bend is strictly conditional (the
+    /// no-free-perfect-information guardrail): an opponent's Peek extends the
+    /// private disclosure to them; a peek-free wave discloses nothing.
+    #[test]
+    fn eavesdropper_learns_only_when_someone_peeks() {
+        let (reg, cfg) = registry_and_config();
+        let brewers = brewers_for(&[(1, Brewer::Eavesdropper)]);
+        let mut game = Game::with_brewers(&reg, &cfg, four_players(), brewers, 3);
+        game.begin_round(1, &HashSet::new());
+        let eavesdropper = PlayerId(Uuid::from_u128(1));
+        let caster = PlayerId(Uuid::from_u128(2));
+
+        // Give the caster a Peek and have everyone play their first card.
+        let mut hand = game.hands[&caster].clone();
+        hand.add_spells([crate::game::card::Spell {
+            id: boiling_point_protocol::CardId(900_000),
+            kind: SpellKind::Peek,
+        }]);
+        game.hands.insert(caster, hand);
+
+        let play_first = |game: &Game, p: PlayerId| WaveChoice {
+            action: WaveAction::Play {
+                card: game.hand(p).unwrap().ingredients()[0].id,
+                colorless: false,
+            },
+            spell: None,
+            second_spell: None,
+        };
+
+        // Wave 1: no Peek — the Eavesdropper learns nothing.
+        let choices: HashMap<PlayerId, WaveChoice> = game
+            .active()
+            .to_vec()
+            .into_iter()
+            .map(|p| (p, play_first(&game, p)))
+            .collect();
+        let quiet = game.resolve_wave(&choices);
+        assert!(quiet.peeked.is_empty(), "no Peek, no disclosure");
+
+        // Wave 2: the caster Peeks — the Eavesdropper piggybacks.
+        if game.round_is_open() {
+            game.top_up_active();
+            let mut choices: HashMap<PlayerId, WaveChoice> = game
+                .active()
+                .to_vec()
+                .into_iter()
+                .map(|p| (p, play_first(&game, p)))
+                .collect();
+            if let Some(choice) = choices.get_mut(&caster) {
+                choice.spell = Some(SpellChoice {
+                    spell: boiling_point_protocol::CardId(900_000),
+                    target: None,
+                });
+            }
+            let peeked_wave = game.resolve_wave(&choices);
+            assert!(peeked_wave.peeked.contains(&caster));
+            assert!(
+                peeked_wave.peeked.contains(&eavesdropper),
+                "anyone's Peek discloses to the Eavesdropper too"
+            );
+        }
+    }
+
+    /// The Channeler resolves two spells in one wave; anyone else's second
+    /// cast is dropped at validation (the allowance is one).
+    #[test]
+    fn channeler_casts_two_spells_per_wave() {
+        let (reg, cfg) = registry_and_config();
+        let brewers = brewers_for(&[(1, Brewer::Channeler)]);
+        let mut game = Game::with_brewers(&reg, &cfg, four_players(), brewers, 4);
+        game.begin_round(1, &HashSet::new());
+        let channeler = PlayerId(Uuid::from_u128(1));
+        let other = PlayerId(Uuid::from_u128(2));
+        for (n, player) in [(910_000u32, channeler), (920_000, other)] {
+            let mut hand = game.hands[&player].clone();
+            hand.add_spells([
+                crate::game::card::Spell {
+                    id: boiling_point_protocol::CardId(n),
+                    kind: SpellKind::Surge,
+                },
+                crate::game::card::Spell {
+                    id: boiling_point_protocol::CardId(n + 1),
+                    kind: SpellKind::Dampen,
+                },
+            ]);
+            game.hands.insert(player, hand);
+        }
+
+        let mut choices: HashMap<PlayerId, WaveChoice> = game
+            .active()
+            .to_vec()
+            .into_iter()
+            .map(|p| {
+                (
+                    p,
+                    WaveChoice {
+                        action: WaveAction::Play {
+                            card: game.hand(p).unwrap().ingredients()[0].id,
+                            colorless: false,
+                        },
+                        spell: None,
+                        second_spell: None,
+                    },
+                )
+            })
+            .collect();
+        for (n, player) in [(910_000u32, channeler), (920_000, other)] {
+            let choice = choices.get_mut(&player).unwrap();
+            choice.spell = Some(SpellChoice {
+                spell: boiling_point_protocol::CardId(n),
+                target: None,
+            });
+            choice.second_spell = Some(SpellChoice {
+                spell: boiling_point_protocol::CardId(n + 1),
+                target: None,
+            });
+        }
+        let resolution = game.resolve_wave(&choices);
+        let casts_by = |p: PlayerId| {
+            resolution
+                .casts
+                .iter()
+                .filter(|(caster, _, _)| *caster == p)
+                .count()
+        };
+        assert_eq!(casts_by(channeler), 2, "the Channeler's second cast lands");
+        assert_eq!(casts_by(other), 1, "anyone else's second cast is dropped");
+        // The dropped cast stays in hand (not spent).
+        assert!(
+            game.hand(other)
+                .unwrap()
+                .contains_spell(boiling_point_protocol::CardId(920_001))
+        );
+    }
+
+    /// The draft/compounding-hook Brewers (Connoisseur, Reservist, Herbalist,
+    /// Distiller) are inert until their systems land: a game with them
+    /// assigned is identical to the brewerless game under the same seed — the
+    /// documented phasing gap, not a silent behaviour change.
+    #[test]
+    fn inert_brewers_change_nothing_yet() {
+        let (reg, cfg) = registry_and_config();
+        let inert = brewers_for(&[
+            (1, Brewer::Connoisseur),
+            (2, Brewer::Reservist),
+            (3, Brewer::Herbalist),
+            (4, Brewer::Distiller),
+        ]);
+        let with = {
+            let mut g = Game::with_brewers(&reg, &cfg, four_players(), inert, 777);
+            let mut d = spell_happy();
+            g.play_out(&mut d).scores
+        };
+        let without = {
+            let mut g = Game::new(&reg, &cfg, four_players(), 777);
+            let mut d = spell_happy();
+            g.play_out(&mut d).scores
+        };
+        assert_eq!(with, without);
+    }
+
+    /// A staged (Lurker-deferred) wave records the whole wave's choices in
+    /// acting order, so a replay re-runs it as a simultaneous wave.
+    #[test]
+    fn staged_wave_logs_choices_in_acting_order() {
+        let (reg, cfg) = registry_and_config();
+        let lurker = PlayerId(Uuid::from_u128(2));
+        let brewers = brewers_for(&[(2, Brewer::Lurker)]);
+        let mut game = Game::with_brewers(&reg, &cfg, four_players(), brewers, 21);
+        game.begin_round(1, &HashSet::new());
+        let acting = game.active().to_vec();
+
+        let choices: HashMap<PlayerId, WaveChoice> = acting
+            .iter()
+            .filter(|p| **p != lurker)
+            .map(|p| {
+                (
+                    *p,
+                    WaveChoice {
+                        action: WaveAction::Play {
+                            card: game.hand(*p).unwrap().ingredients()[0].id,
+                            colorless: false,
+                        },
+                        spell: None,
+                        second_spell: None,
+                    },
+                )
+            })
+            .collect();
+        let partial = game.resolve_wave_partial(&choices, lurker);
+        assert!(
+            partial.ended.is_none(),
+            "the check waits for the late commit"
+        );
+        assert!(
+            game.action_log().is_empty(),
+            "nothing is logged until the wave closes"
+        );
+
+        let late_card = game.hand(lurker).unwrap().ingredients()[0].id;
+        let final_res = game.resolve_wave_finalize(WaveChoice {
+            action: WaveAction::Play {
+                card: late_card,
+                colorless: false,
+            },
+            spell: None,
+            second_spell: None,
+        });
+        assert_eq!(game.action_log().len(), acting.len());
+        // The lurker's effective choice sits at their acting position.
+        let lurker_pos = acting.iter().position(|p| *p == lurker).unwrap();
+        assert_eq!(
+            game.action_log()[lurker_pos].action,
+            WaveAction::Play {
+                card: late_card,
+                colorless: false
+            }
+        );
+        assert_eq!(
+            final_res.committed.len(),
+            1,
+            "the finalize step lands exactly the late commit"
+        );
     }
 
     #[test]

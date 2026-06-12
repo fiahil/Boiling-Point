@@ -134,6 +134,16 @@ pub struct TimingConfig {
     pub wave1_ms: u32,
     /// Budget for subsequent waves.
     pub wave_ms: u32,
+    /// Budget for the pre-game brewer pick (the 1-of-2 choice closes early
+    /// once all four picks arrive; a straggler is auto-picked at the timer).
+    #[serde(default = "default_brewer_pick_ms")]
+    pub brewer_pick_ms: u32,
+}
+
+/// Default brewer-pick budget: generous enough to read eight identities,
+/// short enough for the auto-start lobby ethos. `[needs playtesting]`.
+fn default_brewer_pick_ms() -> u32 {
+    20_000
 }
 
 /// The (inclusive) hidden boiling-point range before modifiers.

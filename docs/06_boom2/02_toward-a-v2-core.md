@@ -412,6 +412,78 @@ Rerun: `make harness-sample` (CI-sized) or
 
 ---
 
+## Brewers as built + persona × Brewer derivation (2026-06-12, `boom2-brewers`)
+
+The 12 Brewers shipped on the combat core (protocol v6). Implementation
+decisions worth recording beyond the spec:
+
+- **The offer is a decision frame.** The dealt disjoint pair rides a
+  `BrewerPick` decision frame (round 0, wave 0); picks are final on receipt,
+  the phase closes early once all four land, and a straggler/disconnect is
+  auto-picked **first-of-pair** at the timer (`timing.brewer_pick_ms`, 20s).
+  The brewer phase runs **before** engine construction, so deck building
+  consults the picks (brewer-before-deck).
+- **Cinderwright's "never a Ward" is constructional:** their grimoire is built
+  without the 4 ward copies (16 spells), so no dead card ever reaches a hand;
+  frames and the engine also refuse wards (defense in depth). Their detonator
+  share halves **rounded up** — `ceil(1/2)=1`, so an explosion is never free
+  (the discipline's ceiling, enforced in `game::brewers::detonator_damage`).
+- **Featherhand** re-keys the fatal-wave sort to `(volatility, featherhand?)`,
+  so their cards slip equal-volatility ties but still pay when their own card
+  is the trigger.
+- **Lurker's defer is a staged wave:** everyone else's commits land and the
+  wave REVEALS (casts fire, an interim `WaveResolved` broadcasts), then the
+  Lurker's post-reveal frame collects an ingredient-or-pass (card only — the
+  defer trades the spell slot) into the **same wave**: one explosion check,
+  full liability for the late card. Replays re-run a staged wave as
+  simultaneous (provably outcome-identical), so the action log shape is
+  unchanged.
+- **Broker** rounds up only on winning splits (a loss split is unchanged);
+  **Channeler** gets a second `WaveChoice` spell slot (replay-compatible via a
+  defaulted field); **Eavesdropper** piggybacks `PeekResult` only when someone
+  actually Peeks (the no-free-info guardrail is a tested invariant).
+- **Inert until their systems land:** Connoisseur/Reservist (draft,
+  `boom2-apothecary`) and Herbalist/Distiller/Alchemist (compounding,
+  `boom2-compounding`) have their constants defined and tested but nothing
+  consults them — a game seating them is bit-identical to a brewerless one
+  (asserted in `inert_brewers_change_nothing_yet`).
+
+**Persona × Brewer derivation (12,000 games, default content):** three baseline
+runs (2,000 games × seeds 42/7/1234, archetypes head-to-head, picks following
+the deal) plus four 🌶️-concentration cells (1,500 games each, every bot seat
+preferring Cinderwright / Channeler / Lurker / Alchemist; root seed 4242).
+
+- **No Brewer breaks a persona or a combat-core invariant.** Cross-persona
+  per-seat win rates for all 12 stayed inside **[22.0%, 33.5%]** against the
+  [15%, 35%] band (no `brewer_outlier` smell fired in any run); explosion
+  rates held **45.5–47.5%** (target 40–50%) in every cell including the 🌶️
+  concentrations; freezes stayed at 0.0%.
+- **Cinderwright is the standing watch item:** the consistent top Brewer
+  (31.7% / 31.9% / 32.2% across the baseline seeds; aggressive × Cinderwright
+  hit 36.4% in its 🌶️ cell). Within discipline — half damage rounded up, no
+  ward — but the first candidate if humans confirm the harness lean.
+- **The spicy-lurker `dominant_label` flag is political, not the Lurker:**
+  political won 40.5% there vs its 39.5% brewerless-equivalent baseline, and
+  political × Lurker (48.0%) matches political's average across all Brewers in
+  that cell. The known "political is strong" finding continues; the Lurker
+  amplifies nothing.
+- **Instrument caveat:** bot brains never exercise `CommitDefer`, so the
+  Lurker's at-scale numbers measure the identity without its bend's upside —
+  the deferred-commit path is covered by engine/session tests and an e2e
+  scenario, and is flagged for the next harness iteration (a defer-aware
+  posture) and human playtests.
+- The standing **runaway_pots** smell (avg scored pot ~33 vs the 25 threshold)
+  fired in every cell exactly as before brewers — the fat-pot finding predates
+  and is untouched by this change.
+
+**Verdict (per Principle IV):** the data says ship the catalog untuned — all
+four 🌶️ Brewers sit inside the band. Rerun:
+`cargo run --release -p boiling-point-ai-client --features harness --bin balance_tester -- --games 2000 --seed 42`
+(the persona × Brewer matrix is in the report), plus a 🌶️ preference spec via
+`--spec` (seat `brewer = "..."` preferences).
+
+---
+
 ## Pointers
 
 - Rationale & alternatives: [`06_depth-and-complexity.md`](01_depth-and-complexity.md)

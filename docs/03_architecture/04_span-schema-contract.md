@@ -32,6 +32,7 @@ group.lifetime       {group.code}                       — root; one per group,
 lobby.wait           {player.id}                         — root; one per queued player (queue depth)
 ├─ game              {game.id, players.count,
 │  │                  schema.version, deck_seed°}         — child of group.lifetime
+│  ├─ brewer.pick    {brewer.offers, brewer.picks}        — child of game (pre-game; public)
 │  ├─ round          {round.number, boiling_point°,
 │  │  │               volatility_total°, effects.active°,
 │  │  │               modifiers, round.boomed,
@@ -68,11 +69,11 @@ the `boom-balance-metrics` aggregates and the replay buffer.
 Documented up front so the whole intended tree is visible once; they land
 **additively, without a schema bump**, gated on their content changes. Until
 then the server does not emit them and the projection's ignore-unknown tolerance
-covers any skew (`span_schema::PLANNED_SPANS`).
+covers any skew (`span_schema::PLANNED_SPANS`). `brewer.pick` landed exactly
+this way with `boom2-brewers` — no schema bump — and now lives in the tree above.
 
 | Span | Parent | Lands with | Notes |
 |---|---|---|---|
-| `brewer.pick` | `game` | `boom2-brewers` | The pre-game 1-of-2 Brewer pick (public). |
 | `draft` | `game` | `boom2-apothecary` | The Apothecary draft; buckets taken are public, realized decks stay sensitive. |
 
 `boom2-compounding` adds no span: compounding triggers ride as additive
@@ -85,8 +86,8 @@ context (`group.code`, `game.id`, `round.number`, `wave.number`, `wave.timer_ms`
 `wave.timed_out`, `wave.commits`, `wave.passes`, `players.count`, `round.boomed`,
 `round.frozen`, `pot.card_count`, `pot.value`, `detonators`, `reveals`,
 `crossing_index`, `spell.kind`, `spell.target`, `modifiers`, `player.id`,
-`ws.message_kind`, `db.rows`, `schema.version`, plus the `admin.command` audit
-fields `operator`/`action`/`target`/`outcome`).
+`brewer.offers`, `brewer.picks`, `ws.message_kind`, `db.rows`, `schema.version`,
+plus the `admin.command` audit fields `operator`/`action`/`target`/`outcome`).
 
 The v2 outcome attributes worth naming:
 

@@ -7,10 +7,12 @@
 //! - [`deck`]: the per-player pantry (top-up-to-3) and grimoire (round-start draw),
 //! - [`pot`]: the accumulating round pot (running total, colour adjustments),
 //! - [`modifiers`]: the cumulative modifier stack,
+//! - [`brewers`]: the per-Brewer rule bends (`boom2-brewers`),
 //! - [`spells`]: Instant resolution, Active prime/fire, ward/Hex/Harvest fires,
 //! - [`round`]: the wave loop, detonator identification, and the sorted depile,
 //! - [`scoring`]: the P-symmetry (safe-brew dominance, detonator explosion).
 
+pub mod brewers;
 pub mod card;
 pub mod deathmatch;
 pub mod deck;

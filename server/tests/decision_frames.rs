@@ -84,14 +84,22 @@ async fn frame_bot(
                     !json.contains("boiling_point"),
                     "a decision frame leaked the boiling point: {json}"
                 );
-                // A frame is only owed by a player who may still act.
-                assert!(!locked_out, "a locked-out player received a frame");
+                // The pre-game brewer pick: answer with the first offered
+                // option (no probing — the wave frames cover that surface).
+                if let PendingDecision::BrewerPick { options } = &decision {
+                    send(ClientMessage::PickBrewer { brewer: options[0] }).await;
+                    continue;
+                }
                 // Frame/hand agreement: the playable set IS the hand.
                 let PendingDecision::WaveCommit {
                     playable,
                     can_pass,
                     spells,
-                } = &decision;
+                    ..
+                } = &decision
+                else {
+                    panic!("an in-round frame is a wave commit");
+                };
                 let listed: Vec<CardId> = playable.iter().map(|p| p.ingredient.id).collect();
                 assert_eq!(
                     listed, hand_ids,
@@ -99,10 +107,14 @@ async fn frame_bot(
                 );
                 assert!(can_pass);
 
-                // A refresh for an already-answered wave never re-acts.
+                // A refresh for an already-answered wave never re-acts (a
+                // pass + cast legitimately draws one: the accepted cast
+                // refreshes the frame even though the pass locked us out).
                 if acted == Some((round_number, wave_number)) {
                     continue;
                 }
+                // A fresh frame is only owed by a player who may still act.
+                assert!(!locked_out, "a locked-out player received a frame");
                 acted = Some((round_number, wave_number));
                 decision_count += 1;
 
@@ -176,6 +188,7 @@ async fn run_frame_driven_game(seed: u64) -> Vec<FrameBotReport> {
     let mut cfg = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
     cfg.timing.wave1_ms = 3_000;
     cfg.timing.wave_ms = 3_000;
+    cfg.timing.brewer_pick_ms = 3_000;
     let registry = cfg.build_registry().unwrap();
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<GroupCommand>(512);
@@ -275,6 +288,7 @@ async fn non_enumerated_spell_probes_are_rejected() {
     let mut cfg = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
     cfg.timing.wave1_ms = 1_500;
     cfg.timing.wave_ms = 1_500;
+    cfg.timing.brewer_pick_ms = 1_500;
     let registry = cfg.build_registry().unwrap();
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<GroupCommand>(512);
@@ -315,6 +329,17 @@ async fn non_enumerated_spell_probes_are_rejected() {
         passers.push(async move {
             while let Some(msg) = rx.recv().await {
                 match msg {
+                    ServerMessage::DecisionFrame {
+                        decision: PendingDecision::BrewerPick { options },
+                        ..
+                    } => {
+                        let _ = cmd_tx
+                            .send(GroupCommand::Action {
+                                player: id,
+                                msg: ClientMessage::PickBrewer { brewer: options[0] },
+                            })
+                            .await;
+                    }
                     ServerMessage::DecisionFrame { .. } => {
                         let _ = cmd_tx
                             .send(GroupCommand::Action {
@@ -342,6 +367,17 @@ async fn non_enumerated_spell_probes_are_rejected() {
             let mut probes = 0usize;
             while let Some(msg) = rx0.recv().await {
                 match msg {
+                    ServerMessage::DecisionFrame {
+                        decision: PendingDecision::BrewerPick { options },
+                        ..
+                    } => {
+                        let _ = cmd_tx
+                            .send(GroupCommand::Action {
+                                player: me,
+                                msg: ClientMessage::PickBrewer { brewer: options[0] },
+                            })
+                            .await;
+                    }
                     ServerMessage::DecisionFrame { decision, .. } => {
                         assert!(
                             !decision.permits_cast(CardId(9_999_999), None),
