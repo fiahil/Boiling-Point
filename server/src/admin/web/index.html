@@ -18,6 +18,7 @@
 
     <nav class="tabs">
       <button class="tab active" data-tab="fleet">Fleet</button>
+      <button class="tab" data-tab="popularity">Popularity</button>
       <button class="tab" data-tab="groups">Groups</button>
       <button class="tab" data-tab="activity">Activity</button>
       <button class="tab" data-tab="replay">Replay</button>
@@ -29,6 +30,19 @@
       <section id="fleet" class="panel active">
         <h2>Fleet overview</h2>
         <div id="fleet-cards" class="cards"></div>
+      </section>
+
+      <section id="popularity" class="panel">
+        <h2>
+          Popularity <span class="muted">from post-game persistence (UTC days)</span>
+          <select id="popularity-days" class="right">
+            <option value="14">last 14 days</option>
+            <option value="30" selected>last 30 days</option>
+            <option value="90">last 90 days</option>
+          </select>
+        </h2>
+        <div id="popularity-cards" class="cards"></div>
+        <div id="popularity-charts"></div>
       </section>
 
       <section id="groups" class="panel">

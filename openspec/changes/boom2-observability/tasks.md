@@ -61,3 +61,10 @@
 - [x] 8.2 Update `docs/03_architecture/02_server-infrastructure.md` and `docs/06_boom2/index.md` to reference the v2 observability surface and this change.
 - [x] 8.3 Replay vocabulary: confirm the per-wave action log records the v2 action set (Vote color, pass/fold, spell casts with targets) and the engine-pinning path for v1 payloads is untouched.
 - [x] 8.4 Full pass: `cargo fmt` + `clippy` + unit suite green; one seeded game inspected end-to-end through registry → aggregates → dashboard.
+
+## 9. Popularity panel (command center; historical reads from persistence — added 2026-06-12)
+
+- [x] 9.1 Add `fetch_popularity` to `server/src/persistence.rs` (games/players/new-players per UTC day over a clamped window, zero-filled series, window + lifetime totals; read-only, never decodes payloads) with a pure zero-fill helper unit-tested without a DB and a DB-gated `#[ignore]` round-trip test.
+- [x] 9.2 Serve `GET /admin/stats/popularity?days=N` behind operator auth (`AdminState` gains the optional pool); no database ⇒ `available: false` instead of an error.
+- [x] 9.3 Add the Popularity tab to the command center: games-per-day bar chart, unique-players-per-day chart with first-ever players highlighted, window/lifetime total cards, window selector — dependency-free CSS bars, no chart library.
+- [x] 9.4 Spec: amend `admin-command-center`'s read-channels requirement (live reads = projection; historical reads = read-only persistence) and add the Popularity Stats requirement with the no-DB degradation scenario.

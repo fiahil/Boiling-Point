@@ -326,6 +326,64 @@ async function command(cmd) {
   }
 }
 
+// ---- popularity (historical, from post-game persistence) -----------------
+
+// A no-dependency bar chart: one flex column per day, height scaled to the
+// window's max. `segments(d)` returns [{value, cls}] stacked bottom-up.
+function barChart(title, daily, max, segments) {
+  const wrap = el("div", "card chart-card");
+  wrap.appendChild(el("h3", null, title));
+  const chart = el("div", "chart");
+  for (const d of daily) {
+    const col = el("div", "chart-col");
+    const stack = el("div", "chart-stack");
+    for (const s of segments(d)) {
+      const bar = el("div", "chart-bar " + s.cls);
+      bar.style.height = max > 0 ? (s.value / max) * 100 + "%" : "0";
+      stack.appendChild(bar);
+    }
+    col.title = `${d.day} — ${d.games} games, ${d.players} players (${d.new_players} new)`;
+    col.appendChild(stack);
+    // Light date ticks: the 1st of a month and the newest day.
+    const tick = d === daily[daily.length - 1] || d.day.endsWith("-01");
+    col.appendChild(el("div", "chart-tick", tick ? d.day.slice(5) : ""));
+    chart.appendChild(col);
+  }
+  wrap.appendChild(chart);
+  return wrap;
+}
+
+async function loadPopularity() {
+  const days = $("#popularity-days").value;
+  const data = await getJson(`/admin/stats/popularity?days=${days}`);
+  const cards = $("#popularity-cards");
+  const charts = $("#popularity-charts");
+  cards.innerHTML = "";
+  charts.innerHTML = "";
+  if (!data.available) {
+    cards.appendChild(metricCard("Popularity", "—", data.reason || "unavailable"));
+    charts.appendChild(el("p", "muted", "Historical stats need post-game persistence (start the server with a database URL)."));
+    return;
+  }
+  const s = data.stats;
+  cards.appendChild(metricCard(`Games (${s.window_days}d)`, s.window_games));
+  cards.appendChild(metricCard(`Players (${s.window_days}d)`, s.window_players));
+  cards.appendChild(metricCard(`New players (${s.window_days}d)`, s.window_new_players));
+  cards.appendChild(metricCard("Games (all time)", s.total_games));
+  cards.appendChild(metricCard("Players (all time)", s.total_players));
+
+  const maxGames = Math.max(...s.daily.map((d) => d.games));
+  charts.appendChild(barChart("Games per day", s.daily, maxGames, (d) => [
+    { value: d.games, cls: "games" },
+  ]));
+  const maxPlayers = Math.max(...s.daily.map((d) => d.players));
+  // Stacked: new players (bright) under returning players (dim) = daily total.
+  charts.appendChild(barChart("Unique players per day (bright = first-ever game)", s.daily, maxPlayers, (d) => [
+    { value: d.players - d.new_players, cls: "returning" },
+    { value: d.new_players, cls: "new" },
+  ]));
+}
+
 // ---- balance / grafana --------------------------------------------------
 
 async function loadBalance() {
@@ -361,8 +419,11 @@ document.querySelectorAll(".tab").forEach((tab) => {
     $("#" + id).classList.add("active");
     if (id === "replay") loadReplay();
     if (id === "balance") loadBalance();
+    if (id === "popularity") loadPopularity().catch((e) => alert(e.message));
   };
 });
+
+$("#popularity-days").onchange = () => loadPopularity().catch((e) => alert(e.message));
 
 $("#connect").onclick = connect;
 $("#token").value = token;

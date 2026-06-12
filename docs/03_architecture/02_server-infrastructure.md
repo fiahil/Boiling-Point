@@ -307,6 +307,14 @@ that consumes them lives inside the **admin command center**
 Prometheus series, and the projection-backed cards render the same definition
 ids, all behind admin auth.
 
+The command center also carries a **popularity panel** (games per day as a bar
+chart, unique/new players per day, window and lifetime totals). Per-day history
+outlives the in-process projection, so this is the one *historical* read: a
+read-only query of the consolidated `game_replays` records
+(`persistence::fetch_popularity`), served at `/admin/stats/popularity` behind
+the same operator auth, degrading to "unavailable" when no database is
+configured (persistence stays optional).
+
 ### Stack
 
 - **Structured logging:** `tracing` + `tracing-subscriber` (JSON output) — the
