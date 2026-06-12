@@ -20,6 +20,7 @@ use std::sync::OnceLock;
 use metrics_exporter_prometheus::PrometheusBuilder;
 use tracing_subscriber::prelude::*;
 
+pub mod balance_metrics;
 pub mod lifecycle;
 pub mod span_schema;
 
@@ -127,82 +128,92 @@ fn build_otel_tracer() -> Option<opentelemetry_sdk::trace::SdkTracer> {
     Some(tracer)
 }
 
-/// The game-balance metrics, named in one place. These compile to no-ops when no
-/// recorder is installed (e.g. in tests).
+/// The live Prometheus emitter, re-pointed at the [`balance_metrics`]
+/// definitions: every series it writes is named in
+/// [`balance_metrics::series`], and every balance figure is derived from a
+/// [`balance_metrics::BalanceEvent`] — no formula lives here. The v1 balance
+/// series ([`balance_metrics::RETIRED_V1_SERIES`]) are never emitted. These
+/// compile to no-ops when no recorder is installed (e.g. in tests).
 pub mod metric {
-    /// A group was created.
+    use super::balance_metrics::{BalanceEvent, series};
+
+    /// A group was created (fleet figures, carried over from v1).
     pub fn group_created() {
-        metrics::counter!("groups_created_total").increment(1);
-        metrics::gauge!("groups_active").increment(1.0);
+        metrics::counter!(series::GROUPS_CREATED).increment(1);
+        metrics::gauge!(series::GROUPS_ACTIVE).increment(1.0);
     }
 
     /// A group task ended.
     pub fn group_closed() {
-        metrics::gauge!("groups_active").decrement(1.0);
+        metrics::gauge!(series::GROUPS_ACTIVE).decrement(1.0);
     }
 
     /// A game began.
     pub fn game_started() {
-        metrics::counter!("games_started_total").increment(1);
-        metrics::gauge!("games_active").increment(1.0);
+        metrics::counter!(series::GAMES_STARTED).increment(1);
+        metrics::gauge!(series::GAMES_ACTIVE).increment(1.0);
     }
 
-    /// A game completed.
-    pub fn game_completed() {
-        metrics::counter!("games_completed_total").increment(1);
-        metrics::gauge!("games_active").decrement(1.0);
+    /// A player connection opened (the connected-players fleet gauge).
+    pub fn connection_opened() {
+        metrics::gauge!(series::PLAYERS_CONNECTED).increment(1.0);
     }
 
-    /// A round resolved; `exploded` feeds the explosion-rate (~30–40% target).
-    pub fn round_resolved(exploded: bool) {
-        metrics::counter!("rounds_total").increment(1);
-        if exploded {
-            metrics::counter!("round_explosions_total").increment(1);
+    /// A player connection closed.
+    pub fn connection_closed() {
+        metrics::gauge!(series::PLAYERS_CONNECTED).decrement(1.0);
+    }
+
+    /// Record one balance event onto its Prometheus series. The same events feed
+    /// the admin projection's aggregates, so the dashboard's two sources (these
+    /// series via Grafana, the projection via the admin API) cannot disagree
+    /// about what an event means.
+    pub fn record(ev: &BalanceEvent) {
+        match ev {
+            BalanceEvent::GameCompleted { duration_ms } => {
+                metrics::counter!(series::GAMES_COMPLETED).increment(1);
+                metrics::gauge!(series::GAMES_ACTIVE).decrement(1.0);
+                metrics::histogram!(series::GAME_DURATION).record(*duration_ms as f64 / 1000.0);
+            }
+            BalanceEvent::RoundSettled {
+                boomed,
+                frozen,
+                duration_ms,
+            } => {
+                metrics::counter!(series::ROUNDS).increment(1);
+                if *boomed {
+                    metrics::counter!(series::ROUNDS_BOOMED).increment(1);
+                }
+                if *frozen {
+                    metrics::counter!(series::ROUNDS_FROZEN).increment(1);
+                }
+                metrics::histogram!(series::ROUND_DURATION).record(*duration_ms as f64 / 1000.0);
+            }
+            BalanceEvent::Boom { detonators } => {
+                metrics::counter!(series::BOOM_DETONATORS).increment(*detonators);
+            }
+            BalanceEvent::WaveResolved {
+                timed_out,
+                commits,
+                folds,
+                duration_ms,
+            } => {
+                metrics::counter!(series::WAVES).increment(1);
+                if *timed_out {
+                    metrics::counter!(series::WAVE_TIMEOUTS).increment(1);
+                }
+                metrics::counter!(series::WAVE_COMMITS).increment(*commits);
+                metrics::counter!(series::WAVE_FOLDS).increment(*folds);
+                metrics::histogram!(series::WAVE_DURATION).record(*duration_ms as f64 / 1000.0);
+            }
+            BalanceEvent::SpellCast { kind } => {
+                metrics::counter!(series::SPELL_CASTS, series::SPELL_LABEL => kind.clone())
+                    .increment(1);
+            }
+            BalanceEvent::PlayerReconnected => {
+                metrics::counter!(series::PLAYER_RECONNECTS).increment(1);
+            }
         }
-    }
-
-    /// The deck was reshuffled mid-game (drives the reshuffle-frequency panel).
-    pub fn deck_reshuffled() {
-        metrics::counter!("deck_reshuffles_total").increment(1);
-    }
-
-    /// A wave resolved; `timed_out` is whether the commit window closed on the
-    /// timer rather than everyone locking in (drives the timeout-rate panel).
-    pub fn wave_resolved(timed_out: bool) {
-        metrics::counter!("waves_total").increment(1);
-        if timed_out {
-            metrics::counter!("wave_timeouts_total").increment(1);
-        }
-    }
-
-    /// `n` cards were committed this wave (drives the cards-per-round panel).
-    pub fn cards_committed(n: u64) {
-        metrics::counter!("cards_committed_total").increment(n);
-    }
-
-    /// A player reconnected mid-game (drives the reconnection-rate panel).
-    pub fn player_reconnected() {
-        metrics::counter!("player_reconnects_total").increment(1);
-    }
-
-    /// A (non-explosion) round was decided; `dominated` distinguishes a single
-    /// dominant colour from a split (drives the dominant-strategy panel).
-    pub fn round_decided(dominated: bool) {
-        if dominated {
-            metrics::counter!("round_dominations_total").increment(1);
-        } else {
-            metrics::counter!("round_splits_total").increment(1);
-        }
-    }
-
-    /// Record a completed round's duration in seconds (duration histogram panel).
-    pub fn round_duration(secs: f64) {
-        metrics::histogram!("round_duration_seconds").record(secs);
-    }
-
-    /// Record a completed game's duration in seconds (duration histogram panel).
-    pub fn game_duration(secs: f64) {
-        metrics::histogram!("game_duration_seconds").record(secs);
     }
 }
 

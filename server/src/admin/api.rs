@@ -9,7 +9,7 @@ use std::convert::Infallible;
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -41,6 +41,7 @@ pub fn router(state: AdminState) -> Router {
         .route("/admin/groups", get(groups))
         .route("/admin/groups/{code}", get(group_detail))
         .route("/admin/balance", get(balance))
+        .route("/admin/stats/popularity", get(popularity))
         .route("/admin/replay", get(replay_list))
         .route("/admin/replay/{game_id}", get(replay_get))
         .route("/admin/live", get(live))
@@ -114,6 +115,36 @@ async fn group_detail(
 
 async fn balance(_op: Operator, State(s): State<AdminState>) -> Response {
     Json(s.projection.balance()).into_response()
+}
+
+/// Optional window for the popularity stats (defaults to 30 days).
+#[derive(Deserialize)]
+struct PopularityQuery {
+    days: Option<i64>,
+}
+
+/// Popularity figures (games/players per day + totals) — the one **historical**
+/// read, served from post-game persistence rather than the live span projection
+/// (the projection only knows the current process). Read-only; with no database
+/// configured it reports `available: false` instead of failing (persistence is
+/// optional infrastructure, never a precondition).
+async fn popularity(
+    _op: Operator,
+    State(s): State<AdminState>,
+    Query(q): Query<PopularityQuery>,
+) -> Response {
+    let Some(pool) = &s.pool else {
+        return Json(json!({ "available": false, "reason": "no database configured" }))
+            .into_response();
+    };
+    match crate::persistence::fetch_popularity(pool, q.days.unwrap_or(30)).await {
+        Ok(stats) => Json(json!({ "available": true, "stats": stats })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "available": false, "reason": e.to_string() })),
+        )
+            .into_response(),
+    }
 }
 
 async fn replay_list(_op: Operator, State(s): State<AdminState>) -> Response {
@@ -295,6 +326,7 @@ mod tests {
             projection: Arc::new(AdminProjection::new()),
             auth: Arc::new(auth),
             groups,
+            pool: None,
         }
     }
 
@@ -404,6 +436,27 @@ mod tests {
         );
     }
 
+    /// The popularity stats are an operator read like any other: gated by admin
+    /// auth, and degrading gracefully (`available: false`) when no database is
+    /// configured rather than failing — persistence is optional infrastructure.
+    #[tokio::test]
+    async fn popularity_is_auth_gated_and_degrades_without_a_database() {
+        use axum::body::to_bytes;
+        assert_eq!(
+            status_of(get("/admin/stats/popularity", None)).await,
+            StatusCode::UNAUTHORIZED
+        );
+        let resp = super::router(test_state())
+            .oneshot(get("/admin/stats/popularity?days=7", Some(OBSERVER)))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["available"], false);
+        assert_eq!(json["reason"], "no database configured");
+    }
+
     #[tokio::test]
     async fn elevated_reaches_control() {
         // The only thing elevation adds over an observer is the command plane:
@@ -464,6 +517,7 @@ mod tests {
             "/admin/fleet",
             "/admin/groups",
             "/admin/balance",
+            "/admin/stats/popularity",
             "/admin/replay",
         ] {
             let resp = super::router(state.clone())

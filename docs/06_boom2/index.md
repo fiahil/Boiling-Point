@@ -42,6 +42,17 @@ The decision log (02) fans out into **four** apply-ready changes under
 | [`boom2-apothecary`](../../openspec/changes/boom2-apothecary/) | O4 — the Apothecary | bucket-draft deck-builder (30/20, availability realizer) |
 | [`boom2-compounding`](../../openspec/changes/boom2-compounding/) | O3 — compounding | Honey count-thresholds + Bramble combos |
 
+The live observability counterpart rides alongside:
+[`boom2-observability`](../../openspec/changes/boom2-observability/) rebases the
+whole operator read surface on the v2 core — span schema v2
+([contract](../03_architecture/04_span-schema-contract.md)), the shared
+`boom-balance-metrics` definitions (one definition, consumed by both the live
+dashboard and the balance studies, targets seeded from doc 02's starting
+numbers as `[needs playtesting]`), and the admin **command center** hosting the
+balance dashboard, room inspector, and replays behind admin auth. Its
+per-feature dashboard panels are phased behind `boom2-brewers` /
+`boom2-apothecary` / `boom2-compounding`.
+
 ## Related
 
 - [`../02_game-design.md`](../02_game-design.md) — the canonical (current) rules this rework replaces.

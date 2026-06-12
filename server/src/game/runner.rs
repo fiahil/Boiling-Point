@@ -1056,6 +1056,24 @@ impl<'a> Game<'a> {
         self.current.as_ref().is_some_and(|r| r.round.is_open())
     }
 
+    /// The open round's active spell effects — the unfired primed Actives as
+    /// (caster, kind, player target) plus whether a Quench shields the next
+    /// wave — for the operator reveal. Empty/false between rounds.
+    pub fn active_effects(&self) -> (Vec<(PlayerId, SpellKind, Option<PlayerId>)>, bool) {
+        match &self.current {
+            Some(r) => (
+                r.round
+                    .primed()
+                    .iter()
+                    .filter(|p| !p.fired)
+                    .map(|p| (p.player, p.spell.kind, p.target))
+                    .collect(),
+                r.round.quench_pending(),
+            ),
+            None => (Vec::new(), false),
+        }
+    }
+
     /// Per-player contributed-card counts in the open round's pot, in `order`; all
     /// zero between rounds.
     pub fn contributions(&self, order: &[PlayerId]) -> Vec<(PlayerId, u8)> {

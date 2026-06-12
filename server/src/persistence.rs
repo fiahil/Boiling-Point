@@ -6,7 +6,9 @@
 //! transaction. No game state is written mid-game (a crash loses only the
 //! in-progress game). Runtime queries are used (no compile-time DB needed).
 
-use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::types::Json;
@@ -213,6 +215,181 @@ pub async fn fetch_replay(
     ))
 }
 
+/// One day of popularity figures (UTC days).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DailyPopularity {
+    /// The UTC day (`YYYY-MM-DD`).
+    pub day: NaiveDate,
+    /// Games completed that day.
+    pub games: i64,
+    /// Distinct players seated in those games.
+    pub players: i64,
+    /// Players whose first-ever game was that day.
+    pub new_players: i64,
+}
+
+/// Popularity figures read from post-game persistence: a per-day series over the
+/// window (gaps filled with zero days), a games-by-hour-of-day histogram, the
+/// returning-player count, and window/lifetime totals.
+#[derive(Debug, Clone, Serialize)]
+pub struct PopularityStats {
+    /// The window size in days (the series covers the last `window_days` UTC
+    /// days, oldest first, today included).
+    pub window_days: i64,
+    /// One entry per day in the window, oldest first, zero-filled.
+    pub daily: Vec<DailyPopularity>,
+    /// Games within the window by UTC hour of day: 24 entries, index = hour.
+    pub by_hour: Vec<i64>,
+    /// Games completed within the window.
+    pub window_games: i64,
+    /// Distinct players seated within the window.
+    pub window_players: i64,
+    /// Players whose first-ever game fell within the window.
+    pub window_new_players: i64,
+    /// Players who played on **more than one** distinct UTC day of the window —
+    /// the returning-player (stickiness) numerator over `window_players`.
+    pub window_returning_players: i64,
+    /// Games ever recorded.
+    pub total_games: i64,
+    /// Players ever seen.
+    pub total_players: i64,
+}
+
+/// Zero-fill a per-day series over the `window_days` UTC days ending at `today`
+/// (inclusive), oldest first, from sparse `(day → (games, players, new))` rows.
+/// Pure, so the shape is testable without a database.
+fn fill_daily(
+    window_days: i64,
+    today: NaiveDate,
+    rows: &HashMap<NaiveDate, (i64, i64, i64)>,
+) -> Vec<DailyPopularity> {
+    (0..window_days)
+        .rev()
+        .map(|back| {
+            let day = today - Duration::days(back);
+            let (games, players, new_players) = rows.get(&day).copied().unwrap_or((0, 0, 0));
+            DailyPopularity {
+                day,
+                games,
+                players,
+                new_players,
+            }
+        })
+        .collect()
+}
+
+/// Zero-fill the 24 hour-of-day buckets from sparse `(hour, games)` rows
+/// (out-of-range hours are ignored). Pure, so the shape is testable without a
+/// database.
+fn fill_hours(rows: &[(i32, i64)]) -> Vec<i64> {
+    let mut by_hour = vec![0i64; 24];
+    for (hour, games) in rows {
+        if let Some(slot) = by_hour.get_mut(*hour as usize) {
+            *slot = *games;
+        }
+    }
+    by_hour
+}
+
+/// Read the popularity figures for the last `window_days` UTC days from the
+/// consolidated `game_replays` rows (and the `players` first-seen table). A
+/// read-only analytics query — it never touches the replay payloads.
+pub async fn fetch_popularity(
+    pool: &PgPool,
+    window_days: i64,
+) -> Result<PopularityStats, sqlx::Error> {
+    let window_days = window_days.clamp(1, 365);
+    let today = Utc::now().date_naive();
+    let cutoff = today - Duration::days(window_days - 1);
+
+    // Games and distinct seated players per UTC day in the window.
+    let per_day: Vec<(NaiveDate, i64, i64)> = sqlx::query_as(
+        "SELECT (started_at AT TIME ZONE 'UTC')::date AS day, \
+                count(*) AS games, \
+                count(DISTINCT p) AS players \
+         FROM game_replays, unnest(player_ids) AS p \
+         WHERE (started_at AT TIME ZONE 'UTC')::date >= $1 \
+         GROUP BY 1",
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
+    // New players per UTC day: players whose first-ever game fell in the window.
+    let new_per_day: Vec<(NaiveDate, i64)> = sqlx::query_as(
+        "SELECT first_day AS day, count(*) AS new_players FROM ( \
+            SELECT p, min((started_at AT TIME ZONE 'UTC')::date) AS first_day \
+            FROM game_replays, unnest(player_ids) AS p \
+            GROUP BY p \
+         ) firsts \
+         WHERE first_day >= $1 \
+         GROUP BY 1",
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
+    // When in the day people play: games in the window by UTC hour of day.
+    let per_hour: Vec<(i32, i64)> = sqlx::query_as(
+        "SELECT extract(hour FROM started_at AT TIME ZONE 'UTC')::int AS hour, \
+                count(*) AS games \
+         FROM game_replays \
+         WHERE (started_at AT TIME ZONE 'UTC')::date >= $1 \
+         GROUP BY 1",
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
+    let (total_games, total_players): (i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM game_replays), (SELECT count(*) FROM players)",
+    )
+    .fetch_one(pool)
+    .await?;
+    let (window_games, window_players): (i64, i64) = sqlx::query_as(
+        "SELECT count(DISTINCT game_id), count(DISTINCT p) \
+         FROM game_replays, unnest(player_ids) AS p \
+         WHERE (started_at AT TIME ZONE 'UTC')::date >= $1",
+    )
+    .bind(cutoff)
+    .fetch_one(pool)
+    .await?;
+    // Stickiness: window players who came back on a second distinct day.
+    let (window_returning_players,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE days > 1) FROM ( \
+            SELECT p, count(DISTINCT (started_at AT TIME ZONE 'UTC')::date) AS days \
+            FROM game_replays, unnest(player_ids) AS p \
+            WHERE (started_at AT TIME ZONE 'UTC')::date >= $1 \
+            GROUP BY p \
+         ) per_player",
+    )
+    .bind(cutoff)
+    .fetch_one(pool)
+    .await?;
+
+    let mut rows: HashMap<NaiveDate, (i64, i64, i64)> = per_day
+        .into_iter()
+        .map(|(day, games, players)| (day, (games, players, 0)))
+        .collect();
+    for (day, new_players) in new_per_day {
+        rows.entry(day).or_insert((0, 0, 0)).2 = new_players;
+    }
+    let daily = fill_daily(window_days, today, &rows);
+    let window_new_players = daily.iter().map(|d| d.new_players).sum();
+
+    Ok(PopularityStats {
+        window_days,
+        daily,
+        by_hour: fill_hours(&per_hour),
+        window_games,
+        window_players,
+        window_new_players,
+        window_returning_players,
+        total_games,
+        total_players,
+    })
+}
+
 /// Fetch `(player_id, final_score, finish_position)` for a game, ordered by
 /// position — read from the `scores` JSONB of the consolidated game row.
 pub async fn fetch_player_results(
@@ -252,6 +429,111 @@ mod tests {
     fn dummy_replay(game_id: Uuid) -> StoredReplay {
         let cfg = crate::config::ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
         encode_replay(game_id, 0, &cfg, std::iter::empty(), &[], &[]).expect("encode")
+    }
+
+    /// The day series is zero-filled over the whole window, oldest first, with
+    /// sparse rows landing on their day.
+    #[test]
+    fn fill_daily_zero_fills_the_window() {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 12).unwrap();
+        let mut rows = HashMap::new();
+        rows.insert(today, (3, 9, 2));
+        rows.insert(today - Duration::days(2), (1, 4, 4));
+        let daily = fill_daily(4, today, &rows);
+
+        assert_eq!(daily.len(), 4, "one entry per day in the window");
+        assert_eq!(daily[0].day, today - Duration::days(3));
+        assert_eq!(
+            (daily[0].games, daily[0].players),
+            (0, 0),
+            "gap day is zero"
+        );
+        assert_eq!(
+            (daily[1].games, daily[1].players, daily[1].new_players),
+            (1, 4, 4)
+        );
+        assert_eq!((daily[2].games, daily[2].players), (0, 0));
+        assert_eq!(daily[3].day, today, "newest day last");
+        assert_eq!(
+            (daily[3].games, daily[3].players, daily[3].new_players),
+            (3, 9, 2)
+        );
+    }
+
+    /// The hour histogram always has 24 buckets, sparse rows land on their hour,
+    /// and out-of-range hours are ignored rather than panicking.
+    #[test]
+    fn fill_hours_zero_fills_all_buckets() {
+        let by_hour = fill_hours(&[(0, 2), (13, 5), (23, 1), (24, 9), (-1, 9)]);
+        assert_eq!(by_hour.len(), 24);
+        assert_eq!(by_hour[0], 2);
+        assert_eq!(by_hour[13], 5);
+        assert_eq!(by_hour[23], 1);
+        assert_eq!(by_hour.iter().sum::<i64>(), 8, "out-of-range rows ignored");
+    }
+
+    /// Popularity figures over freshly persisted games. Ignored by default
+    /// (needs a live DB); run with `cargo test -- --ignored`.
+    #[tokio::test]
+    #[ignore = "requires a local PostgreSQL (DATABASE_URL)"]
+    async fn popularity_counts_persisted_games() {
+        let pool = connect(&database_url()).await.expect("connect");
+        run_migrations(&pool).await.expect("migrate");
+
+        let before = fetch_popularity(&pool, 30).await.expect("popularity");
+        // Two games today with one shared roster of brand-new players.
+        let players: Vec<PlayerOutcome> = (0..4)
+            .map(|i| PlayerOutcome {
+                player_id: Uuid::new_v4(),
+                display_name: format!("pop{i}"),
+                color: Color::PLAYER_COLORS[i as usize],
+                final_score: i,
+                finish_position: (4 - i) as i16,
+                cards_played: 5,
+            })
+            .collect();
+        for _ in 0..2 {
+            let game_id = Uuid::new_v4();
+            let game = CompletedGame {
+                game_id,
+                started_at: Utc::now(),
+                ended_at: Utc::now(),
+                player_ids: players.iter().map(|p| p.player_id).collect(),
+                winner_ids: Some(vec![players[0].player_id]),
+                players: players.clone(),
+                stats: GameStats {
+                    round_count: 5,
+                    player_count: 4,
+                    explosions: 2,
+                    cards_played: 20,
+                    high_score: 3,
+                    low_score: 0,
+                    deathmatch: false,
+                },
+                replay: dummy_replay(game_id),
+            };
+            persist_game(&pool, &game).await.expect("persist");
+        }
+
+        let after = fetch_popularity(&pool, 30).await.expect("popularity");
+        assert_eq!(after.window_days, 30);
+        assert_eq!(after.daily.len(), 30, "the series covers the whole window");
+        let today = after.daily.last().expect("today is the last entry");
+        assert!(today.games >= 2, "today counts the persisted games");
+        assert!(today.players >= 4, "today counts the seated players");
+        assert!(today.new_players >= 4, "first-ever players count as new");
+        assert!(after.total_games >= before.total_games + 2);
+        assert!(after.total_players >= before.total_players + 4);
+        assert!(after.window_games >= 2 && after.window_players >= 4);
+        // Hour histogram: 24 buckets covering exactly the window's games, with
+        // the just-persisted games landing on the current UTC hour.
+        assert_eq!(after.by_hour.len(), 24);
+        assert_eq!(after.by_hour.iter().sum::<i64>(), after.window_games);
+        let this_hour = chrono::Timelike::hour(&Utc::now()) as usize;
+        assert!(after.by_hour[this_hour] >= 2);
+        // Returning players: a single-day roster adds none, and the count never
+        // exceeds the window's distinct players.
+        assert!(after.window_returning_players <= after.window_players);
     }
 
     /// Round-trips a completed game through PostgreSQL. Ignored by default

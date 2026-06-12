@@ -198,6 +198,16 @@ impl Round {
         &mut self.primed
     }
 
+    /// The primed Actives, read-only (the operator reveal's active-effects view).
+    pub fn primed(&self) -> &[PrimedSpell] {
+        &self.primed
+    }
+
+    /// Whether a Quench shields the next wave's explosion check.
+    pub fn quench_pending(&self) -> bool {
+        self.quench_next_wave
+    }
+
     /// The pot and the primed Actives together — a split borrow so resolution
     /// can read the pot while firing wards.
     pub fn pot_and_primed_mut(&mut self) -> (&Pot, &mut Vec<PrimedSpell>) {

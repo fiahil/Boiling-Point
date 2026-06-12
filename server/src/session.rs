@@ -23,6 +23,8 @@ use sqlx::PgPool;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::observability::balance_metrics::BalanceEvent;
+use crate::observability::metric;
 use crate::observability::span_schema::SPAN_SCHEMA_VERSION;
 
 use boiling_point_protocol::frame::{
@@ -36,7 +38,7 @@ use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
-use crate::game::round::{SpellChoice, WaveAction, WaveChoice};
+use crate::game::round::{RoundEnd, SpellChoice, WaveAction, WaveChoice};
 use crate::game::runner::{Game, RoundLog, RoundScoring, build_completed_game, depile_entries};
 use crate::game::state::{Hand, Player};
 use crate::lobby::group::GroupCommand;
@@ -87,22 +89,57 @@ struct WaveCollection {
     timed_out: bool,
 }
 
-/// A compact, in-process-only rendering of a hand for the `hand` span's secret
-/// attribute — read by the privileged reveal, never exported.
-fn fmt_hand(hand: &Hand) -> String {
-    let ingredients = hand
-        .ingredients()
+/// A compact, in-process-only rendering of one ingredient for span attributes —
+/// read by the privileged reveal, never exported.
+fn fmt_ingredient(c: &crate::game::card::Ingredient) -> String {
+    format!("{:?}(v{},p{})", c.color, c.volatility, c.points)
+}
+
+/// A compact rendering of a pantry hand for the `hand.pantry` secret attribute.
+fn fmt_pantry(hand: &Hand) -> String {
+    hand.ingredients()
         .iter()
-        .map(|c| format!("{:?}(v{},p{})", c.color, c.volatility, c.points))
+        .map(fmt_ingredient)
         .collect::<Vec<_>>()
-        .join(" ");
-    let spells = hand
-        .spells()
+        .join(" ")
+}
+
+/// A compact rendering of a spell hand for the `hand.spells` secret attribute.
+fn fmt_spells(hand: &Hand) -> String {
+    hand.spells()
         .iter()
         .map(|s| format!("{:?}", s.kind))
         .collect::<Vec<_>>()
-        .join(" ");
-    format!("[{ingredients}] grimoire[{spells}]")
+        .join(" ")
+}
+
+/// Refresh every open `hand` span's secret pantry/spell attributes from the
+/// engine's live hands, so the privileged reveal always reads current state
+/// (hands change at every top-up, commit, cast, and Forage draw).
+fn record_hands(game: &Game<'_>, hand_spans: &[(PlayerId, tracing::Span)]) {
+    for (id, span) in hand_spans {
+        if let Some(hand) = game.hand(*id) {
+            span.record("hand.pantry", fmt_pantry(hand).as_str());
+            span.record("hand.spells", fmt_spells(hand).as_str());
+        }
+    }
+}
+
+/// Surface the open round's active spell effects (unfired primed Actives and a
+/// pending Quench) on the round span's secret `effects.active` attribute.
+fn record_active_effects(game: &Game<'_>, round_span: &tracing::Span) {
+    let (primed, quench) = game.active_effects();
+    let mut effects: Vec<String> = primed
+        .iter()
+        .map(|(caster, kind, target)| match target {
+            Some(t) => format!("{kind:?}({}→{})", caster.0, t.0),
+            None => format!("{kind:?}({})", caster.0),
+        })
+        .collect();
+    if quench {
+        effects.push("Quench(next-wave)".to_string());
+    }
+    round_span.record("effects.active", effects.join(",").as_str());
 }
 
 /// Public table view, marking disconnected (gone) players as not connected.
@@ -261,7 +298,7 @@ pub async fn run_game(
         .collect();
     let mut game = Game::new(registry, config, game_players, seed);
 
-    crate::observability::metric::game_started();
+    metric::game_started();
     let game_start = std::time::Instant::now();
     let started_at = Utc::now();
     // Every raw in-game input players send, stamped ms-since-game-start, for the
@@ -306,9 +343,9 @@ pub async fn run_game(
         let round_start = std::time::Instant::now();
 
         // `round` span — child of the game span; held open for the whole round.
-        // boiling_point/volatility_total are secret (in-process only); round.number,
-        // round.exploded, and modifiers are public live-registry keys/outcome. The
-        // active modifiers ride as a public attribute (clients already see them).
+        // boiling_point/volatility_total/effects.active are secret (in-process
+        // only); round.number, the boom/freeze outcome, and modifiers are public
+        // live-registry keys/outcomes (clients already see each ModifierRevealed).
         let mods_str = game
             .active_modifiers()
             .iter()
@@ -321,22 +358,36 @@ pub async fn run_game(
                 round.number = round_number as u64,
                 boiling_point = effective_bp as i64,
                 volatility_total = tracing::field::Empty,
-                round.exploded = tracing::field::Empty,
+                effects.active = tracing::field::Empty,
+                round.boomed = tracing::field::Empty,
+                round.frozen = tracing::field::Empty,
                 modifiers = %mods_str,
             )
         });
 
         // `hand` spans — one per seated player, child of the round, held open for
-        // the whole round so the privileged reveal can read each hand from a live
-        // span. The hand contents ride as a secret attribute (in-process only).
-        let _hand_spans: Vec<tracing::Span> = ids
+        // the whole round so the privileged reveal can read each player's pantry
+        // and spell hands from a live span. Both ride as secret attributes
+        // (in-process only), refreshed whenever the engine's hands change.
+        let hand_spans: Vec<(PlayerId, tracing::Span)> = ids
             .iter()
             .map(|id| {
-                let hand = game.hand(*id).map(fmt_hand).unwrap_or_default();
-                round_span.in_scope(|| tracing::info_span!("hand", player.id = %id.0, hand = %hand))
+                let span = round_span.in_scope(|| {
+                    tracing::info_span!(
+                        "hand",
+                        player.id = %id.0,
+                        hand.pantry = tracing::field::Empty,
+                        hand.spells = tracing::field::Empty,
+                    )
+                });
+                (*id, span)
             })
             .collect();
+        record_hands(&game, &hand_spans);
 
+        // The round-ending wave's `resolve` span is held past the wave loop so the
+        // settlement can record the pot value P and the detonator split on it.
+        let mut fatal_resolve: Option<tracing::Span> = None;
         let mut first_wave = true;
         while game.round_is_open() {
             let wave_no = game.wave_number();
@@ -350,6 +401,7 @@ pub async fn run_game(
                 }
             }
             first_wave = false;
+            record_hands(&game, &hand_spans);
 
             let acting: Vec<PlayerId> = game.active().to_vec();
             let timer_ms = if wave_no == 1 {
@@ -359,12 +411,15 @@ pub async fn run_game(
             };
             // `wave` span — child of the round; held open for the whole commit
             // window so the live registry shows the in-flight wave.
+            let wave_start = std::time::Instant::now();
             let wave_span = round_span.in_scope(|| {
                 tracing::info_span!(
                     "wave",
                     wave.number = wave_no as u64,
                     wave.timer_ms = timer_ms,
                     wave.timed_out = tracing::field::Empty,
+                    wave.commits = tracing::field::Empty,
+                    wave.passes = tracing::field::Empty,
                 )
             });
             // Phase-advance invalidation (`boom-decision-frame`): anything still
@@ -425,6 +480,7 @@ pub async fn run_game(
                 timer_ms,
                 game_start,
                 &mut input_log,
+                &wave_span,
             )
             .await;
             let wave_timed_out = collection.timed_out;
@@ -434,7 +490,7 @@ pub async fn run_game(
                 // `reconnect` span — child of the game span; player.id is public.
                 let _reconnect =
                     game_span.in_scope(|| tracing::info_span!("reconnect", player.id = %player.0));
-                crate::observability::metric::player_reconnected();
+                metric::record(&BalanceEvent::PlayerReconnected);
                 gone.remove(player);
                 let (your_ingredients, your_spells) = game
                     .hand(*player)
@@ -458,39 +514,64 @@ pub async fn run_game(
             // `resolve` span — child of the wave; pot.card_count is public. The engine
             // validates choices against hands, removes the committed cards, applies the
             // wave, draws Forage spells, and records the per-wave action log (the
-            // deterministic replay input) on the shared `Game`.
+            // deterministic replay input) on the shared `Game`. The round-ending
+            // (fatal) wave's resolve span is held open so the settlement can record
+            // the pot value P and the detonator split on it.
             let resolve_span = wave_span.in_scope(|| {
-                tracing::info_span!("resolve", pot.card_count = tracing::field::Empty)
+                tracing::info_span!(
+                    "resolve",
+                    pot.card_count = tracing::field::Empty,
+                    pot.value = tracing::field::Empty,
+                    detonators = tracing::field::Empty,
+                )
             });
             let resolution = resolve_span.in_scope(|| game.resolve_wave(&collection.choices));
             resolve_span.record("pot.card_count", resolution.pot_card_count as u64);
-            drop(resolve_span);
+            if resolution.ended == Some(RoundEnd::Exploded) {
+                fatal_resolve = Some(resolve_span);
+            } else {
+                drop(resolve_span);
+            }
 
             let played: Vec<PlayerId> = resolution.committed.iter().map(|(p, _, _)| *p).collect();
-            // `commit` leaf spans (one per committed card) — children of the wave.
-            // The committed card identity rides as a secret attribute (in-process
-            // only); it is never broadcast until public resolution.
-            wave_span.in_scope(|| {
-                for (player, card, colorless) in &resolution.committed {
-                    let _commit = tracing::info_span!(
-                        "commit",
-                        player.id = %player.0,
-                        committed_card = ?card,
-                        colorless = colorless,
-                    );
-                }
+
+            // Surface the wave outcome, the live running volatility, and the active
+            // spell effects on the open spans (Update lifecycle events), so the
+            // reveal shows current state. wave.commits/wave.passes are public (the
+            // WaveResolved broadcast carries who played and who passed); they also
+            // feed the fold-rate metric fold.
+            wave_span.record("wave.timed_out", wave_timed_out);
+            wave_span.record("wave.commits", played.len() as u64);
+            wave_span.record("wave.passes", resolution.passers.len() as u64);
+            round_span.record("volatility_total", resolution.pot_volatility as i64);
+            record_active_effects(&game, &round_span);
+            record_hands(&game, &hand_spans);
+            metric::record(&BalanceEvent::WaveResolved {
+                timed_out: wave_timed_out,
+                commits: played.len() as u64,
+                folds: resolution.passers.len() as u64,
+                duration_ms: wave_start.elapsed().as_millis() as u64,
             });
 
-            // Surface the wave outcome and the live running volatility on the open
-            // spans (an Update lifecycle event), so the reveal shows current state.
-            wave_span.record("wave.timed_out", wave_timed_out);
-            round_span.record("volatility_total", resolution.pot_volatility as i64);
-            crate::observability::metric::wave_resolved(wave_timed_out);
-            crate::observability::metric::cards_committed(played.len() as u64);
-
             // Visible-when-activated: Instant casts are public (caster + spell +
-            // any colour target), in resolution order. Primed Actives stay silent.
+            // any colour target), in resolution order — each one a `spell.cast`
+            // leaf span under the wave. Primed Actives stay silent.
             for (caster, spell, color_target) in &resolution.casts {
+                let cast_span = wave_span.in_scope(|| {
+                    tracing::info_span!(
+                        "spell.cast",
+                        player.id = %caster.0,
+                        spell.kind = ?spell,
+                        spell.target = tracing::field::Empty,
+                    )
+                });
+                if let Some(color) = color_target {
+                    cast_span.record("spell.target", format!("{color:?}").as_str());
+                }
+                drop(cast_span);
+                metric::record(&BalanceEvent::SpellCast {
+                    kind: format!("{spell:?}"),
+                });
                 broadcast(
                     &players,
                     ServerMessage::SpellCast {
@@ -556,9 +637,11 @@ pub async fn run_game(
         // the cumulative scores and logged the round.
         let settlement = game.settle_round();
         let depile = settlement.depile;
-        let exploded = matches!(settlement.scoring, RoundScoring::Exploded(_));
+        let boomed = matches!(settlement.scoring, RoundScoring::Exploded(_));
+        // A freeze: the round settled with an empty pot (everyone passed).
+        let frozen = !boomed && depile.reveals.is_empty();
         // Round outcome onto the round span: volatility_total is secret (the final
-        // running volatility); round.exploded is public.
+        // running volatility); the boom/freeze outcome is public after the depile.
         round_span.record(
             "volatility_total",
             depile
@@ -567,34 +650,80 @@ pub async fn run_game(
                 .map(|i| i.running_volatility)
                 .unwrap_or(0) as i64,
         );
-        round_span.record("round.exploded", exploded);
+        round_span.record("round.boomed", boomed);
+        round_span.record("round.frozen", frozen);
+
+        // `depile` span — child of the round: the volatility-sorted reveal (the
+        // fatal-wave sort). Everything on it is public at this point — the boiling
+        // point is revealed EVERY round (boom and safe), the near-miss payoff; a
+        // `!` marks an entry liable for the boom, a `~` one played colorless.
+        let reveals_str = depile
+            .reveals
+            .iter()
+            .map(|item| {
+                format!(
+                    "{}:{}@w{}{}{}",
+                    item.player.0,
+                    fmt_ingredient(&item.ingredient),
+                    item.wave_number,
+                    if item.colorless { "~" } else { "" },
+                    if item.liable { "!" } else { "" },
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let depile_span = round_span.in_scope(|| {
+            tracing::info_span!(
+                "depile",
+                boiling_point = depile.boiling_point as i64,
+                reveals = %reveals_str,
+                crossing_index = tracing::field::Empty,
+            )
+        });
+        if let Some(idx) = depile.crossing_index {
+            depile_span.record("crossing_index", idx as u64);
+        }
+        drop(depile_span);
         broadcast(
             &players,
             ServerMessage::Depile {
                 reveals: depile_entries(&depile),
-                exploded,
-                // The boiling point is revealed EVERY round (boom and safe) — the
-                // near-miss payoff; it is no longer a secret once the pot settles.
+                exploded: boomed,
                 boiling_point: depile.boiling_point,
                 crossing_index: depile.crossing_index,
             },
         )
         .await;
 
-        // `score` span — child of the round; round.exploded and pot.value are public.
+        // `score` span — child of the round; the boom outcome, the pot value P,
+        // and the detonator split are all public at settlement.
         let score_span = round_span.in_scope(|| {
             tracing::info_span!(
                 "score",
-                round.exploded = exploded,
+                round.boomed = boomed,
                 pot.value = tracing::field::Empty,
-                dominant_color = tracing::field::Empty,
+                detonators = tracing::field::Empty,
             )
         });
         match settlement.scoring {
             RoundScoring::Exploded(result) => {
+                let detonators_csv = result
+                    .detonators
+                    .iter()
+                    .map(|p| p.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
                 score_span.record("pot.value", result.pot_value as i64);
-                // An explosion has no scoring colour winner.
-                score_span.record("dominant_color", "none");
+                score_span.record("detonators", detonators_csv.as_str());
+                // The fatal wave's resolve span carries the pot value P and the
+                // detonator split, completing it before it closes.
+                if let Some(resolve) = fatal_resolve.take() {
+                    resolve.record("pot.value", result.pot_value as i64);
+                    resolve.record("detonators", detonators_csv.as_str());
+                }
+                metric::record(&BalanceEvent::Boom {
+                    detonators: result.detonators.len() as u64,
+                });
                 broadcast(
                     &players,
                     ServerMessage::Explosion {
@@ -623,17 +752,7 @@ pub async fn run_game(
                         colors: result.winners.clone(),
                     }
                 };
-                // Public dominant-strategy signal for the balance dashboard: the single
-                // dominating colour, or `split` when several colours tied.
-                score_span.record(
-                    "dominant_color",
-                    match result.winners.as_slice() {
-                        [only] => format!("{only:?}"),
-                        _ => "split".to_string(),
-                    }
-                    .as_str(),
-                );
-                crate::observability::metric::round_decided(result.winners.len() == 1);
+                score_span.record("pot.value", result.pot_value as i64);
                 broadcast(
                     &players,
                     ServerMessage::RoundScored {
@@ -662,8 +781,11 @@ pub async fn run_game(
         .await;
         drop(score_span);
 
-        crate::observability::metric::round_resolved(exploded);
-        crate::observability::metric::round_duration(round_start.elapsed().as_secs_f64());
+        metric::record(&BalanceEvent::RoundSettled {
+            boomed,
+            frozen,
+            duration_ms: round_start.elapsed().as_millis() as u64,
+        });
     }
 
     // Game over — break a tie for the lead with a Deathmatch (the engine's tiebreak
@@ -682,8 +804,9 @@ pub async fn run_game(
         leaders
     };
 
-    crate::observability::metric::game_completed();
-    crate::observability::metric::game_duration(game_start.elapsed().as_secs_f64());
+    metric::record(&BalanceEvent::GameCompleted {
+        duration_ms: game_start.elapsed().as_millis() as u64,
+    });
     tracing::info!(?winners, "game over");
     broadcast(
         &players,
@@ -951,6 +1074,12 @@ fn target_shape_ok(
 /// `input_log` as it arrives — *before* validation, so rejected/off-palette
 /// attempts are captured too — stamped with `game_start.elapsed()` for the
 /// replay payload.
+///
+/// Each accepted (hidden) commit opens a `commit` leaf span under `wave_span`,
+/// carrying the card identity and its Vote colour as secret attributes, so the
+/// privileged reveal can show committed-but-unrevealed plays while the wave is
+/// open. A revised commit updates its span; a revision to pass closes it. All
+/// remaining commit spans close when collection returns (the wave resolves).
 #[allow(clippy::too_many_arguments)]
 async fn collect_wave(
     rx: &mut mpsc::Receiver<GroupCommand>,
@@ -964,6 +1093,7 @@ async fn collect_wave(
     timer_ms: u32,
     game_start: std::time::Instant,
     input_log: &mut Vec<TimedInput>,
+    wave_span: &tracing::Span,
 ) -> WaveCollection {
     let seated: Vec<PlayerId> = players.iter().map(|s| s.id).collect();
     // When the commit window closes — for the refreshed frame's remaining budget.
@@ -971,6 +1101,7 @@ async fn collect_wave(
     let mut pending: HashMap<PlayerId, Pending> = HashMap::new();
     let mut locked: HashSet<PlayerId> = HashSet::new();
     let mut reconnected: Vec<PlayerId> = Vec::new();
+    let mut commit_spans: HashMap<PlayerId, tracing::Span> = HashMap::new();
     // Disconnected players auto-pass and are considered locked in.
     for p in acting {
         if gone.contains(p) {
@@ -1005,9 +1136,39 @@ async fn collect_wave(
                                 // action, not a silent drop. The reply carries only the
                                 // reason — never pot/volatility/boiling-point state — so
                                 // it cannot weaken blind volatility.
-                                if hands.get(&player).is_some_and(|h| h.contains_ingredient(card)) {
+                                let held = hands
+                                    .get(&player)
+                                    .and_then(|h| h.ingredients().iter().find(|c| c.id == card))
+                                    .copied();
+                                if let Some(ingredient) = held {
                                     pending.entry(player).or_default().action =
                                         Some(WaveAction::Play { card, colorless });
+                                    // Open (or revise) the player's hidden `commit`
+                                    // span: card identity and Vote colour are secret
+                                    // until the depile.
+                                    let card_str = fmt_ingredient(&ingredient);
+                                    let vote = if colorless {
+                                        "colorless".to_string()
+                                    } else {
+                                        format!("{:?}", ingredient.color)
+                                    };
+                                    match commit_spans.get(&player) {
+                                        Some(span) => {
+                                            span.record("committed_card", card_str.as_str());
+                                            span.record("vote.color", vote.as_str());
+                                        }
+                                        None => {
+                                            let span = wave_span.in_scope(|| {
+                                                tracing::info_span!(
+                                                    "commit",
+                                                    player.id = %player.0,
+                                                    committed_card = %card_str,
+                                                    vote.color = %vote,
+                                                )
+                                            });
+                                            commit_spans.insert(player, span);
+                                        }
+                                    }
                                 } else {
                                     send_to(
                                         players,
@@ -1095,6 +1256,9 @@ async fn collect_wave(
                             }
                             ClientMessage::CommitPass if active => {
                                 pending.entry(player).or_default().action = Some(WaveAction::Pass);
+                                // A revision to pass closes any open commit span: the
+                                // reveal must not show a play that no longer stands.
+                                commit_spans.remove(&player);
                             }
                             ClientMessage::LockIn if active => {
                                 locked.insert(player);
@@ -1166,6 +1330,7 @@ async fn collect_wave(
                             let entry = pending.entry(player).or_default();
                             entry.action = Some(WaveAction::Pass);
                             locked.insert(player);
+                            commit_spans.remove(&player);
                         }
                     }
                     Some(GroupCommand::Join { player, out, .. }) => {
@@ -1299,6 +1464,7 @@ mod tests {
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
+            &tracing::Span::none(),
         )
         .await;
 
@@ -1374,6 +1540,7 @@ mod tests {
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
+            &tracing::Span::none(),
         )
         .await;
 
@@ -1468,6 +1635,7 @@ mod tests {
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
+            &tracing::Span::none(),
         )
         .await;
 
@@ -1524,6 +1692,7 @@ mod tests {
             5_000,
             std::time::Instant::now(),
             &mut Vec::new(),
+            &tracing::Span::none(),
         )
         .await;
 
@@ -1589,6 +1758,7 @@ mod tests {
             5_000,
             std::time::Instant::now(),
             &mut input_log,
+            &tracing::Span::none(),
         )
         .await;
 

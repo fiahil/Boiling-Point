@@ -25,6 +25,7 @@ use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
 use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
+use sqlx::PgPool;
 
 use crate::lobby::GroupRegistry;
 
@@ -43,6 +44,10 @@ pub struct AdminState {
     /// The group registry — the command plane's authoritative target (never the
     /// player wire). Used only by the elevated command endpoints.
     pub groups: Arc<GroupRegistry>,
+    /// Post-game persistence, when configured — the read-only source for the
+    /// **historical** stats (popularity); live reads stay on the projection.
+    /// `None` (no database) degrades those endpoints gracefully.
+    pub pool: Option<PgPool>,
 }
 
 /// Build the admin Router. Mount this on a listener **separate** from the player

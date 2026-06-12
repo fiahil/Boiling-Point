@@ -3,15 +3,16 @@
     "list": []
   },
   "editable": false,
-  "title": "Boiling Point \u2014 Balance (Principle IV)",
+  "title": "Boiling Point — Balance v2 (Principle IV)",
   "uid": "bp-balance",
   "tags": [
     "boiling-point",
-    "balance"
+    "balance",
+    "boom2"
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5s",
   "time": {
     "from": "now-6h",
@@ -24,7 +25,7 @@
     {
       "id": 1,
       "type": "gauge",
-      "title": "Explosion rate (target 30\u201340%)",
+      "title": "Boom rate — target ~45% [needs playtesting]",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -44,16 +45,16 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "yellow",
                 "value": null
               },
               {
                 "color": "green",
-                "value": 0.3
+                "value": 0.4
               },
               {
                 "color": "yellow",
-                "value": 0.4
+                "value": 0.5
               }
             ]
           }
@@ -66,14 +67,14 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(round_explosions_total[$__range])) / clamp_min(sum(increase(rounds_total[$__range])), 1)"
+          "expr": "sum(increase(rounds_boomed_total[$__range])) / clamp_min(sum(increase(rounds_total[$__range])), 1)"
         }
       ]
     },
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Explosion rate over time",
+      "title": "Boom rate over time",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -98,22 +99,22 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(round_explosions_total[$__rate_interval])) / clamp_min(sum(rate(rounds_total[$__rate_interval])), 0.0001)",
-          "legendFormat": "explosion rate"
+          "expr": "sum(rate(rounds_boomed_total[$__rate_interval])) / clamp_min(sum(rate(rounds_total[$__rate_interval])), 0.0001)",
+          "legendFormat": "boom rate"
         }
       ]
     },
     {
       "id": 3,
       "type": "stat",
-      "title": "Cards per round",
+      "title": "Detonators per boom",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
+        "h": 6,
+        "w": 4,
         "x": 0,
         "y": 8
       },
@@ -130,28 +131,40 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(cards_committed_total[$__range])) / clamp_min(sum(increase(rounds_total[$__range])), 1)"
+          "expr": "sum(increase(boom_detonators_total[$__range])) / clamp_min(sum(increase(rounds_boomed_total[$__range])), 1)"
         }
       ]
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Avg round duration",
+      "title": "Freeze rate — target 0% [needs playtesting]",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
+        "h": 6,
+        "w": 4,
+        "x": 4,
         "y": 8
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
-          "decimals": 1
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.01
+              }
+            ]
+          }
         }
       },
       "targets": [
@@ -161,84 +174,23 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(round_duration_seconds_sum[$__range])) / clamp_min(sum(increase(round_duration_seconds_count[$__range])), 1)"
+          "expr": "sum(increase(rounds_frozen_total[$__range])) / clamp_min(sum(increase(rounds_total[$__range])), 1)"
         }
       ]
     },
     {
       "id": 5,
       "type": "stat",
-      "title": "Avg game duration",
+      "title": "Fold rate",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
+        "h": 6,
+        "w": 4,
+        "x": 8,
         "y": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "decimals": 1
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(increase(game_duration_seconds_sum[$__range])) / clamp_min(sum(increase(game_duration_seconds_count[$__range])), 1)"
-        }
-      ]
-    },
-    {
-      "id": 6,
-      "type": "stat",
-      "title": "Active groups",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 8
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "groups_active"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "type": "stat",
-      "title": "Dominant-colour rate",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 12
       },
       "fieldConfig": {
         "defaults": {
@@ -252,7 +204,69 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(round_dominations_total[$__range])) / clamp_min(sum(increase(round_dominations_total[$__range])) + sum(increase(round_splits_total[$__range])), 1)"
+          "expr": "sum(increase(wave_folds_total[$__range])) / clamp_min(sum(increase(wave_commits_total[$__range])) + sum(increase(wave_folds_total[$__range])), 1)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Wave depth (waves / round)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 12,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 2
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(waves_total[$__range])) / clamp_min(sum(increase(rounds_total[$__range])), 1)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Avg wave duration",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 16,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(wave_duration_seconds_sum[$__range])) / clamp_min(sum(increase(wave_duration_seconds_count[$__range])), 1)"
         }
       ]
     },
@@ -265,10 +279,10 @@
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 12
+        "h": 6,
+        "w": 4,
+        "x": 20,
+        "y": 8
       },
       "fieldConfig": {
         "defaults": {
@@ -289,16 +303,95 @@
     {
       "id": 9,
       "type": "stat",
+      "title": "Avg round duration — target ~150s [needs playtesting]",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(round_duration_seconds_sum[$__range])) / clamp_min(sum(increase(round_duration_seconds_count[$__range])), 1)"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Avg game duration — target 15–18min [needs playtesting]",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "yellow",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 900
+              },
+              {
+                "color": "yellow",
+                "value": 1080
+              }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(game_duration_seconds_sum[$__range])) / clamp_min(sum(increase(game_duration_seconds_count[$__range])), 1)"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
       "title": "Reconnections per game",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
+        "h": 6,
+        "w": 4,
         "x": 12,
-        "y": 12
+        "y": 14
       },
       "fieldConfig": {
         "defaults": {
@@ -318,18 +411,111 @@
       ]
     },
     {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Reshuffle frequency (per second)",
+      "id": 12,
+      "type": "stat",
+      "title": "Active games",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 12
+        "h": 6,
+        "w": 4,
+        "x": 16,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "games_active"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Active groups",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 2,
+        "x": 20,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "groups_active"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Players connected",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 2,
+        "x": 22,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "players_connected"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Spell casts per second, by spell",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 20
       },
       "fieldConfig": {
         "defaults": {
@@ -343,38 +529,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(deck_reshuffles_total[$__rate_interval]))",
-          "legendFormat": "reshuffles/s"
-        }
-      ]
-    },
-    {
-      "id": 11,
-      "type": "stat",
-      "title": "Active games",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 16
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short"
-        }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "games_active"
+          "expr": "sum by (spell) (rate(spell_casts_total[$__rate_interval]))",
+          "legendFormat": "{{spell}}"
         }
       ]
     }

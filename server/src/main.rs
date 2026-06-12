@@ -154,6 +154,7 @@ async fn main() {
         projection: projection.clone(),
         auth: admin_auth,
         groups: groups.clone(),
+        pool: pool.clone(),
     };
     let admin_addr = cli.admin_addr;
     match tokio::net::TcpListener::bind(admin_addr).await {

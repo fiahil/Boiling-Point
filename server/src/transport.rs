@@ -148,6 +148,9 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
         let _ = writer.await;
         return;
     };
+    // An authenticated player connection is live from here until the socket
+    // closes (the connected-players fleet gauge).
+    crate::observability::metric::connection_opened();
 
     // Router loop with a heartbeat-driven idle timeout (a connection silent past
     // `conn_timeout` is treated as dropped). Table actions are rate-limited; entry,
@@ -236,6 +239,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             })
             .await;
     }
+    crate::observability::metric::connection_closed();
     writer.abort();
 }
 
@@ -1243,7 +1247,9 @@ mod tests {
         .expect("game completed before timeout");
         assert!(outcome, "every client saw GameOver");
 
-        // The documented span tree should now be visible to the lifecycle consumer.
+        // The documented v2 span tree should now be visible to the lifecycle
+        // consumer (spell.cast is absent only because the scripted bots never
+        // cast; the session tests cover it).
         let expected = [
             "group.lifetime",
             "game",
@@ -1252,6 +1258,8 @@ mod tests {
             "resolve",
             "score",
             "commit",
+            "depile",
+            "hand",
         ];
         let has = |name: &str| cap.events().iter().any(|e| e.name == name);
         assert!(
@@ -1260,6 +1268,65 @@ mod tests {
         );
 
         let events = cap.events();
+        // No v1-only emission survives: the retired v1 attribute keys never appear,
+        // and the planned-but-unimplemented pre-game spans are not emitted.
+        for e in events.iter() {
+            assert!(
+                !e.attributes.contains_key("round.exploded")
+                    && !e.attributes.contains_key("dominant_color"),
+                "v1-only attribute emitted on span {}",
+                e.name
+            );
+            assert!(
+                !crate::observability::span_schema::is_planned_span(e.name),
+                "planned span {} must not be emitted before its change lands",
+                e.name
+            );
+        }
+        // The schema version is stamped on the game span.
+        assert!(
+            events.iter().any(|e| e.name == "game"
+                && e.attributes.get("schema.version").map(String::as_str)
+                    == Some(&crate::observability::span_schema::SPAN_SCHEMA_VERSION.to_string())),
+            "game span missing schema.version = {}",
+            crate::observability::span_schema::SPAN_SCHEMA_VERSION
+        );
+        // Tree nesting matches the contract: every closed span with a documented
+        // parent nests under a span of exactly that name.
+        {
+            use std::collections::HashMap;
+            let names: HashMap<u64, &'static str> = events
+                .iter()
+                .filter(|e| e.kind == SpanEventKind::Start)
+                .map(|e| (e.id, e.name))
+                .collect();
+            for e in events.iter().filter(|e| e.kind == SpanEventKind::End) {
+                if let Some(expected_parent) = crate::observability::span_schema::parent_of(e.name)
+                    && let Some(parent_id) = e.parent_id
+                    && let Some(parent_name) = names.get(&parent_id)
+                {
+                    assert_eq!(
+                        *parent_name, expected_parent,
+                        "span {} nested under {} instead of {}",
+                        e.name, parent_name, expected_parent
+                    );
+                }
+            }
+        }
+        // The round closes with its public v2 outcome.
+        assert!(
+            events.iter().any(|e| e.name == "round"
+                && e.kind == SpanEventKind::End
+                && e.attributes.contains_key("round.boomed")),
+            "round spans must close with the round.boomed outcome"
+        );
+        // The depile carries the (now public) boiling point and the sorted reveal.
+        assert!(
+            events.iter().any(|e| e.name == "depile"
+                && e.attributes.contains_key("boiling_point")
+                && e.attributes.contains_key("reveals")),
+            "depile spans must carry the boiling point and the reveal order"
+        );
         // Live-registry key attributes are present on the right spans.
         assert!(
             events
@@ -1279,12 +1346,25 @@ mod tests {
                 .any(|e| e.name == "wave" && e.attributes.contains_key("wave.number")),
             "wave missing wave.number"
         );
-        // Sensitive state rides on the round span (admin-only; never on the player wire).
+        // Sensitive state rides on the round/hand spans (admin-only; never on the
+        // player wire) under the schema's marked sensitive keys.
         assert!(
             events
                 .iter()
                 .any(|e| e.name == "round" && e.attributes.contains_key("boiling_point")),
             "boiling_point (secret) not carried in-process on a round span"
+        );
+        assert!(
+            events.iter().any(|e| e.name == "hand"
+                && e.attributes.contains_key("hand.pantry")
+                && e.attributes.contains_key("hand.spells")),
+            "hand spans must carry the pantry and spell hands (secret)"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e.name == "commit" && e.attributes.contains_key("vote.color")),
+            "commit spans must carry the Vote colour (secret until the depile)"
         );
         // group.lifetime both opens and (after teardown) closes.
         assert!(
