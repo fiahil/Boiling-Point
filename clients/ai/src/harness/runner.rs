@@ -220,7 +220,7 @@ fn record_game(
             .iter()
             .map(|(p, s)| (color_of(p), *s))
             .collect(),
-        winner_colors: observation.winners.iter().map(|p| color_of(p)).collect(),
+        winner_colors: observation.winners.iter().map(color_of).collect(),
         exploded_rounds: observation.rounds.iter().filter(|r| r.exploded).count() as u32,
     };
     let seats = identities
@@ -320,10 +320,18 @@ async fn run_cell_in_process(
             identities.push((seat_spec.brain.label(), seat.player, seat.color));
             let (mut brain, mut fallback) = build_brains(seat_spec, &seeds, seat_index, api, spend);
             let cfg = seat_config(seat_spec.brain.is_agent(), None);
-            let conn = ChannelConnection::new(seat.to_server, seat.from_server);
+            let mut conn = ChannelConnection::new(seat.to_server, seat.from_server);
             let (player, color) = (seat.player, seat.color);
             futures.push(Box::pin(async move {
-                run_seat(conn, player, color, brain.as_mut(), &mut fallback, &cfg).await
+                run_seat(
+                    &mut conn,
+                    player,
+                    color,
+                    brain.as_mut(),
+                    &mut fallback,
+                    &cfg,
+                )
+                .await
             }));
         }
 
@@ -412,13 +420,21 @@ async fn run_cell_websocket(
         }
 
         let mut futures = Vec::with_capacity(4);
-        for (seat_index, conn) in conns.into_iter().enumerate() {
+        for (seat_index, mut conn) in conns.into_iter().enumerate() {
             let seat_spec = &cell.seats[seat_index];
             let (_, player, color) = identities[seat_index].clone();
             let (mut brain, mut fallback) = build_brains(seat_spec, &seeds, seat_index, api, spend);
             let cfg = seat_config(seat_spec.brain.is_agent(), Some(Duration::from_secs(20)));
             futures.push(Box::pin(async move {
-                run_seat(conn, player, color, brain.as_mut(), &mut fallback, &cfg).await
+                run_seat(
+                    &mut conn,
+                    player,
+                    color,
+                    brain.as_mut(),
+                    &mut fallback,
+                    &cfg,
+                )
+                .await
             }));
         }
         let outcomes = tokio::time::timeout(GAME_TIMEOUT, futures_util::future::join_all(futures))

@@ -64,7 +64,7 @@ impl SeatOutcome {
 /// Play one complete game over `conn` (already entered), answering decision
 /// frames through `policy`/`brain` with `fallback` as the timeliness floor.
 pub async fn run_seat<C: Connection>(
-    mut conn: C,
+    conn: &mut C,
     me: PlayerId,
     my_color: Color,
     brain: &mut dyn Brain,
@@ -400,9 +400,16 @@ mod tests {
             policy,
             ..SeatConfig::default()
         };
-        let outcome = run_seat(conn, pid(1), Color::Ruby, &mut brain, &mut fallback, &cfg)
-            .await
-            .expect("seat runs");
+        let outcome = run_seat(
+            &mut { conn },
+            pid(1),
+            Color::Ruby,
+            &mut brain,
+            &mut fallback,
+            &cfg,
+        )
+        .await
+        .expect("seat runs");
         let mut sent = Vec::new();
         while let Ok(m) = rx.try_recv() {
             sent.push(m);
@@ -487,9 +494,16 @@ mod tests {
         let mut brain = Counting(calls.clone());
         let mut fallback = Counting(Arc::new(AtomicU32::new(0)));
         let cfg = SeatConfig::default();
-        let outcome = run_seat(conn, pid(1), Color::Ruby, &mut brain, &mut fallback, &cfg)
-            .await
-            .expect("seat runs");
+        let outcome = run_seat(
+            &mut { conn },
+            pid(1),
+            Color::Ruby,
+            &mut brain,
+            &mut fallback,
+            &cfg,
+        )
+        .await
+        .expect("seat runs");
         assert_eq!(outcome.decisions, 1);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let mut sent = Vec::new();

@@ -47,10 +47,10 @@
 
 ## 7. Seat-filler mode (product)
 
-- [ ] 7.1 CLI/process: join by invite code or enqueue; multiple concurrent seats per process, each with its own brain + settings.
-- [ ] 7.2 Delegated-by-default pre-game decisions (genuine Brewer pick + draft); persona display names and table presence.
-- [ ] 7.3 Reconnection per protocol contract; clean per-seat exit on permanent failure.
-- [ ] 7.4 End-to-end: four filler seats (mixed brains) auto-match and play a complete v2 game to GameOver over the real wire with zero missed deadlines.
+- [x] 7.1 CLI/process: join by invite code or enqueue; multiple concurrent seats per process, each with its own brain + settings.
+- [x] 7.2 Delegated-by-default pre-game decisions (genuine Brewer pick + draft); persona display names and table presence. *(HostPolicy defaults every decision kind to Delegated — Brewer pick/draft inherit it when their kinds land; persona names + configurable emote palette ship now.)*
+- [x] 7.3 Reconnection per protocol contract; clean per-seat exit on permanent failure.
+- [x] 7.4 End-to-end: four filler seats (mixed brains) auto-match and play a complete v2 game to GameOver over the real wire with zero missed deadlines.
 
 ## 8. Integration, CI, docs
 

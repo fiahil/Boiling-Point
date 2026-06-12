@@ -19,6 +19,7 @@
 pub mod agent;
 pub mod bot;
 pub mod brain;
+pub mod filler;
 pub mod observe;
 pub mod policy;
 pub mod seat;
