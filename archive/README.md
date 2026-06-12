@@ -6,15 +6,20 @@ linted, or tested — the root cargo workspace excludes it. Retired by change
 `retire-v1-harnesses` (see `openspec/changes/archive/2026-06-11-retire-v1-harnesses/`),
 which also amended the constitution to v2.0.0.
 
-**Revived (2026-06-11):** `bot-harness/` moved back to the repo root as a live
-workspace member with change `boom2-combat-core` — Principle IV's at-scale
-playtesting mandate for the boom2 rework. The recipe below was followed; the
-crate was rewritten against the v4 (ingredient/spell) protocol along the way.
+**Revived and re-retired:** `bot-harness/` moved back to the repo root with
+change `boom2-combat-core` (2026-06-11) to deliver the first boom2 balance
+derivation against the v4 protocol, then returned here (2026-06-12) by change
+`boom2-ai-client`, whose `clients/ai` harness mode (`balance_tester`) fully
+supersedes it — same statistics and smells plus decision-frame-driven seats,
+codec-exercising byte transports, transport parity, and the matrix sample
+spec. It remains revivable per the recipe below, but `clients/ai` is the
+standing §IV instrument.
 
 ## Inventory
 
 | Entry | What it was | Introduced by | Capabilities removed with it |
 |---|---|---|---|
+| `bot-harness/` | Layer-1 balance harness — headless protocol bots, seeded batch runner, balance reports (v4-protocol rewrite) | `2026-06-02-bot-playtest-harness`; rewritten by `boom2-combat-core` | superseded by `boom-balance-harness` (`clients/ai`) |
 | `tui-client/` | v1 reference client — Rust + ratatui, the original agent-test target | `2026-06-02-terminal-client` (+ `2026-06-05-tui-readability-pass`) | `tui-client-shell`, `tui-lobby`, `tui-round-play`, `tui-reveal-and-score`, `tui-codex`, `tui-debug-and-test` |
 | `agent-harness/` | Layer-2 Claude-as-player harness — Node/TypeScript over WebSocket + MCP tools | `2026-06-02-agent-player-harness` | `agent-player`, `agent-personas` |
 | `playtest.sh` | One-command solo playtest: server + agent opponents + the TUI | (script, no change) | — |
@@ -48,4 +53,6 @@ v1 shipped; the boom2 rework + PixiJS web client (`adopt-pixi-client`) are the
 forward path. Keeping three unmaintained protocol consumers green made every
 protocol/engine change pay a three-client tax. Constitution v2.0.0 (§IV)
 required reviving the bot harness for at-scale balance validation before large
-balance reworks (boom2) ship — done with `boom2-combat-core` (see above).
+balance reworks (boom2) ship — done with `boom2-combat-core`, then handed off
+to the AI client's harness mode (`boom2-ai-client`, constitution v2.2.1); the
+interim harness returned here once superseded (see above).

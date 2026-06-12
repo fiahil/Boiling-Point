@@ -1,10 +1,11 @@
 ## 1. Fuller tests in CI (the gate)
 
 - [ ] 1.1 Add transport/integration tests (boot an in-process server) to the CI workflow.
-- [ ] 1.2 When the bot harness is revived for boom2 balance work (`archive/bot-harness/`,
-  required by §IV before boom2 balance ships), add its seeded deterministic smoke run
-  to CI (completion + determinism only — balance metrics stay observational in
-  `boom2-benchmarking`).
+- [ ] 1.2 Add the AI client's pinned seeded harness sample to CI (`make harness-sample` —
+  `clients/ai` `balance_tester`, the §IV reinstatement from `boom2-ai-client`; completion +
+  determinism only — balance metrics stay observational in `boom2-benchmarking`), plus an
+  agent-brain smoke (`cargo test -p boiling-point-ai-client --all-features` exercises the
+  agent path against a mock API; zero Claude spend).
 - [ ] 1.3 Add the `clients/web/` build + Playwright visual tests (activates with `adopt-pixi-client`).
 - [ ] 1.4 Make the full gate a required check on `main` before any deploy.
 

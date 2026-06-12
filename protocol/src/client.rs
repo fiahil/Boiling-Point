@@ -25,7 +25,11 @@ pub type ProtocolVersion = u16;
 /// (`CommitIngredient` with the colorless Vote choice, `CastSpell`), the
 /// detonator-only explosion, and the volatility-sorted depile that reveals the
 /// boiling point every round.
-pub const PROTOCOL_VERSION: ProtocolVersion = 4;
+/// v5: decision frames — the server enumerates each pending decision's complete
+/// legal action set ([`crate::server::ServerMessage::DecisionFrame`]) and
+/// rejects submissions against an already-resolved frame with
+/// [`crate::server::ErrorCode::StaleFrame`].
+pub const PROTOCOL_VERSION: ProtocolVersion = 5;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays
 /// human-readable for debugging.

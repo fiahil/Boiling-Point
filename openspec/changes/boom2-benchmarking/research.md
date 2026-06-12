@@ -24,7 +24,7 @@ Resolved in the 2026-06-11 explore session that produced this change.
 
 ## R3 — `server/benches/` + a `bench/` umbrella
 
-**Decision:** Criterion benches live in `server/benches/` (cargo-idiomatic). The suite's own code lives under a new top-level `bench/`: `bench/balance-study/` (the revived `archive/bot-harness/`, adapted to the v2 core) and `bench/dashboard/` (the report generator). Constitution tree gets a MINOR amendment.
+**Decision:** Criterion benches live in `server/benches/` (cargo-idiomatic). The suite's own code lives under a new top-level `bench/`: `bench/balance-study/` (a study wrapper over the AI client harness, `clients/ai` — originally planned as the revived `archive/bot-harness/`) and `bench/dashboard/` (the report generator). Constitution tree gets a MINOR amendment.
 
 **Rationale:** The pre-reshape layout (top-level `bot-harness/` crate) is gone; `archive/` is explicitly revivable and §IV names revival as the expected path. `ops/` is runtime/observability config (grafana), not workspace code — wrong home.
 

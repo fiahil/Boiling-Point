@@ -268,7 +268,7 @@ async fn run_one_game(
             out: s.out.clone(),
         })
         .collect();
-    let seed: u64 = rand::random();
+    let seed: u64 = groups.next_game_seed();
     let GameEnd {
         players,
         gone,

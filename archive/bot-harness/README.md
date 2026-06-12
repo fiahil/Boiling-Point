@@ -1,4 +1,9 @@
-# bot-harness
+# bot-harness (archived 2026-06-12)
+
+> **Superseded** by the AI client's harness mode — `clients/ai` /
+> `balance_tester` (change `boom2-ai-client`): same statistics and smells plus
+> decision-frame-driven seats, codec-exercising transports, transport parity,
+> and the matrix sample spec. Kept revivable per `archive/README.md`.
 
 The **Layer-1 balance harness**: headless Rust bots that play complete games and a
 seeded batch runner that aggregates balance statistics. It's a pure consumer of the

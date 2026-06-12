@@ -2,7 +2,7 @@
 
 ### Requirement: CI Runs The Full Test Gate
 
-CI SHALL extend beyond `fmt` + `clippy` + unit tests to run the Principle-II testing layers (constitution v2.0.0): **transport/integration** tests (booting an in-process server), and — once the Pixi client lands — the **web client** (`clients/web/`) build and Playwright visual suite. When the archived bot harness (`archive/bot-harness/`) is revived for boom2 balance work (required before boom2 balance ships, §IV), a seeded deterministic **smoke run** SHALL join the gate — asserting the runs complete and reproduce, never asserting balance-metric bands (balance metrics are observational; see change `boom2-benchmarking`).
+CI SHALL extend beyond `fmt` + `clippy` + unit tests to run the Principle-II testing layers (constitution v2.0.0): **transport/integration** tests (booting an in-process server), and — once the Pixi client lands — the **web client** (`clients/web/`) build and Playwright visual suite. The AI client harness (`clients/ai` `balance_tester`, the §IV instrument from `boom2-ai-client`) SHALL contribute a seeded deterministic **smoke run** to the gate — asserting the runs complete and reproduce, never asserting balance-metric bands (balance metrics are observational; see change `boom2-benchmarking`).
 
 #### Scenario: A protocol/transport regression fails CI
 
@@ -11,7 +11,7 @@ CI SHALL extend beyond `fmt` + `clippy` + unit tests to run the Principle-II tes
 
 #### Scenario: Revived smoke runs are seeded and deterministic
 
-- **WHEN** the revived bot-harness smoke layer runs in CI
+- **WHEN** the AI-client harness smoke layer runs in CI
 - **THEN** it uses fixed seeds so results are reproducible and a failure is attributable, and it asserts only completion and determinism — no balance-metric bands
 
 ### Requirement: The Test Gate Precedes Deployment

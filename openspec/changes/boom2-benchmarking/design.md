@@ -1,6 +1,6 @@
 ## Context
 
-Constitution v2.0.0 retired the v1 harnesses to `archive/` and made bot-harness revival the precondition for shipping boom2 balance (§IV). Meanwhile the roadmap's server-benchmark candidate has criterion micro-benches "tracked over time" with nowhere to land. Both workloads are measurements against targets — performance budgets, balance targets — which makes them one suite with shared conventions, distinct from the pass/fail CI gate that `boom2-delivery` owns. Decisions below were resolved in [research.md](research.md) (R1–R5).
+Constitution v2.0.0 retired the v1 harnesses to `archive/` and made harness revival the precondition for shipping boom2 balance (§IV) — since fulfilled: the standing §IV instrument is the AI client's harness mode (`clients/ai` `balance_tester`, change `boom2-ai-client`). Meanwhile the roadmap's server-benchmark candidate has criterion micro-benches "tracked over time" with nowhere to land. Both workloads are measurements against targets — performance budgets, balance targets — which makes them one suite with shared conventions, distinct from the pass/fail CI gate that `boom2-delivery` owns. Decisions below were resolved in [research.md](research.md) (R1–R5).
 
 ## Goals / Non-Goals
 

@@ -9,5 +9,5 @@ pub mod session;
 
 pub use group::{GroupCommand, GroupHandle};
 pub use matchmaking::MatchQueue;
-pub use registry::GroupRegistry;
+pub use registry::{GameSeedSource, GroupRegistry, QueuedSeeds};
 pub use session::SessionStore;

@@ -22,7 +22,7 @@
 ## 4. Clients & harness
 
 - [ ] 4.1 Web client (`clients/web/`): render the 2-of-pair pick and the four public Brewers at the table.
-- [ ] 4.2 Bot harness (revived from `archive/bot-harness/`, §IV): support per-bot Brewer assignment; emit the **persona × Brewer** win/break matrix.
+- [ ] 4.2 AI client harness (`clients/ai` harness mode, §IV — supersedes the interim `bot-harness/`): land the Brewer-pick decision kind in `PendingDecision`, lift the sample-spec `brewer` axis rejection, and emit the **persona × Brewer** win/break matrix from `balance_tester`.
 
 ## 5. Balance (Principle IV)
 

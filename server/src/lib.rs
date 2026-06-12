@@ -15,6 +15,7 @@ pub mod admin;
 pub mod config;
 pub mod content;
 pub mod game;
+pub mod headless;
 pub mod lobby;
 pub mod observability;
 pub mod persistence;

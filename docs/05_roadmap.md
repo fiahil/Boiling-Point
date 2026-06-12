@@ -146,7 +146,7 @@ These also sit beyond v1. (Some overlap with the design-side deferrals in
     stacking — run per merge to `main`, read as *trends* (observed rerun noise
     is 6–12%, so single-run deltas are noise).
   - **WebSocket load harness**: many concurrent rooms driven over the real wire
-    (revive `archive/bot-harness/`'s WebSocket transport), measuring tick latency,
+    (the AI client's WebSocket transport — `clients/ai`), measuring tick latency,
     broadcast fan-out cost, and memory per room, against target throughput/latency
     budgets. **Deferred** out of `boom2-benchmarking`; the suite's report and
     dashboard conventions are its seam.

@@ -92,6 +92,43 @@ impl ContentSelector {
     }
 }
 
+/// A deterministic source of per-game seeds, injectable for tests and the AI
+/// client's transport-parity validation (`boom2-ai-client` task 2.2): with a
+/// source attached, a game played over the real WebSocket wire can be pinned to
+/// the same seed an in-process run used. Production servers attach none and
+/// every game draws a fresh random seed.
+pub trait GameSeedSource: Send + Sync {
+    /// The seed for the next game any group of this registry starts.
+    fn next_seed(&self) -> u64;
+}
+
+/// A [`GameSeedSource`] that hands out a queued seed sequence in order (games
+/// start sequentially in the scenarios this serves), then falls back to random
+/// seeds once exhausted.
+#[derive(Default)]
+pub struct QueuedSeeds {
+    queue: std::sync::Mutex<std::collections::VecDeque<u64>>,
+}
+
+impl QueuedSeeds {
+    /// A source pre-loaded with `seeds`, consumed in order.
+    pub fn new(seeds: impl IntoIterator<Item = u64>) -> Self {
+        QueuedSeeds {
+            queue: std::sync::Mutex::new(seeds.into_iter().collect()),
+        }
+    }
+}
+
+impl GameSeedSource for QueuedSeeds {
+    fn next_seed(&self) -> u64 {
+        self.queue
+            .lock()
+            .expect("seed queue lock")
+            .pop_front()
+            .unwrap_or_else(rand::random)
+    }
+}
+
 /// Concurrent registry of live groups. Holds the shared content the groups need to
 /// run games.
 pub struct GroupRegistry {
@@ -100,6 +137,9 @@ pub struct GroupRegistry {
     /// Optional persistence pool, threaded into every spawned group for the
     /// post-game completion write. `None` ⇒ persistence is disabled.
     pool: Option<PgPool>,
+    /// Optional deterministic per-game seed source (tests/parity harnesses only);
+    /// `None` ⇒ every game draws a fresh random seed.
+    seeds: Option<Arc<dyn GameSeedSource>>,
     /// The auto-match queue, for group fill. A `Weak` to avoid a reference cycle
     /// (the queue holds an `Arc<GroupRegistry>`); set once after both are built via
     /// [`set_queue`](GroupRegistry::set_queue). Unset in tests that don't matchmake,
@@ -128,6 +168,7 @@ impl GroupRegistry {
                 palette,
             }),
             pool: None,
+            seeds: None,
             queue: OnceLock::new(),
         }
     }
@@ -137,6 +178,21 @@ impl GroupRegistry {
     pub fn with_pool(mut self, pool: Option<PgPool>) -> Self {
         self.pool = pool;
         self
+    }
+
+    /// Attach a deterministic per-game seed source (tests/parity harnesses only).
+    pub fn with_seed_source(mut self, seeds: Arc<dyn GameSeedSource>) -> Self {
+        self.seeds = Some(seeds);
+        self
+    }
+
+    /// The seed for a game starting now: drawn from the attached source, or
+    /// fresh randomness (production default).
+    pub(crate) fn next_game_seed(&self) -> u64 {
+        match &self.seeds {
+            Some(source) => source.next_seed(),
+            None => rand::random(),
+        }
     }
 
     /// Wire the auto-match queue (for group fill) after both are constructed. Held
