@@ -12,7 +12,7 @@
 
 ## 3. Balance study (revived harness)
 
-- [ ] 3.1 Revive `archive/bot-harness/` into `bench/balance-study/` — transport, seeded batch runner, stats — compiling against the v2 protocol (bot play on the new loop is combat-core 7.2; coordinate, don't duplicate).
+- [ ] 3.1 Build `bench/balance-study/` as a thin study wrapper over the AI client's harness mode (`clients/ai` `balance_tester`, change `boom2-ai-client` — transports, seeded runner, stats, and reports already live there): study configs in, versioned reports out; don't duplicate the runner.
 - [ ] 3.2 Build the study runner: one command taking a study config (seed set, game count, knob values, matrix axes) and producing a run.
 - [ ] 3.3 Define the versioned report schema: provenance (seeds, config hash, engine commit, game count) + metrics (explosion rate, detonator distribution, freeze rate, Peek-fire rate, persona × Brewer × deck-archetype cells).
 - [ ] 3.4 Verify reproducibility: same provenance → identical metrics (make it a transport/integration test).

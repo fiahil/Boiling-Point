@@ -2,15 +2,14 @@
 #
 # `protocol/` is the narrow wire waist (DTOs + codec, no secrets); `server/` is
 # the authoritative engine that owns the full domain model; `clients/ai/` is the
-# Rust AI client (bot + Claude brains behind one `Brain` trait, seat-filler and
-# balance-harness hosts — change `boom2-ai-client`, Principle IV's at-scale
-# playtesting mandate); `bot-harness/` is the v1-revived interim harness it
-# supersedes for v2 work. Remaining retired v1 components (tui-client,
-# agent-harness) live under `archive/` — excluded, not members; see
-# archive/README.md for the revival recipe.
+# Rust AI client (bot + Claude brains behind one `Brain` trait, the §IV balance
+# harness `balance_tester` and the seat-filler `familiar_summoning` — change
+# `boom2-ai-client`). Retired v1 components (tui-client, agent-harness, and the
+# interim bot-harness the AI client superseded) live under `archive/` —
+# excluded, not members; see archive/README.md for the revival recipe.
 [workspace]
 resolver = "2"
-members = ["protocol", "server", "bot-harness", "clients/ai"]
+members = ["protocol", "server", "clients/ai"]
 exclude = ["archive"]
 
 [workspace.package]

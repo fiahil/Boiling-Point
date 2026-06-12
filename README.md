@@ -16,6 +16,8 @@ The full documentation hub is [docs/](docs/); the canonical rules are in
 protocol/       wire messages + MessagePack/JSON codec (no game logic, no secrets)
 server/         authoritative game engine, content/config, game loop, admin + metrics
 clients/
+├── ai/         AI client — bot + Claude brains; §IV balance harness (balance_tester),
+│               seat-filler "familiars" (familiar_summoning)
 └── web/        graphical client — TypeScript + PixiJS (lands with adopt-pixi-client)
 archive/        retired v1 components — tui-client, bot-harness, agent-harness,
                 playtest.sh (revivable, not deleted; see archive/README.md)

@@ -23,7 +23,7 @@ use boiling_point_protocol::{CardId, PlayerId, ServerMessage};
 
 /// Measure one agent-brain decision against a fixture wave-commit frame.
 #[derive(Parser)]
-#[command(name = "bp-probe")]
+#[command(name = "latency_probe")]
 struct Cli {
     /// Model id to probe (e.g. claude-opus-4-8, claude-haiku-4-5).
     #[arg(long, default_value = "claude-opus-4-8")]
@@ -100,7 +100,7 @@ async fn main() {
     let api = match HttpMessagesApi::from_env() {
         Ok(api) => Arc::new(api),
         Err(e) => {
-            eprintln!("bp-probe: {e}");
+            eprintln!("latency_probe: {e}");
             std::process::exit(2);
         }
     };

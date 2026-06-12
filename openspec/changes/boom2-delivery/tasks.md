@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Add transport/integration tests (boot an in-process server) to the CI workflow.
 - [ ] 1.2 Add the AI client's pinned seeded harness sample to CI (`make harness-sample` —
-  `clients/ai` `bp-harness`, the §IV reinstatement from `boom2-ai-client`; completion +
+  `clients/ai` `balance_tester`, the §IV reinstatement from `boom2-ai-client`; completion +
   determinism only — balance metrics stay observational in `boom2-benchmarking`), plus an
   agent-brain smoke (`cargo test -p boiling-point-ai-client --all-features` exercises the
   agent path against a mock API; zero Claude spend).

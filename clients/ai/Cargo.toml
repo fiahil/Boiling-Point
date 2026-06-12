@@ -14,19 +14,19 @@ path = "src/lib.rs"
 
 # The seat-filler host: joins real rooms over WebSocket and plays with either brain.
 [[bin]]
-name = "bp-seats"
-path = "src/bin/bp_seats.rs"
+name = "familiar_summoning"
+path = "src/bin/familiar_summoning.rs"
 
 # The agent-brain latency probe: one isolated decision against a fixture frame.
 [[bin]]
-name = "bp-probe"
-path = "src/bin/bp_probe.rs"
+name = "latency_probe"
+path = "src/bin/latency_probe.rs"
 
 # The balance-harness batch runner (links the server for the in-process boot —
 # the ONLY target allowed to; the seat↔server boundary stays encoded frames).
 [[bin]]
-name = "bp-harness"
-path = "src/bin/bp_harness.rs"
+name = "balance_tester"
+path = "src/bin/balance_tester.rs"
 required-features = ["harness"]
 
 [features]

@@ -24,7 +24,8 @@ committed design. Everything in 02 is tagged `[needs playtesting]` — the harne
 re-derives the balance economy. (The §IV at-scale instrument is the **AI client's
 harness mode** — [`clients/ai/`](../../clients/ai/README.md), change
 [`boom2-ai-client`](../../openspec/changes/boom2-ai-client/), superseding the interim
-`bot-harness/` revival that delivered the combat-core derivation. Change
+bot harness that delivered the combat-core derivation (since returned to
+`archive/bot-harness/`). Change
 [`boom2-benchmarking`](../../openspec/changes/boom2-benchmarking/) folds its runs into
 the benchmarking suite as the **balance study** instrument — on-demand, purely
 observational — alongside the criterion server benchmarks.)

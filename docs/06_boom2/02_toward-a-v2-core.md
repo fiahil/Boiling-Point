@@ -337,8 +337,9 @@ rarer (~10%), and the **reserve** guarantees ≥1 god-tier spell if you want it.
 ## First harness derivation (2026-06-11, `boom2-combat-core`)
 
 The combat core shipped on fixed colour-anchored decks and the **revived bot
-harness** (`bot-harness/`, constitution §IV) re-derived the blind-volatility
-economy: 1000-game seeded batches over the four baseline bots (cautious /
+harness** (then `bot-harness/`; since superseded and returned to
+`archive/bot-harness/` — see the second derivation below) re-derived the
+blind-volatility economy: 1000-game seeded batches over the four baseline bots (cautious /
 aggressor / diplomat / random), sweeping the boiling-point window from 20–32 to
 32–44 in steps of 2.
 
@@ -372,20 +373,22 @@ aggressor / diplomat / random), sweeping the boiling-point window from 20–32 t
 ## Second harness derivation (2026-06-12, `boom2-ai-client`)
 
 The §IV instrument changed hands: the **AI client's harness mode**
-(`clients/ai`, `bp-harness`) supersedes the interim `bot-harness/` for boom2
-balance work. Same engine, different client architecture — seats now play off
-**server-enumerated decision frames** (no client-side rules rederivation) over
-the byte-frame in-process seam, with transport parity against the real
-WebSocket wire proven in CI-able tests. First standing run: 1000 games, seed 0,
-default content (`fingerprint b97f673fd4b6c6e3`), archetypes cautious /
-aggressive / political / random.
+(`clients/ai`, `balance_tester`) fully supersedes the interim `bot-harness/`
+(now back in `archive/`) — same statistics, smells, and seat-colour fairness
+signal, on a different client architecture: seats play off **server-enumerated
+decision frames** (no client-side rules rederivation) over the byte-frame
+in-process seam, with transport parity against the real WebSocket wire proven
+in CI-able tests. First standing night brew: 1000 games, seed 0, default
+content (`fingerprint b97f673fd4b6c6e3`), archetypes cautious / aggressive /
+political / random.
 
 **Cross-validation against the first derivation** — the frame-driven client
 reproduces the combat-core economy, so the instrument handover did not move the
 numbers: explosion rate **47.0%** (vs 44.8%; both inside the 40–50% band),
 detonators/boom **1.29** (vs 1.28), Peek casts/game **3.43** (vs ~3.4),
-waves/round **5.87** (vs ~5.8), avg scored pot **~33** (vs ~32, the fat-pot
-finding stands), freeze **0.0%** all-pass endings, 0 empty pots.
+waves/round **5.87** (vs ~5.8), avg scored pot **~33** (vs ~32 — the
+runaway-pot smell still fires by design until the points-curve work lands; the
+fat-pot finding stands), freeze **0.0%** all-pass endings, 0 empty pots.
 
 **New signals this client adds:**
 
@@ -405,7 +408,7 @@ finding stands), freeze **0.0%** all-pass endings, 0 empty pots.
   the root seed.
 
 Rerun: `make harness-sample` (CI-sized) or
-`cargo run -p boiling-point-ai-client --features harness --bin bp-harness -- --games 1000 --seed 0`.
+`cargo run -p boiling-point-ai-client --features harness --bin balance_tester -- --games 1000 --seed 0`.
 
 ---
 

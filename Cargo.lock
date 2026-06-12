@@ -254,24 +254,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "boiling-point-bot-harness"
-version = "0.1.0"
-dependencies = [
- "axum",
- "boiling-point-protocol",
- "boiling-point-server",
- "clap",
- "futures-util",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tokio-tungstenite 0.24.0",
- "uuid",
-]
-
-[[package]]
 name = "boiling-point-protocol"
 version = "0.1.0"
 dependencies = [

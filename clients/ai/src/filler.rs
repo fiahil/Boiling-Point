@@ -44,6 +44,25 @@ pub enum FillerBrain {
     Agent(Box<AgentSettings>),
 }
 
+/// The player-facing **familiar** name for a brain (Apothecary Ink flavor):
+/// a bot seat presents as the witch's helper creature — "Timid Toad
+/// (familiar)" — so nobody mistakes it for a human, and the name pool can't
+/// collide with the ingredient/bucket vocabulary. Code-level identifiers stay
+/// literal (`cautious`, `aggressive`, …); only display surfaces use these.
+pub fn familiar_name(brain: &FillerBrain) -> String {
+    let pairing = match brain {
+        FillerBrain::Bot { archetype, .. } => match archetype {
+            Archetype::Cautious => "Timid Toad",
+            Archetype::Aggressive => "Brash Salamander",
+            Archetype::Political => "Silver-tongued Raven",
+            Archetype::Random => "Scatterbrained Moth",
+        },
+        // The artificial brewer itself.
+        FillerBrain::Agent(_) => "Homunculus",
+    };
+    format!("{pairing} (familiar)")
+}
+
 /// One seat's configuration within a filler process.
 #[derive(Debug, Clone)]
 pub struct FillerSeatSettings {
@@ -64,14 +83,15 @@ pub struct FillerSeatSettings {
 
 impl Default for FillerSeatSettings {
     fn default() -> Self {
+        let brain = FillerBrain::Bot {
+            archetype: Archetype::Political,
+            epsilon: 0.05,
+            seed: rand::random(),
+        };
         FillerSeatSettings {
-            display_name: "Boiling Bot".into(),
+            display_name: familiar_name(&brain),
             entry: EntryMode::Enqueue,
-            brain: FillerBrain::Bot {
-                archetype: Archetype::Political,
-                epsilon: 0.05,
-                seed: rand::random(),
-            },
+            brain,
             games: 1,
             emote_palette: Vec::new(),
             reconnect_attempts: 3,
@@ -312,4 +332,43 @@ pub async fn run_filler_process(
         }
     }
     reports
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Temperaments pair with their player-facing familiars; code ids stay
+    /// literal and the agent presents as the Homunculus.
+    #[test]
+    fn familiars_pair_with_temperaments() {
+        let bot = |archetype| FillerBrain::Bot {
+            archetype,
+            epsilon: 0.0,
+            seed: 1,
+        };
+        assert_eq!(
+            familiar_name(&bot(Archetype::Cautious)),
+            "Timid Toad (familiar)"
+        );
+        assert_eq!(
+            familiar_name(&bot(Archetype::Aggressive)),
+            "Brash Salamander (familiar)"
+        );
+        assert_eq!(
+            familiar_name(&bot(Archetype::Political)),
+            "Silver-tongued Raven (familiar)"
+        );
+        assert_eq!(
+            familiar_name(&bot(Archetype::Random)),
+            "Scatterbrained Moth (familiar)"
+        );
+        assert_eq!(
+            familiar_name(&FillerBrain::Agent(Box::default())),
+            "Homunculus (familiar)"
+        );
+        // An unnamed seat presents as its brain's familiar by default.
+        let defaults = FillerSeatSettings::default();
+        assert_eq!(defaults.display_name, familiar_name(&defaults.brain));
+    }
 }

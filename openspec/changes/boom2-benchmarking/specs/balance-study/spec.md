@@ -2,7 +2,7 @@
 
 ### Requirement: Balance Studies Run On Demand At Scale
 
-The revived bot harness (`archive/bot-harness/` → `bench/balance-study/`) SHALL run balance studies **on demand** — thousands of seeded games per study — emitting the §IV metrics for the v2 core: explosion rate (vs the ~45% working target), detonator distribution, freeze (all-pass) rate, Peek-fire rate, and per-Brewer / per-persona / per-deck-archetype outcomes.
+The AI client's harness mode (`clients/ai` `balance_tester`, wrapped as `bench/balance-study/`) SHALL run balance studies **on demand** — thousands of seeded games per study — emitting the §IV metrics for the v2 core: explosion rate (vs the ~45% working target), detonator distribution, freeze (all-pass) rate, Peek-fire rate, and per-Brewer / per-persona / per-deck-archetype outcomes.
 
 #### Scenario: A knob change triggers a study
 

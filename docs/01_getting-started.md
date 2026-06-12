@@ -41,8 +41,9 @@ Game balance (deck, thresholds, modifiers, effects) lives in
 [`server/content.toml`](../server/content.toml) and is validated at startup — an
 inconsistent config fails the boot, not a game. Load a custom config with
 `--config <PATH>`. The numbers are hypotheses until playtested; balance is tuned from
-the admin balance dashboard and structured playtests, and at-scale automated runs come
-from reviving [`archive/bot-harness/`](../archive/README.md) (constitution §IV; see
+the admin balance dashboard and structured playtests, and at-scale automated runs
+("night brews") come from the AI client's harness mode —
+[`clients/ai/`](../clients/ai/README.md) `balance_tester` (constitution §IV; see
 [02_game-design.md §16](02_game-design.md)).
 
 ## Where to go next

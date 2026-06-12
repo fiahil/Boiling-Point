@@ -17,7 +17,7 @@ use boiling_point_server::config::{ContentConfig, DEFAULT_CONTENT_TOML};
 
 /// Seeded balance batches over the headless server (Principle IV).
 #[derive(Parser)]
-#[command(name = "bp-harness")]
+#[command(name = "balance_tester")]
 struct Cli {
     /// Games for the default baseline cell (ignored when --spec is given).
     #[arg(long, default_value_t = 1000)]
@@ -45,7 +45,7 @@ struct Cli {
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     if let Err(e) = run(Cli::parse()).await {
-        eprintln!("bp-harness: {e}");
+        eprintln!("balance_tester: {e}");
         std::process::exit(1);
     }
 }
@@ -69,7 +69,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
     let total_games: u64 = spec.cells.iter().map(|c| c.games).sum();
     eprintln!(
-        "bp-harness: {} cell(s), {} games, seed {}, {} transport",
+        "balance_tester: {} cell(s), {} games, seed {}, {} transport",
         spec.cells.len(),
         total_games,
         spec.root_seed,
@@ -98,13 +98,17 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             std::fs::write(&md, report.to_markdown())?;
             std::fs::write(&json, report.to_json())?;
-            eprintln!("bp-harness: wrote {} and {}", md.display(), json.display());
+            eprintln!(
+                "balance_tester: wrote {} and {}",
+                md.display(),
+                json.display()
+            );
         }
         None => println!("{}", report.to_markdown()),
     }
     if !report.smells.is_empty() {
         eprintln!(
-            "bp-harness: {} balance smell(s) flagged",
+            "balance_tester: {} balance smell(s) flagged",
             report.smells.len()
         );
     }

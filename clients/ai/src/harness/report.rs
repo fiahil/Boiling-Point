@@ -39,6 +39,8 @@ pub struct Thresholds {
     pub random_indistinguishable_margin: f64,
     /// Games a cell needs before the random-baseline comparison fires.
     pub random_comparison_min_games: usize,
+    /// Average scored pot value above which pots are flagged as runaway.
+    pub runaway_pot_value: f64,
 }
 
 impl Default for Thresholds {
@@ -50,6 +52,9 @@ impl Default for Thresholds {
             dominant_win_share: 0.40,
             random_indistinguishable_margin: 0.05,
             random_comparison_min_games: 200,
+            // ~2.5× the sketched P≈10 — known to fire on the current content
+            // (the standing fat-pots finding, docs/06_boom2/02).
+            runaway_pot_value: 25.0,
         }
     }
 }
@@ -136,6 +141,35 @@ fn detect(cell: &CellReport, thresholds: &Thresholds) -> Vec<Smell> {
                 ),
             });
         }
+    }
+    // Seat-colour fairness: a colour winning disproportionately (labels are
+    // fixed per seat, so this is the seating-order-bias signal).
+    for (color, wins) in &stats.wins_by_color {
+        let share = stats.color_win_share(color);
+        if share > thresholds.dominant_win_share {
+            smells.push(Smell {
+                cell: cell.name.clone(),
+                kind: "dominant_color".into(),
+                detail: format!(
+                    "colour '{color}' won {:.1}% of credits ({wins} of {}), above the {:.0}% dominance threshold",
+                    share * 100.0,
+                    stats.total_wins,
+                    thresholds.dominant_win_share * 100.0,
+                ),
+            });
+        }
+    }
+    // Runaway pots (the standing fat-pots finding — expected to fire on the
+    // current content until the points-curve work lands).
+    if stats.rounds > 0 && stats.avg_pot_value > thresholds.runaway_pot_value {
+        smells.push(Smell {
+            cell: cell.name.clone(),
+            kind: "runaway_pots".into(),
+            detail: format!(
+                "average scored pot value {:.1} exceeds the runaway threshold {:.1}",
+                stats.avg_pot_value, thresholds.runaway_pot_value
+            ),
+        });
     }
     // The random baseline as a floor: a heuristic statistically level with
     // uniform-random play is itself a finding (design risk: bot competence).
@@ -280,6 +314,16 @@ impl Report {
                     l.folded_safe,
                     l.fallback_rate() * 100.0,
                 ));
+            }
+            if !s.wins_by_color.is_empty() {
+                let colors: Vec<String> = s
+                    .wins_by_color
+                    .iter()
+                    .map(|(color, wins)| {
+                        format!("{color} {wins} ({:.1}%)", s.color_win_share(color) * 100.0)
+                    })
+                    .collect();
+                out.push_str(&format!("\nWins by seat colour: {}.\n", colors.join(", ")));
             }
         }
 

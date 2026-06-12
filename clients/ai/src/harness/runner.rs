@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use boiling_point_protocol::vocab::Color;
-use boiling_point_protocol::{GroupCode, PlayerId};
+use boiling_point_protocol::{EmoteId, GroupCode, PlayerId};
 use boiling_point_server::config::ContentConfig;
 use boiling_point_server::headless::boot_headless_game;
 use boiling_point_server::lobby::{GroupRegistry, MatchQueue, QueuedSeeds, SessionStore};
@@ -175,14 +175,30 @@ fn build_brains(
     }
 }
 
-/// The harness seat configuration: no transcript, no heartbeats (in-process)
-/// — transcripts are enabled per-seat for agent brains.
-fn seat_config(record_transcript: bool, heartbeat: Option<Duration>) -> SeatConfig {
+/// The harness seat configuration: transcripts only for agent brains, the
+/// content config's enabled emote palette (so batches keep exercising the one
+/// comms channel), heartbeats only over the real wire.
+fn seat_config(
+    record_transcript: bool,
+    heartbeat: Option<Duration>,
+    emote_palette: Vec<EmoteId>,
+) -> SeatConfig {
     SeatConfig {
         record_transcript,
         heartbeat_quiet: heartbeat,
+        emote_palette,
         ..SeatConfig::default()
     }
+}
+
+/// The enabled emote ids of a content config.
+fn emote_palette(config: &ContentConfig) -> Vec<EmoteId> {
+    config
+        .emote
+        .iter()
+        .filter(|e| e.enabled)
+        .map(|e| EmoteId(e.id))
+        .collect()
 }
 
 /// Assemble a [`GameRecord`] from the four seats' outcomes.
@@ -305,6 +321,7 @@ async fn run_cell_in_process(
             .build_registry()
             .map_err(|e| ClientError::Config(e.to_string()))?,
     );
+    let palette = emote_palette(config);
     let config = Arc::new(config.clone());
 
     let mut games = Vec::with_capacity(cell.games as usize);
@@ -319,7 +336,7 @@ async fn run_cell_in_process(
             let seat_spec = &cell.seats[seat_index];
             identities.push((seat_spec.brain.label(), seat.player, seat.color));
             let (mut brain, mut fallback) = build_brains(seat_spec, &seeds, seat_index, api, spend);
-            let cfg = seat_config(seat_spec.brain.is_agent(), None);
+            let cfg = seat_config(seat_spec.brain.is_agent(), None, palette.clone());
             let mut conn = ChannelConnection::new(seat.to_server, seat.from_server);
             let (player, color) = (seat.player, seat.color);
             futures.push(Box::pin(async move {
@@ -369,6 +386,7 @@ async fn run_cell_websocket(
             .build_registry()
             .map_err(|e| ClientError::Config(e.to_string()))?,
     );
+    let palette = emote_palette(&config);
     let config = Arc::new(config);
     let game_seeds: Vec<u64> = (0..cell.games)
         .map(|i| GameSeeds::for_game(cell_seed, i).server)
@@ -424,7 +442,11 @@ async fn run_cell_websocket(
             let seat_spec = &cell.seats[seat_index];
             let (_, player, color) = identities[seat_index].clone();
             let (mut brain, mut fallback) = build_brains(seat_spec, &seeds, seat_index, api, spend);
-            let cfg = seat_config(seat_spec.brain.is_agent(), Some(Duration::from_secs(20)));
+            let cfg = seat_config(
+                seat_spec.brain.is_agent(),
+                Some(Duration::from_secs(20)),
+                palette.clone(),
+            );
             futures.push(Box::pin(async move {
                 run_seat(
                     &mut conn,

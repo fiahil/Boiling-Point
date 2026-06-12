@@ -1,8 +1,10 @@
-//! The seat-filler CLI (`boom2-ai-client` task 7.1): join real rooms by
-//! invite code or matchmaking enqueue and play with either brain. One process
-//! can operate several concurrent seats, each with its own brain, settings,
-//! and connection — configure them in a TOML file, or run a single seat from
-//! flags.
+//! The seat-filler CLI (`boom2-ai-client` task 7.1) — **summon familiars**:
+//! AI seats that join real rooms by invite code or matchmaking enqueue and
+//! play with either brain. One process can operate several concurrent seats,
+//! each with its own brain, settings, and connection — configure them in a
+//! TOML file, or run a single seat from flags. Unnamed seats present with
+//! familiar names ("Timid Toad (familiar)", the agent as "Homunculus
+//! (familiar)") so players never mistake them for humans.
 //!
 //! ```toml
 //! server = "ws://127.0.0.1:8080/ws"
@@ -35,14 +37,14 @@ use boiling_point_ai_client::agent::prompt::Difficulty;
 use boiling_point_ai_client::agent::{AgentSettings, SpendCaps};
 use boiling_point_ai_client::bot::Archetype;
 use boiling_point_ai_client::filler::{
-    FillerBrain, FillerSeatSettings, SeatExit, run_filler_process,
+    FillerBrain, FillerSeatSettings, SeatExit, familiar_name, run_filler_process,
 };
 use boiling_point_ai_client::transport::EntryMode;
 use boiling_point_protocol::GroupCode;
 
-/// AI seat-filler: join real Boiling Point rooms and play.
+/// Summon familiars: AI seats that join real Boiling Point rooms and play.
 #[derive(Parser)]
-#[command(name = "bp-seats")]
+#[command(name = "familiar_summoning")]
 struct Cli {
     /// Server WebSocket URL (e.g. ws://127.0.0.1:8080/ws).
     #[arg(long, default_value = "ws://127.0.0.1:8080/ws")]
@@ -53,9 +55,10 @@ struct Cli {
     /// Single seat: join this invite code (default: enqueue into matchmaking).
     #[arg(long)]
     join: Option<String>,
-    /// Single seat: display name.
-    #[arg(long, default_value = "Boiling Bot")]
-    name: String,
+    /// Single seat: display name (default: the brain's familiar name,
+    /// e.g. "Silver-tongued Raven (familiar)").
+    #[arg(long)]
+    name: Option<String>,
     /// Single seat: bot archetype (cautious|aggressive|political|random).
     #[arg(long, default_value = "political")]
     archetype: String,
@@ -82,7 +85,9 @@ struct FileConfig {
 
 #[derive(Deserialize)]
 struct FileSeat {
-    name: String,
+    /// Optional — defaults to the brain's familiar name.
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     entry: Option<String>,
     brain: String,
@@ -158,7 +163,7 @@ fn seat_from_file(seat: FileSeat) -> Result<FillerSeatSettings, String> {
         other => return Err(format!("unknown brain '{other}'")),
     };
     Ok(FillerSeatSettings {
-        display_name: seat.name,
+        display_name: seat.name.unwrap_or_else(|| familiar_name(&brain)),
         entry: entry_mode(seat.entry.as_deref()),
         brain,
         games: seat.games.unwrap_or(1),
@@ -175,7 +180,7 @@ async fn main() {
         )
         .init();
     if let Err(e) = run(Cli::parse()).await {
-        eprintln!("bp-seats: {e}");
+        eprintln!("familiar_summoning: {e}");
         std::process::exit(1);
     }
 }
@@ -204,7 +209,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 }
             };
             let seat = FillerSeatSettings {
-                display_name: cli.name.clone(),
+                display_name: cli.name.clone().unwrap_or_else(|| familiar_name(&brain)),
                 entry: entry_mode(cli.join.as_deref()),
                 brain,
                 games: cli.games,
@@ -214,7 +219,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    eprintln!("bp-seats: {} seat(s) → {server}", seats.len());
+    eprintln!("familiar_summoning: {} seat(s) → {server}", seats.len());
     let reports = run_filler_process(&server, seats, None).await;
     let mut failures = 0;
     for report in &reports {

@@ -70,6 +70,9 @@ pub struct CellStats {
     pub total_wins: usize,
     /// Per-label aggregates (wins, detonations, folds, fallback rates).
     pub by_label: BTreeMap<String, LabelStats>,
+    /// Win credits by seat colour (the seat-fairness signal: with labels
+    /// fixed per seat, a skewed colour means a seating-order bias).
+    pub wins_by_color: BTreeMap<String, usize>,
     /// How often each modifier was drawn.
     pub modifier_draws: BTreeMap<String, usize>,
 }
@@ -90,6 +93,7 @@ impl CellStats {
         let mut waves_sum = 0u64;
         let mut total_wins = 0usize;
         let mut by_label: BTreeMap<String, LabelStats> = BTreeMap::new();
+        let mut wins_by_color: BTreeMap<String, usize> = BTreeMap::new();
         let mut modifier_draws: BTreeMap<String, usize> = BTreeMap::new();
 
         for game in &cell.games {
@@ -98,6 +102,12 @@ impl CellStats {
                     .iter()
                     .find(|s| s.player == player)
                     .map(|s| s.label.clone())
+            };
+            let color_of = |player| {
+                game.seats
+                    .iter()
+                    .find(|s| s.player == player)
+                    .map(|s| format!("{:?}", s.color))
             };
             for seat in &game.seats {
                 let entry = by_label.entry(seat.label.clone()).or_default();
@@ -141,6 +151,9 @@ impl CellStats {
                     total_wins += 1;
                     by_label.entry(label).or_default().wins += 1;
                 }
+                if let Some(color) = color_of(*winner) {
+                    *wins_by_color.entry(color).or_insert(0) += 1;
+                }
             }
         }
 
@@ -163,6 +176,7 @@ impl CellStats {
             avg_waves_per_round: waves_sum as f64 / rounds_f,
             total_wins,
             by_label,
+            wins_by_color,
             modifier_draws,
         }
     }
@@ -173,5 +187,13 @@ impl CellStats {
             return 0.0;
         }
         self.by_label.get(label).map_or(0.0, |l| l.wins as f64) / self.total_wins as f64
+    }
+
+    /// A colour's win share (0–1) of this cell's win credits.
+    pub fn color_win_share(&self, color: &str) -> f64 {
+        if self.total_wins == 0 {
+            return 0.0;
+        }
+        self.wins_by_color.get(color).copied().unwrap_or(0) as f64 / self.total_wins as f64
     }
 }

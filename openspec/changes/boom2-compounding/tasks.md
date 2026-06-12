@@ -27,4 +27,4 @@
 ## 6. Clients & balance (Principle IV)
 
 - [ ] 6.1 Web client (`clients/web/`): depile narrates fired combos/thresholds and any effective-volatility shift that changed the detonator.
-- [ ] 6.2 Harness (revived from `archive/bot-harness/`, §IV): measure color-synergy snowball, lone-combo-half frequency (dead-draw rate), and threshold payoff; tune magnitudes; record in docs/07.
+- [ ] 6.2 AI client harness (`clients/ai` harness mode, §IV): measure color-synergy snowball, lone-combo-half frequency (dead-draw rate), and threshold payoff; tune magnitudes; record in docs/07.

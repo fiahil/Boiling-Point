@@ -36,7 +36,7 @@ firewall-check:
 # A small pinned seeded balance sample through the AI client's harness mode
 # (boom2-ai-client 8.1) — fast enough for CI, deterministic by construction.
 harness-sample:
-	cargo run -p boiling-point-ai-client --features harness --bin bp-harness -- \
+	cargo run -p boiling-point-ai-client --features harness --bin balance_tester -- \
 		--games 200 --seed 424242 --report target/harness-sample
 
 # Run the server (loads + validates the embedded default content config).

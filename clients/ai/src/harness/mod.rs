@@ -3,7 +3,7 @@
 //! server's headless in-process seam, the matrix sample spec, and diffable
 //! balance reports.
 //!
-//! This module (and the `bp-harness` binary) is the one sanctioned place the
+//! This module (and the `balance_tester` binary) is the one sanctioned place the
 //! server crate appears in the AI client's dependency graph (the opt-in
 //! `harness` feature): the batch runner boots in-process games, but every
 //! seat still talks to them exclusively through encoded wire frames (D2).

@@ -2,11 +2,12 @@
 
 One Rust client, two jobs (change `boom2-ai-client`):
 
-- **Harness mode** (`bp-harness`) — the constitution §IV reinstatement: seeded
+- **Harness mode** (`balance_tester`) — the constitution §IV reinstatement: seeded
   batches of thousands of complete v2 games over an in-process server, the
   persona-matrix sample spec, and diffable balance reports.
-- **Seat-filler mode** (`bp-seats`) — the product feature: AI seats that join
-  real rooms over WebSocket, play with either brain, and never stall a wave.
+- **Seat-filler mode** (`familiar_summoning`) — the product feature: **familiars**,
+  AI seats that join real rooms over WebSocket, play with either brain, and
+  never stall a wave.
 
 Both are hosts around one core: a firewalled protocol consumer whose brains
 choose among **server-enumerated legal actions** (decision frames) and race a
@@ -48,22 +49,24 @@ the bot brain rather than exceeding the cap or abandoning the seat. Prompts
 are assembled exclusively from the seat's secret-free view and its bounded
 observed-events transcript (drop-oldest compaction; growth is measured).
 
-`bp-probe` measures one isolated decision against a fixture frame — use it to
+`latency_probe` measures one isolated decision against a fixture frame — use it to
 pick a model for a wave-timer budget before trusting it with a seat:
 
 ```sh
-ANTHROPIC_API_KEY=… cargo run -p boiling-point-ai-client --bin bp-probe -- --model claude-haiku-4-5
+ANTHROPIC_API_KEY=… cargo run -p boiling-point-ai-client --bin latency_probe -- --model claude-haiku-4-5
 ```
 
-## Harness mode
+## Harness mode — night brews
+
+At-scale unattended balance runs ("the coven ran 1000 night brews on seed 0"):
 
 ```sh
 # The CI-sized pinned sample (also `make harness-sample`):
-cargo run -p boiling-point-ai-client --features harness --bin bp-harness -- \
+cargo run -p boiling-point-ai-client --features harness --bin balance_tester -- \
     --games 200 --seed 424242 --report target/harness-sample
 
 # A matrix sample spec:
-cargo run -p boiling-point-ai-client --features harness --bin bp-harness -- \
+cargo run -p boiling-point-ai-client --features harness --bin balance_tester -- \
     --spec my-sample.toml --report target/my-sample
 ```
 
@@ -95,18 +98,35 @@ The `brewer` and `deck_archetype` seat axes are declared in the spec schema but
 **rejected until `boom2-brewers` / `boom2-apothecary` land** their decision
 kinds — a spec never silently runs a different experiment than written.
 
-## Seat-filler mode
+## Seat-filler mode — summoning familiars
+
+Player-facing, bots present as the witch's **familiar** (Apothecary Ink
+flavor) so nobody mistakes them for a human, and the name pool can't collide
+with the pantry-bucket vocabulary (Sage, Bramble, Honey…). Unnamed seats get
+their temperament's pairing automatically; the agent brain presents as the
+**Homunculus** — the artificial brewer:
+
+| code id (greppable) | player-facing familiar |
+|---|---|
+| `cautious` | Timid Toad (familiar) |
+| `aggressive` | Brash Salamander (familiar) |
+| `political` | Silver-tongued Raven (familiar) |
+| `random` | Scatterbrained Moth (familiar) |
+| agent brain | Homunculus (familiar) |
+
+Code-level identifiers stay literal by design (constitution §II/§III) — the
+flavor lives only on display surfaces.
 
 ```sh
-# One bot seat into matchmaking:
-cargo run -p boiling-point-ai-client --bin bp-seats -- \
-    --server ws://127.0.0.1:8080/ws --name "Sage Bramble" --archetype political
+# One bot seat into matchmaking (presents as "Silver-tongued Raven (familiar)"):
+cargo run -p boiling-point-ai-client --bin familiar_summoning -- \
+    --server ws://127.0.0.1:8080/ws --archetype political
 
 # A table's worth of seats from a config:
-cargo run -p boiling-point-ai-client --bin bp-seats -- --config seats.toml
+cargo run -p boiling-point-ai-client --bin familiar_summoning -- --config seats.toml
 ```
 
-See the doc comment in `src/bin/bp_seats.rs` for the config schema (per seat:
+See the doc comment in `src/bin/familiar_summoning.rs` for the config schema (per seat:
 entry by invite code or enqueue, brain + settings, games to play, emote
 palette). One process runs any number of seats concurrently, each with its own
 connection. Pre-game decisions are **Delegated** to the brain by default (the
