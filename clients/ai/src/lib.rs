@@ -16,6 +16,7 @@
 //! decision frames and races every brain against a latency budget so a seat
 //! never stalls a wave.
 
+pub mod agent;
 pub mod bot;
 pub mod brain;
 pub mod observe;

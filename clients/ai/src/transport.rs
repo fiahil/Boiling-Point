@@ -138,7 +138,7 @@ impl Connection for WsConnection {
         }
         let bytes = codec::encode(msg).map_err(|e| ClientError::Transport(e.to_string()))?;
         self.stream
-            .send(WsMessage::Binary(bytes.into()))
+            .send(WsMessage::Binary(bytes))
             .await
             .map_err(|e| ClientError::Transport(e.to_string()))
     }

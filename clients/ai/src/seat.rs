@@ -21,7 +21,7 @@ use crate::transport::Connection;
 use crate::view::{FrameContext, SeatView, secret_audit};
 
 /// Per-seat behaviour configuration (host-owned; brains never see it).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SeatConfig {
     /// Who answers which decision kind (D5).
     pub policy: HostPolicy,
@@ -35,18 +35,6 @@ pub struct SeatConfig {
     /// The emote palette the brain may draw table-talk from (emote ids are
     /// server content config; the operator supplies them — empty ⇒ silent).
     pub emote_palette: Vec<boiling_point_protocol::EmoteId>,
-}
-
-impl Default for SeatConfig {
-    fn default() -> Self {
-        SeatConfig {
-            policy: HostPolicy::default(),
-            budget: BudgetConfig::default(),
-            record_transcript: false,
-            heartbeat_quiet: None,
-            emote_palette: Vec::new(),
-        }
-    }
 }
 
 /// What one seat's game produced: the balance observation plus the

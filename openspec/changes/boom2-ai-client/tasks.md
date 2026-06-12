@@ -31,11 +31,11 @@
 
 ## 5. Agent brain
 
-- [ ] 5.1 Anthropic API client in Rust; tool schema derived from the decision frame; map responses back to legal actions (malformed → fallback + log).
-- [ ] 5.2 Prompt assembly from the secret-free view + running transcript; persona and difficulty framing; transcript growth measured (compaction if needed).
-- [ ] 5.3 Settings block: model, persona, difficulty, latency budget, fallback policy, auth, spend caps (per process + per game; cap reached → degrade to bot brain).
-- [ ] 5.4 Tests: schema-from-frame correctness, no-secrets prompt audit, cap-degradation path, budget-miss fallback (mock API).
-- [ ] 5.5 Probe script/binary: one isolated decision against a fixture frame (no server needed) to measure latency per model.
+- [x] 5.1 Anthropic API client in Rust; tool schema derived from the decision frame; map responses back to legal actions (malformed → fallback + log).
+- [x] 5.2 Prompt assembly from the secret-free view + running transcript; persona and difficulty framing; transcript growth measured (compaction if needed).
+- [x] 5.3 Settings block: model, persona, difficulty, latency budget, fallback policy, auth, spend caps (per process + per game; cap reached → degrade to bot brain).
+- [x] 5.4 Tests: schema-from-frame correctness, no-secrets prompt audit, cap-degradation path, budget-miss fallback (mock API).
+- [x] 5.5 Probe script/binary: one isolated decision against a fixture frame (no server needed) to measure latency per model.
 
 ## 6. Harness mode (Principle IV reinstatement)
 
