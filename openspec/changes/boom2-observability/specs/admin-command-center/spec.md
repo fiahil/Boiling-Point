@@ -39,12 +39,17 @@ Hosting observability and control together SHALL NOT merge their channels: every
 
 ### Requirement: Popularity Stats From Post-Game Persistence
 
-The command center SHALL surface popularity figures over a selectable window of UTC days — at least games per day as a bar chart, unique players per day with first-ever players distinguished, and window/lifetime totals (games, players, new players) — served read-only from post-game persistence (the consolidated game records), since the live projection only knows the current process; with no database configured the panel SHALL report the stats as unavailable rather than failing (persistence is optional infrastructure, never a precondition).
+The command center SHALL surface popularity figures over a selectable window of UTC days — at least games per day as a bar chart, unique players per day with first-ever players distinguished, a games-by-hour-of-day (UTC) histogram, the returning-player share (window players who played on more than one distinct day), and window/lifetime totals (games, players, new players) — served read-only from post-game persistence (the consolidated game records), since the live projection only knows the current process; with no database configured the panel SHALL report the stats as unavailable rather than failing (persistence is optional infrastructure, never a precondition).
 
 #### Scenario: Games per day render as a bar chart
 
 - **WHEN** an operator opens the popularity panel with persistence configured
 - **THEN** a bar chart shows games completed for every day of the selected window (zero-height bars for days without games), alongside unique and new players per day and the window/lifetime totals
+
+#### Scenario: Play time-of-day and stickiness are visible
+
+- **WHEN** an operator views the popularity panel over a chosen window
+- **THEN** a 24-bucket histogram shows when in the (UTC) day the window's games were played, and the returning-player share reports what fraction of the window's players came back on a second day
 
 #### Scenario: No database degrades gracefully
 

@@ -328,25 +328,24 @@ async function command(cmd) {
 
 // ---- popularity (historical, from post-game persistence) -----------------
 
-// A no-dependency bar chart: one flex column per day, height scaled to the
-// window's max. `segments(d)` returns [{value, cls}] stacked bottom-up.
-function barChart(title, daily, max, segments) {
+// A no-dependency bar chart: one flex column per entry, heights scaled to the
+// series max. `cols` is [{tick, title, segments: [{value, cls}]}], segments
+// stacked bottom-up.
+function barChart(title, cols, max) {
   const wrap = el("div", "card chart-card");
   wrap.appendChild(el("h3", null, title));
   const chart = el("div", "chart");
-  for (const d of daily) {
+  for (const c of cols) {
     const col = el("div", "chart-col");
     const stack = el("div", "chart-stack");
-    for (const s of segments(d)) {
+    for (const s of c.segments) {
       const bar = el("div", "chart-bar " + s.cls);
       bar.style.height = max > 0 ? (s.value / max) * 100 + "%" : "0";
       stack.appendChild(bar);
     }
-    col.title = `${d.day} — ${d.games} games, ${d.players} players (${d.new_players} new)`;
+    col.title = c.title;
     col.appendChild(stack);
-    // Light date ticks: the 1st of a month and the newest day.
-    const tick = d === daily[daily.length - 1] || d.day.endsWith("-01");
-    col.appendChild(el("div", "chart-tick", tick ? d.day.slice(5) : ""));
+    col.appendChild(el("div", "chart-tick", c.tick || ""));
     chart.appendChild(col);
   }
   wrap.appendChild(chart);
@@ -369,19 +368,36 @@ async function loadPopularity() {
   cards.appendChild(metricCard(`Games (${s.window_days}d)`, s.window_games));
   cards.appendChild(metricCard(`Players (${s.window_days}d)`, s.window_players));
   cards.appendChild(metricCard(`New players (${s.window_days}d)`, s.window_new_players));
+  // Stickiness: of the window's players, who came back on a second day?
+  const returning = s.window_players > 0 ? pct(s.window_returning_players / s.window_players) : "—";
+  cards.appendChild(metricCard(`Returning (${s.window_days}d)`, returning, "played on 2+ days"));
   cards.appendChild(metricCard("Games (all time)", s.total_games));
   cards.appendChild(metricCard("Players (all time)", s.total_players));
 
+  const dayCols = (segments) => s.daily.map((d, i) => ({
+    // Light date ticks: the 1st of a month and the newest day.
+    tick: i === s.daily.length - 1 || d.day.endsWith("-01") ? d.day.slice(5) : "",
+    title: `${d.day} — ${d.games} games, ${d.players} players (${d.new_players} new)`,
+    segments: segments(d),
+  }));
   const maxGames = Math.max(...s.daily.map((d) => d.games));
-  charts.appendChild(barChart("Games per day", s.daily, maxGames, (d) => [
+  charts.appendChild(barChart("Games per day", dayCols((d) => [
     { value: d.games, cls: "games" },
-  ]));
+  ]), maxGames));
   const maxPlayers = Math.max(...s.daily.map((d) => d.players));
   // Stacked: new players (bright) under returning players (dim) = daily total.
-  charts.appendChild(barChart("Unique players per day (bright = first-ever game)", s.daily, maxPlayers, (d) => [
+  charts.appendChild(barChart("Unique players per day (bright = first-ever game)", dayCols((d) => [
     { value: d.players - d.new_players, cls: "returning" },
     { value: d.new_players, cls: "new" },
-  ]));
+  ]), maxPlayers));
+
+  // When in the day people play: 24 UTC hour buckets over the whole window.
+  const hourCols = s.by_hour.map((games, hour) => ({
+    tick: hour % 6 === 0 ? `${hour}h` : "",
+    title: `${String(hour).padStart(2, "0")}:00–${String((hour + 1) % 24).padStart(2, "0")}:00 UTC — ${games} games`,
+    segments: [{ value: games, cls: "games" }],
+  }));
+  charts.appendChild(barChart(`Games by hour of day (UTC, last ${s.window_days}d)`, hourCols, Math.max(...s.by_hour)));
 }
 
 // ---- balance / grafana --------------------------------------------------

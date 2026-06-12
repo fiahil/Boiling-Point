@@ -68,3 +68,4 @@
 - [x] 9.2 Serve `GET /admin/stats/popularity?days=N` behind operator auth (`AdminState` gains the optional pool); no database ⇒ `available: false` instead of an error.
 - [x] 9.3 Add the Popularity tab to the command center: games-per-day bar chart, unique-players-per-day chart with first-ever players highlighted, window/lifetime total cards, window selector — dependency-free CSS bars, no chart library.
 - [x] 9.4 Spec: amend `admin-command-center`'s read-channels requirement (live reads = projection; historical reads = read-only persistence) and add the Popularity Stats requirement with the no-DB degradation scenario.
+- [x] 9.5 Add the games-by-hour-of-day (UTC) histogram and the returning-player share (window players on 2+ distinct days) to the stats, the panel, and the spec; zero-fill helper unit-tested, DB-gated assertions extended.

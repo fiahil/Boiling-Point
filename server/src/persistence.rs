@@ -229,7 +229,8 @@ pub struct DailyPopularity {
 }
 
 /// Popularity figures read from post-game persistence: a per-day series over the
-/// window (gaps filled with zero days) plus window/lifetime totals.
+/// window (gaps filled with zero days), a games-by-hour-of-day histogram, the
+/// returning-player count, and window/lifetime totals.
 #[derive(Debug, Clone, Serialize)]
 pub struct PopularityStats {
     /// The window size in days (the series covers the last `window_days` UTC
@@ -237,12 +238,17 @@ pub struct PopularityStats {
     pub window_days: i64,
     /// One entry per day in the window, oldest first, zero-filled.
     pub daily: Vec<DailyPopularity>,
+    /// Games within the window by UTC hour of day: 24 entries, index = hour.
+    pub by_hour: Vec<i64>,
     /// Games completed within the window.
     pub window_games: i64,
     /// Distinct players seated within the window.
     pub window_players: i64,
     /// Players whose first-ever game fell within the window.
     pub window_new_players: i64,
+    /// Players who played on **more than one** distinct UTC day of the window —
+    /// the returning-player (stickiness) numerator over `window_players`.
+    pub window_returning_players: i64,
     /// Games ever recorded.
     pub total_games: i64,
     /// Players ever seen.
@@ -270,6 +276,19 @@ fn fill_daily(
             }
         })
         .collect()
+}
+
+/// Zero-fill the 24 hour-of-day buckets from sparse `(hour, games)` rows
+/// (out-of-range hours are ignored). Pure, so the shape is testable without a
+/// database.
+fn fill_hours(rows: &[(i32, i64)]) -> Vec<i64> {
+    let mut by_hour = vec![0i64; 24];
+    for (hour, games) in rows {
+        if let Some(slot) = by_hour.get_mut(*hour as usize) {
+            *slot = *games;
+        }
+    }
+    by_hour
 }
 
 /// Read the popularity figures for the last `window_days` UTC days from the
@@ -310,6 +329,18 @@ pub async fn fetch_popularity(
     .fetch_all(pool)
     .await?;
 
+    // When in the day people play: games in the window by UTC hour of day.
+    let per_hour: Vec<(i32, i64)> = sqlx::query_as(
+        "SELECT extract(hour FROM started_at AT TIME ZONE 'UTC')::int AS hour, \
+                count(*) AS games \
+         FROM game_replays \
+         WHERE (started_at AT TIME ZONE 'UTC')::date >= $1 \
+         GROUP BY 1",
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
     let (total_games, total_players): (i64, i64) = sqlx::query_as(
         "SELECT (SELECT count(*) FROM game_replays), (SELECT count(*) FROM players)",
     )
@@ -319,6 +350,18 @@ pub async fn fetch_popularity(
         "SELECT count(DISTINCT game_id), count(DISTINCT p) \
          FROM game_replays, unnest(player_ids) AS p \
          WHERE (started_at AT TIME ZONE 'UTC')::date >= $1",
+    )
+    .bind(cutoff)
+    .fetch_one(pool)
+    .await?;
+    // Stickiness: window players who came back on a second distinct day.
+    let (window_returning_players,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE days > 1) FROM ( \
+            SELECT p, count(DISTINCT (started_at AT TIME ZONE 'UTC')::date) AS days \
+            FROM game_replays, unnest(player_ids) AS p \
+            WHERE (started_at AT TIME ZONE 'UTC')::date >= $1 \
+            GROUP BY p \
+         ) per_player",
     )
     .bind(cutoff)
     .fetch_one(pool)
@@ -337,9 +380,11 @@ pub async fn fetch_popularity(
     Ok(PopularityStats {
         window_days,
         daily,
+        by_hour: fill_hours(&per_hour),
         window_games,
         window_players,
         window_new_players,
+        window_returning_players,
         total_games,
         total_players,
     })
@@ -415,6 +460,18 @@ mod tests {
         );
     }
 
+    /// The hour histogram always has 24 buckets, sparse rows land on their hour,
+    /// and out-of-range hours are ignored rather than panicking.
+    #[test]
+    fn fill_hours_zero_fills_all_buckets() {
+        let by_hour = fill_hours(&[(0, 2), (13, 5), (23, 1), (24, 9), (-1, 9)]);
+        assert_eq!(by_hour.len(), 24);
+        assert_eq!(by_hour[0], 2);
+        assert_eq!(by_hour[13], 5);
+        assert_eq!(by_hour[23], 1);
+        assert_eq!(by_hour.iter().sum::<i64>(), 8, "out-of-range rows ignored");
+    }
+
     /// Popularity figures over freshly persisted games. Ignored by default
     /// (needs a live DB); run with `cargo test -- --ignored`.
     #[tokio::test]
@@ -468,6 +525,15 @@ mod tests {
         assert!(after.total_games >= before.total_games + 2);
         assert!(after.total_players >= before.total_players + 4);
         assert!(after.window_games >= 2 && after.window_players >= 4);
+        // Hour histogram: 24 buckets covering exactly the window's games, with
+        // the just-persisted games landing on the current UTC hour.
+        assert_eq!(after.by_hour.len(), 24);
+        assert_eq!(after.by_hour.iter().sum::<i64>(), after.window_games);
+        let this_hour = chrono::Timelike::hour(&Utc::now()) as usize;
+        assert!(after.by_hour[this_hour] >= 2);
+        // Returning players: a single-day roster adds none, and the count never
+        // exceeds the window's distinct players.
+        assert!(after.window_returning_players <= after.window_players);
     }
 
     /// Round-trips a completed game through PostgreSQL. Ignored by default
