@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{CardId, EmoteId, GroupCode};
-use crate::vocab::SpellTarget;
+use crate::vocab::{Brewer, SpellTarget};
 
 /// The protocol version a client speaks, sent on the first (entry) message so
 /// the server can reject incompatible clients before sharing any state.
@@ -29,7 +29,13 @@ pub type ProtocolVersion = u16;
 /// legal action set ([`crate::server::ServerMessage::DecisionFrame`]) and
 /// rejects submissions against an already-resolved frame with
 /// [`crate::server::ErrorCode::StaleFrame`].
-pub const PROTOCOL_VERSION: ProtocolVersion = 5;
+/// v6: the Brewers (`boom2-brewers`) — the pre-game pick-1-of-2 phase (the
+/// dealt pair rides a `BrewerPick` decision frame; the pick intent is
+/// [`ClientMessage::PickBrewer`]; the table's public identities arrive in
+/// [`crate::server::ServerMessage::BrewersRevealed`]), plus the Lurker's
+/// once-per-round deferred commit ([`ClientMessage::CommitDefer`] against a
+/// frame whose `can_defer` is set).
+pub const PROTOCOL_VERSION: ProtocolVersion = 6;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays
 /// human-readable for debugging.
@@ -77,6 +83,17 @@ pub enum ClientMessage {
     },
     /// Commit to passing this wave (permanent lockout for the round).
     CommitPass,
+    /// Defer this wave's commit until after the wave reveals (the Lurker's
+    /// once-per-round bend; legal only against a frame offering `can_defer`).
+    /// The late commit that follows the reveal is an ingredient-or-pass only —
+    /// no spell rides it.
+    CommitDefer,
+    /// Pick one Brewer from the dealt pre-game pair (answers the
+    /// [`crate::frame::PendingDecision::BrewerPick`] frame; final on receipt).
+    PickBrewer {
+        /// The chosen Brewer (must be one of the frame's two options).
+        brewer: Brewer,
+    },
     /// Cast a spell this wave (at most one per player per wave; optional, layered
     /// on the ingredient-or-pass choice — a spell never substitutes for it and
     /// never keeps a passed player active). Hidden until the wave reveals; an

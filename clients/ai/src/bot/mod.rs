@@ -18,7 +18,7 @@ use boiling_point_protocol::EmoteId;
 use boiling_point_protocol::frame::{
     CastableSpell, PendingDecision, PlayableIngredient, TargetOptions,
 };
-use boiling_point_protocol::vocab::{SpellKind, SpellTarget};
+use boiling_point_protocol::vocab::{Brewer, SpellKind, SpellTarget};
 
 use crate::brain::{Answer, Brain, SpellCast, WaveAction};
 use crate::view::{FrameContext, SeatView};
@@ -65,12 +65,17 @@ impl Archetype {
 }
 
 /// The bot brain's settings (distinct from the agent brain's — spec
-/// `boom-bot-brain`): archetype, blunder epsilon, and the seat RNG.
+/// `boom-bot-brain`): archetype, blunder epsilon, the optional Brewer
+/// preference (the harness's persona × Brewer axis), and the seat RNG.
 pub struct BotBrain {
     archetype: Archetype,
     /// Per-decision probability of substituting a uniformly random legal
     /// action for the heuristic choice (0 disables blunders).
     epsilon: f64,
+    /// Preferred Brewer for the pre-game pick: taken when offered, else the
+    /// first option (the deal is random, so a preference is best-effort —
+    /// the harness matrix keys on the *actual* pick).
+    brewer_preference: Option<Brewer>,
     rng: StdRng,
 }
 
@@ -80,6 +85,7 @@ impl BotBrain {
         BotBrain {
             archetype,
             epsilon: 0.0,
+            brewer_preference: None,
             rng,
         }
     }
@@ -87,6 +93,12 @@ impl BotBrain {
     /// Set the blunder epsilon (clamped to 0..=1).
     pub fn with_epsilon(mut self, epsilon: f64) -> Self {
         self.epsilon = epsilon.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Set the pre-game Brewer preference (the harness's brewer axis).
+    pub fn with_brewer_preference(mut self, brewer: Option<Brewer>) -> Self {
+        self.brewer_preference = brewer;
         self
     }
 
@@ -103,14 +115,17 @@ const KNOWN_BP_MARGIN: f64 = 5.0;
 /// explosion-risky. `[needs playtesting]`.
 const BLIND_RISK_ESTIMATE: f64 = 18.0;
 
-/// The frame's wave-commit parts (the only decision kind the v2 core owes yet).
+/// The frame's wave-commit parts (empty/false for a non-wave frame, which the
+/// heuristics never see — [`BotBrain::decide`] answers Brewer picks first).
 fn parts(decision: &PendingDecision) -> (&[PlayableIngredient], bool, &[CastableSpell]) {
     match decision {
         PendingDecision::WaveCommit {
             playable,
             can_pass,
             spells,
+            ..
         } => (playable, *can_pass, spells),
+        PendingDecision::BrewerPick { .. } => (&[], false, &[]),
     }
 }
 
@@ -408,6 +423,22 @@ impl Brain for BotBrain {
     }
 
     async fn decide(&mut self, view: &SeatView, frame: &FrameContext) -> Answer {
+        // The pre-game Brewer pick: the preference when offered, else the
+        // first option — except Random, which picks uniformly (the baseline
+        // covers the pick surface too).
+        if let PendingDecision::BrewerPick { options } = &frame.decision {
+            let brewer = match self.archetype {
+                Archetype::Random if !options.is_empty() => {
+                    options[self.rng.gen_range(0..options.len())]
+                }
+                _ => self
+                    .brewer_preference
+                    .filter(|b| options.contains(b))
+                    .or_else(|| options.first().copied())
+                    .unwrap_or(Brewer::ALL[0]),
+            };
+            return Answer::BrewerPick { brewer };
+        }
         // Blunder injection: with probability epsilon, a uniformly random
         // legal action replaces the heuristic choice (Random is exactly the
         // always-uniform case).
@@ -488,6 +519,7 @@ mod tests {
                 playable: playable_cards,
                 can_pass: true,
                 spells,
+                can_defer: false,
             },
         }
     }
@@ -605,6 +637,44 @@ mod tests {
         assert!(
             differences > 25,
             "cautious and aggressive should disagree on most hot-pot decisions ({differences}/50)"
+        );
+    }
+
+    /// Every archetype answers a Brewer-pick frame legally: the preference
+    /// when offered, the first option otherwise (Random picks within the pair).
+    #[tokio::test]
+    async fn brewer_picks_are_legal_and_preference_aware() {
+        use boiling_point_protocol::vocab::Brewer;
+        let pick_frame = FrameContext {
+            round_number: 0,
+            wave_number: 0,
+            timer_ms: Some(20_000),
+            decision: PendingDecision::BrewerPick {
+                options: vec![Brewer::Featherhand, Brewer::Lurker],
+            },
+        };
+        for archetype in Archetype::ALL {
+            let mut plain = BotBrain::new(archetype, rng(8));
+            let answer = plain.decide(&view_with(0), &pick_frame).await;
+            assert!(answer.is_legal(&pick_frame.decision), "{archetype:?}");
+        }
+        // The preference is taken when offered…
+        let mut wants_lurker =
+            BotBrain::new(Archetype::Cautious, rng(8)).with_brewer_preference(Some(Brewer::Lurker));
+        assert_eq!(
+            wants_lurker.decide(&view_with(0), &pick_frame).await,
+            Answer::BrewerPick {
+                brewer: Brewer::Lurker
+            }
+        );
+        // …and falls back to the first option when the deal omits it.
+        let mut wants_broker =
+            BotBrain::new(Archetype::Cautious, rng(8)).with_brewer_preference(Some(Brewer::Broker));
+        assert_eq!(
+            wants_broker.decide(&view_with(0), &pick_frame).await,
+            Answer::BrewerPick {
+                brewer: Brewer::Featherhand
+            }
         );
     }
 

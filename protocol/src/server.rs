@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::frame::PendingDecision;
 use crate::ids::{EmoteId, GroupCode, PlayerId};
-use crate::vocab::{Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind};
+use crate::vocab::{
+    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind,
+};
 
 /// Public, per-player lobby/table information (never includes hand contents).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +29,16 @@ pub struct PlayerPublic {
     /// Whether this player is a **guest** — placed by matchmaking fill for one
     /// game, not a member of the group (members are `false`).
     pub guest: bool,
+}
+
+/// One player's public Brewer identity — a single (player, brewer) pair, used
+/// instead of a map for stable wire order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerBrewer {
+    /// The player.
+    pub player: PlayerId,
+    /// Their chosen Brewer (public from before the first wave).
+    pub brewer: Brewer,
 }
 
 /// One member's line in a group's live standings.
@@ -170,6 +182,12 @@ pub enum ServerMessage {
         /// The spells now in hand (drawn at round start, carried over; replenished
         /// in-round only by Forage).
         spells: Vec<HandSpell>,
+    },
+    /// The pre-game brewer phase closed: every player's chosen Brewer, published
+    /// to the whole table before deck construction and the first wave. (broadcast)
+    BrewersRevealed {
+        /// Each seated player's chosen Brewer, in seating order.
+        brewers: Vec<PlayerBrewer>,
     },
     /// The recipient owes a decision: the pending decision kind and its complete
     /// legal action set (see [`crate::frame`]). Sent whenever a decision opens,
@@ -335,6 +353,8 @@ pub enum ServerMessage {
         round_number: u8,
         /// The table.
         players: Vec<PlayerPublic>,
+        /// Every player's public Brewer (empty before the brewer phase closes).
+        brewers: Vec<PlayerBrewer>,
         /// Current cumulative scores.
         scores: Vec<PlayerScore>,
         /// Active cauldron modifiers.

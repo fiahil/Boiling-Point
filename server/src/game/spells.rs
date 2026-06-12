@@ -241,21 +241,28 @@ fn apply_damage(
 /// Resolve an explosion's damage: the detonators split −P equally (rounded
 /// down, integer-only), modified per player by wards (Cap / Halve / Redirect
 /// with cascade); then every primed Hex fires — its target takes the extra
-/// loss, detonator or not, unwardable. Returns per-player deltas and the fired
-/// narration in fire order.
+/// loss, detonator or not, unwardable. A detonator in `cinderwrights` takes
+/// half their share rounded up (`boom2-brewers` — the discipline's hard
+/// ceiling; their ward-free grimoire means no ward then applies). Returns
+/// per-player deltas and the fired narration in fire order.
 pub fn resolve_explosion(
     detonators: &[PlayerId],
     pot_value: u32,
     values: &SpellValues,
     primed: &mut [PrimedSpell],
+    cinderwrights: &std::collections::HashSet<PlayerId>,
 ) -> (HashMap<PlayerId, i32>, Vec<SpellFire>) {
+    use boiling_point_protocol::vocab::Brewer;
+
     let mut deltas: HashMap<PlayerId, i32> = HashMap::new();
     let mut fired: Vec<SpellFire> = Vec::new();
 
     if !detonators.is_empty() {
         let share = pot_value / detonators.len() as u32;
         for d in detonators {
-            apply_damage(*d, share, values, primed, &mut deltas, &mut fired);
+            let brewer = cinderwrights.contains(d).then_some(Brewer::Cinderwright);
+            let amount = super::brewers::detonator_damage(brewer, share);
+            apply_damage(*d, amount, values, primed, &mut deltas, &mut fired);
         }
     }
 
@@ -475,7 +482,13 @@ mod tests {
             primed(pid(2), 2, SpellKind::Halve, None),
             primed(pid(3), 3, SpellKind::Cap, None),
         ];
-        let (deltas, fired) = resolve_explosion(&[pid(1), pid(3), pid(4)], 12, &v, &mut pr);
+        let (deltas, fired) = resolve_explosion(
+            &[pid(1), pid(3), pid(4)],
+            12,
+            &v,
+            &mut pr,
+            &Default::default(),
+        );
         // Share = 12 / 3 = 4 each. p1 → redirect → p2's halve → p2 loses 2.
         assert_eq!(deltas.get(&pid(1)).copied().unwrap_or(0), 0);
         assert_eq!(deltas[&pid(2)], -2);
@@ -492,7 +505,7 @@ mod tests {
             primed(pid(1), 1, SpellKind::Redirect, Some(pid(2))),
             primed(pid(2), 2, SpellKind::Redirect, Some(pid(1))),
         ];
-        let (deltas, fired) = resolve_explosion(&[pid(1)], 10, &v, &mut pr);
+        let (deltas, fired) = resolve_explosion(&[pid(1)], 10, &v, &mut pr, &Default::default());
         // p1 → p2 → back to p1 (both redirects spent) → p1 eats it.
         assert_eq!(deltas[&pid(1)], -10);
         assert_eq!(fired.len(), 2);
@@ -507,7 +520,7 @@ mod tests {
             primed(pid(1), 1, SpellKind::Hex, Some(pid(3))),
             primed(pid(3), 2, SpellKind::Cap, None), // must NOT absorb the hex
         ];
-        let (deltas, fired) = resolve_explosion(&[pid(2)], 8, &v, &mut pr);
+        let (deltas, fired) = resolve_explosion(&[pid(2)], 8, &v, &mut pr, &Default::default());
         assert_eq!(deltas[&pid(2)], -8);
         assert_eq!(deltas[&pid(3)], -5);
         assert!(fired.iter().any(|f| f.spell == SpellKind::Hex));
@@ -517,13 +530,30 @@ mod tests {
         );
     }
 
+    /// The Cinderwright bend (`boom2-brewers`): a detonator in the set takes
+    /// half their share rounded UP — the discipline's ceiling (never more than
+    /// half off, never immunity); others split normally.
+    #[test]
+    fn cinderwright_detonator_takes_ceil_half() {
+        let v = values();
+        let mut pr = Vec::new();
+        let cinderwrights = std::collections::HashSet::from([pid(1)]);
+        // Share = 9 / 2 = 4 each; the Cinderwright takes ceil(4/2) = 2.
+        let (deltas, _) = resolve_explosion(&[pid(1), pid(2)], 9, &v, &mut pr, &cinderwrights);
+        assert_eq!(deltas[&pid(1)], -2);
+        assert_eq!(deltas[&pid(2)], -4);
+        // A share of 1 still costs 1 — never a free explosion.
+        let (deltas, _) = resolve_explosion(&[pid(1)], 1, &v, &mut Vec::new(), &cinderwrights);
+        assert_eq!(deltas[&pid(1)], -1);
+    }
+
     /// An explosion with no fatal-wave cards (e.g. a parting Surge) has no
     /// detonator: nobody pays the pot, but Hexes still fire.
     #[test]
     fn empty_detonator_set_costs_nobody_the_pot() {
         let v = values();
         let mut pr = vec![primed(pid(1), 1, SpellKind::Hex, Some(pid(2)))];
-        let (deltas, _) = resolve_explosion(&[], 10, &v, &mut pr);
+        let (deltas, _) = resolve_explosion(&[], 10, &v, &mut pr, &Default::default());
         assert_eq!(deltas.len(), 1);
         assert_eq!(deltas[&pid(2)], -5);
     }

@@ -34,6 +34,29 @@ impl LabelStats {
     }
 }
 
+/// One persona × Brewer matrix cell: outcomes of the games in which a seat
+/// with this label actually picked this Brewer (`boom2-brewers`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+pub struct BrewerCell {
+    /// Games this (label, Brewer) pairing was seated in.
+    pub games: usize,
+    /// Win credits (co-winners each count).
+    pub wins: usize,
+    /// Detonation hits (named a detonator in an exploded round).
+    pub detonations: usize,
+}
+
+impl BrewerCell {
+    /// Wins per seated game (the per-seat baseline is 0.25 at a 4-seat table).
+    pub fn win_rate(&self) -> f64 {
+        if self.games == 0 {
+            0.0
+        } else {
+            self.wins as f64 / self.games as f64
+        }
+    }
+}
+
 /// Aggregated balance statistics for one cell.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CellStats {
@@ -73,6 +96,10 @@ pub struct CellStats {
     /// Win credits by seat colour (the seat-fairness signal: with labels
     /// fixed per seat, a skewed colour means a seating-order bias).
     pub wins_by_color: BTreeMap<String, usize>,
+    /// The persona × Brewer win/break matrix (`boom2-brewers`): outcomes keyed
+    /// by seat label then by the Brewer the seat **actually picked**. Ordered
+    /// maps keep the same seed byte-identical.
+    pub brewer_matrix: BTreeMap<String, BTreeMap<String, BrewerCell>>,
     /// How often each modifier was drawn.
     pub modifier_draws: BTreeMap<String, usize>,
 }
@@ -94,6 +121,7 @@ impl CellStats {
         let mut total_wins = 0usize;
         let mut by_label: BTreeMap<String, LabelStats> = BTreeMap::new();
         let mut wins_by_color: BTreeMap<String, usize> = BTreeMap::new();
+        let mut brewer_matrix: BTreeMap<String, BTreeMap<String, BrewerCell>> = BTreeMap::new();
         let mut modifier_draws: BTreeMap<String, usize> = BTreeMap::new();
 
         for game in &cell.games {
@@ -109,10 +137,24 @@ impl CellStats {
                     .find(|s| s.player == player)
                     .map(|s| format!("{:?}", s.color))
             };
+            let brewer_of = |player| {
+                game.seats
+                    .iter()
+                    .find(|s| s.player == player)
+                    .and_then(|s| s.brewer.clone())
+            };
             for seat in &game.seats {
                 let entry = by_label.entry(seat.label.clone()).or_default();
                 entry.decisions += seat.decisions as u64;
                 entry.fallbacks += seat.fallbacks as u64;
+                if let Some(brewer) = &seat.brewer {
+                    brewer_matrix
+                        .entry(seat.label.clone())
+                        .or_default()
+                        .entry(brewer.clone())
+                        .or_default()
+                        .games += 1;
+                }
             }
             for round in &game.rounds {
                 rounds += 1;
@@ -128,6 +170,12 @@ impl CellStats {
                 for detonator in &round.detonators {
                     detonations += 1;
                     if let Some(label) = label_of(*detonator) {
+                        if let (Some(brewer), Some(cell)) =
+                            (brewer_of(*detonator), brewer_matrix.get_mut(&label))
+                            && let Some(entry) = cell.get_mut(&brewer)
+                        {
+                            entry.detonations += 1;
+                        }
                         by_label.entry(label).or_default().detonations += 1;
                     }
                 }
@@ -149,6 +197,12 @@ impl CellStats {
             for winner in &game.winners {
                 if let Some(label) = label_of(*winner) {
                     total_wins += 1;
+                    if let (Some(brewer), Some(cell)) =
+                        (brewer_of(*winner), brewer_matrix.get_mut(&label))
+                        && let Some(entry) = cell.get_mut(&brewer)
+                    {
+                        entry.wins += 1;
+                    }
                     by_label.entry(label).or_default().wins += 1;
                 }
                 if let Some(color) = color_of(*winner) {
@@ -177,8 +231,25 @@ impl CellStats {
             total_wins,
             by_label,
             wins_by_color,
+            brewer_matrix,
             modifier_draws,
         }
+    }
+
+    /// Per-Brewer aggregates across every label: (games, wins, detonations),
+    /// the mutual-balance read (no Brewer may break ANY persona, so the
+    /// cross-label fold is the headline number; the matrix holds the detail).
+    pub fn brewer_totals(&self) -> BTreeMap<String, BrewerCell> {
+        let mut totals: BTreeMap<String, BrewerCell> = BTreeMap::new();
+        for cells in self.brewer_matrix.values() {
+            for (brewer, cell) in cells {
+                let t = totals.entry(brewer.clone()).or_default();
+                t.games += cell.games;
+                t.wins += cell.wins;
+                t.detonations += cell.detonations;
+            }
+        }
+        totals
     }
 
     /// A label's win share (0–1) of this cell's win credits.

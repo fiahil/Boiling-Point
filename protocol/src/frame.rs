@@ -13,15 +13,15 @@
 //! player's own hand-derived options and public table facts. No boiling point,
 //! no opponents' hidden cards, no deck contents.
 //!
-//! [`PendingDecision`] is an extensible tagged enum. The v2 surface will grow
-//! Brewer-pick and Apothecary-draft kinds when `boom2-brewers` /
-//! `boom2-apothecary` land their vocabulary; today's combat core owes exactly
-//! one decision kind, the per-wave commit.
+//! [`PendingDecision`] is an extensible tagged enum. The combat core owes the
+//! per-wave commit; `boom2-brewers` added the pre-game Brewer pick (the dealt
+//! 2-of-pair offer IS the frame) and the Lurker's defer option on the wave
+//! commit. The Apothecary-draft kind joins when `boom2-apothecary` lands.
 
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{CardId, PlayerId};
-use crate::vocab::{Color, HandIngredient, SpellKind, SpellTarget};
+use crate::vocab::{Brewer, Color, HandIngredient, SpellKind, SpellTarget};
 
 /// The legal targets a castable spell may be aimed at, matching the spell's
 /// [`crate::vocab::TargetKind`]. Targeted spells enumerate every legal choice.
@@ -83,14 +83,15 @@ pub struct PlayableIngredient {
 
 /// The pending decision a player owes, with its complete legal action set.
 ///
-/// Extensible by design: Brewer pick and Apothecary draft kinds join this enum
-/// when their owning changes land their protocol vocabulary.
+/// Extensible by design: the Apothecary draft kind joins this enum when
+/// `boom2-apothecary` lands its protocol vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum PendingDecision {
-    /// The per-wave commit: a mandatory ingredient-or-pass plus at most one
-    /// optional spell. An empty `spells` list means no further cast is legal
-    /// this wave (none held, or one already cast).
+    /// The per-wave commit: a mandatory ingredient-or-pass plus optional
+    /// spells (one for most players; the Channeler's frame keeps listing
+    /// spells until their second cast). An empty `spells` list means no
+    /// further cast is legal this wave (none held, or the allowance spent).
     WaveCommit {
         /// Every hand ingredient that may be committed this wave.
         playable: Vec<PlayableIngredient>,
@@ -98,6 +99,16 @@ pub enum PendingDecision {
         can_pass: bool,
         /// Every spell that may still be cast this wave, with its legal targets.
         spells: Vec<CastableSpell>,
+        /// Whether deferring the commit until after the wave reveals is legal
+        /// (the Lurker's once-per-round bend; `false` for everyone else).
+        can_defer: bool,
+    },
+    /// The pre-game Brewer pick: the dealt disjoint pair (the 2-of-pair offer).
+    /// Exactly one option must be picked; pairs are disjoint around the table,
+    /// so any combination of picks is unique.
+    BrewerPick {
+        /// The two offered Brewers (this seat's disjoint pair).
+        options: Vec<Brewer>,
     },
 }
 
@@ -109,6 +120,7 @@ impl PendingDecision {
             PendingDecision::WaveCommit { playable, .. } => playable
                 .iter()
                 .any(|p| p.ingredient.id == card && (!colorless || p.colorless_allowed)),
+            PendingDecision::BrewerPick { .. } => false,
         }
     }
 
@@ -116,6 +128,7 @@ impl PendingDecision {
     pub fn permits_pass(&self) -> bool {
         match self {
             PendingDecision::WaveCommit { can_pass, .. } => *can_pass,
+            PendingDecision::BrewerPick { .. } => false,
         }
     }
 
@@ -126,6 +139,24 @@ impl PendingDecision {
             PendingDecision::WaveCommit { spells, .. } => spells
                 .iter()
                 .any(|s| s.spell == spell && s.targets.permits(target)),
+            PendingDecision::BrewerPick { .. } => false,
+        }
+    }
+
+    /// Whether a `CommitDefer` submission is inside this frame's legal set.
+    pub fn permits_defer(&self) -> bool {
+        match self {
+            PendingDecision::WaveCommit { can_defer, .. } => *can_defer,
+            PendingDecision::BrewerPick { .. } => false,
+        }
+    }
+
+    /// Whether a `PickBrewer { brewer }` submission is inside this frame's
+    /// legal set.
+    pub fn permits_pick(&self, brewer: Brewer) -> bool {
+        match self {
+            PendingDecision::WaveCommit { .. } => false,
+            PendingDecision::BrewerPick { options } => options.contains(&brewer),
         }
     }
 }

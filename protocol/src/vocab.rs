@@ -176,6 +176,118 @@ pub enum ModifierKind {
     Reversal,
 }
 
+/// The twelve Brewers — public asymmetric player identities, each bending
+/// exactly one combat-core rule (change `boom2-brewers`). The protocol names
+/// them and carries the static metadata a client needs to render a pick (the
+/// one-sentence bent rule); the bends themselves live in the server engine.
+/// Every player's chosen Brewer is public from before the first wave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Brewer {
+    /// In the fatal-wave volatility sort, your cards count as the lowest at
+    /// their value (you slip out of ties).
+    Featherhand,
+    /// As a detonator you take half damage — but you can never play a Ward. 🌶️
+    Cinderwright,
+    /// You draft a 4th bucket in one ledger. (Inert until `boom2-apothecary`.)
+    Connoisseur,
+    /// Your grimoire holds two reserves — lock two exact spells. (Inert until
+    /// `boom2-apothecary`.)
+    Reservist,
+    /// You may play two spells per wave. 🌶️
+    Channeler,
+    /// You top up ingredients to 4 each wave, not 3.
+    Forager,
+    /// Your named combos fire from a single half. (Full effect with
+    /// `boom2-compounding`.)
+    Herbalist,
+    /// Your count-threshold cards treat the pot as 2 cards larger. (Full
+    /// effect with `boom2-compounding`.)
+    Distiller,
+    /// When one of your combos fires it also adds volatility to the pot. 🌶️
+    /// (Full effect with `boom2-compounding`.)
+    Alchemist,
+    /// Whenever anyone casts Peek, you secretly learn the boiling point too.
+    Eavesdropper,
+    /// When you split a won pot you round up, not down.
+    Broker,
+    /// Once per round you may commit your card after the wave reveals. 🌶️
+    Lurker,
+}
+
+impl Brewer {
+    /// Every Brewer, in a stable order (the full pool of 12).
+    pub const ALL: [Brewer; 12] = [
+        Brewer::Featherhand,
+        Brewer::Cinderwright,
+        Brewer::Connoisseur,
+        Brewer::Reservist,
+        Brewer::Channeler,
+        Brewer::Forager,
+        Brewer::Herbalist,
+        Brewer::Distiller,
+        Brewer::Alchemist,
+        Brewer::Eavesdropper,
+        Brewer::Broker,
+        Brewer::Lurker,
+    ];
+
+    /// The stable display/config name (used by harness specs and reports).
+    pub fn name(self) -> &'static str {
+        match self {
+            Brewer::Featherhand => "Featherhand",
+            Brewer::Cinderwright => "Cinderwright",
+            Brewer::Connoisseur => "Connoisseur",
+            Brewer::Reservist => "Reservist",
+            Brewer::Channeler => "Channeler",
+            Brewer::Forager => "Forager",
+            Brewer::Herbalist => "Herbalist",
+            Brewer::Distiller => "Distiller",
+            Brewer::Alchemist => "Alchemist",
+            Brewer::Eavesdropper => "Eavesdropper",
+            Brewer::Broker => "Broker",
+            Brewer::Lurker => "Lurker",
+        }
+    }
+
+    /// Parse a name back into a Brewer.
+    pub fn by_name(name: &str) -> Option<Brewer> {
+        Brewer::ALL.into_iter().find(|b| b.name() == name)
+    }
+
+    /// The one-sentence bent rule, as shown at the table (static design
+    /// metadata — the discipline's "one readable sentence").
+    pub fn bent_rule(self) -> &'static str {
+        match self {
+            Brewer::Featherhand => {
+                "In the fatal-wave volatility sort, your cards count as the lowest at their value — you slip out of every tie."
+            }
+            Brewer::Cinderwright => {
+                "When you're a detonator you take half damage — but you can never play a Ward."
+            }
+            Brewer::Connoisseur => "You draft a 4th bucket in one ledger.",
+            Brewer::Reservist => {
+                "Your grimoire holds two reserves — lock two exact spells, not one."
+            }
+            Brewer::Channeler => "You may play two spells per wave, not one.",
+            Brewer::Forager => "You top up ingredients to 4 each wave, not 3.",
+            Brewer::Herbalist => {
+                "Your named combos fire from a single half — you never need both ingredients in the pot."
+            }
+            Brewer::Distiller => {
+                "Your count-threshold cards treat the pot as 2 cards larger — payoffs come online sooner."
+            }
+            Brewer::Alchemist => {
+                "When one of your combos fires it also adds volatility to the pot — chemistry as a weapon."
+            }
+            Brewer::Eavesdropper => {
+                "Whenever anyone casts Peek, you secretly learn the boiling point too."
+            }
+            Brewer::Broker => "When you split a pot you round up, not down.",
+            Brewer::Lurker => "Once per round you may commit your card after the wave reveals.",
+        }
+    }
+}
+
 /// The fully-revealed attributes of an ingredient, as shown in a hand (to its
 /// owner), on an Expose, or at the depile (to everyone). Ingredients in the
 /// cauldron are NOT sent as `IngredientView` during play — they are hidden

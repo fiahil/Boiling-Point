@@ -41,6 +41,13 @@ pub struct Thresholds {
     pub random_comparison_min_games: usize,
     /// Average scored pot value above which pots are flagged as runaway.
     pub runaway_pot_value: f64,
+    /// Per-seat win-rate band for a Brewer (baseline 0.25 at a 4-seat table):
+    /// outside it the Brewer is flagged as breaking or crippled.
+    pub brewer_win_rate_min: f64,
+    /// Upper edge of the per-Brewer win-rate band.
+    pub brewer_win_rate_max: f64,
+    /// Seat-games a Brewer needs before its win-rate band fires.
+    pub brewer_min_games: usize,
 }
 
 impl Default for Thresholds {
@@ -55,6 +62,10 @@ impl Default for Thresholds {
             // ~2.5× the sketched P≈10 — known to fire on the current content
             // (the standing fat-pots finding, docs/06_boom2/02).
             runaway_pot_value: 25.0,
+            // ±10pp around the 25% per-seat baseline. `[needs playtesting]`.
+            brewer_win_rate_min: 0.15,
+            brewer_win_rate_max: 0.35,
+            brewer_min_games: 200,
         }
     }
 }
@@ -197,6 +208,33 @@ fn detect(cell: &CellReport, thresholds: &Thresholds) -> Vec<Smell> {
             }
         }
     }
+    // The mutual-balance gate (`boom2-brewers`): a Brewer whose cross-label
+    // per-seat win rate sits outside the band, with enough games behind it, is
+    // breaking (or crippled) — the matrix below names which persona it breaks.
+    for (brewer, totals) in stats.brewer_totals() {
+        if totals.games < thresholds.brewer_min_games {
+            continue;
+        }
+        let rate = totals.win_rate();
+        if rate > thresholds.brewer_win_rate_max || rate < thresholds.brewer_win_rate_min {
+            let side = if rate > thresholds.brewer_win_rate_max {
+                "above"
+            } else {
+                "below"
+            };
+            smells.push(Smell {
+                cell: cell.name.clone(),
+                kind: "brewer_outlier".into(),
+                detail: format!(
+                    "Brewer '{brewer}' wins {:.1}% of its {} seated games — {side} the [{:.0}%, {:.0}%] band around the 25% seat baseline",
+                    rate * 100.0,
+                    totals.games,
+                    thresholds.brewer_win_rate_min * 100.0,
+                    thresholds.brewer_win_rate_max * 100.0,
+                ),
+            });
+        }
+    }
     if stats.rounds > 0 && stats.all_pass_rate > thresholds.freeze_max {
         smells.push(Smell {
             cell: cell.name.clone(),
@@ -241,7 +279,7 @@ impl Report {
             root_seed: run.root_seed,
             transport: run.transport.label().to_string(),
             reproducible: !run.agent_seats_present && run.transport == TransportKind::InProcess,
-            pending_axes: "Brewer and deck-archetype axes pending boom2-brewers / boom2-apothecary",
+            pending_axes: "deck-archetype axis pending boom2-apothecary (persona and Brewer axes live)",
             thresholds,
             cells,
             smells,
@@ -324,6 +362,35 @@ impl Report {
                     })
                     .collect();
                 out.push_str(&format!("\nWins by seat colour: {}.\n", colors.join(", ")));
+            }
+            if !s.brewer_matrix.is_empty() {
+                out.push_str(
+                    "\n### Persona × Brewer (actual picks; win rate vs the 25% seat baseline)\n\n",
+                );
+                out.push_str("| persona | brewer | games | wins | win rate | detonations |\n");
+                out.push_str("|---|---|---|---|---|---|\n");
+                for (label, brewers) in &s.brewer_matrix {
+                    for (brewer, cell) in brewers {
+                        out.push_str(&format!(
+                            "| {label} | {brewer} | {} | {} | {:.1}% | {} |\n",
+                            cell.games,
+                            cell.wins,
+                            cell.win_rate() * 100.0,
+                            cell.detonations,
+                        ));
+                    }
+                }
+                let totals: Vec<String> = s
+                    .brewer_totals()
+                    .iter()
+                    .map(|(brewer, t)| {
+                        format!("{brewer} {:.1}% ({} games)", t.win_rate() * 100.0, t.games)
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "\nPer-Brewer win rates across personas: {}.\n",
+                    totals.join(", ")
+                ));
             }
         }
 

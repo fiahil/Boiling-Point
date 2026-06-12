@@ -116,7 +116,12 @@ pub fn user_prompt(
         out.push_str(&format!("You have about {} seconds. ", timer / 1000));
     }
 
-    let PendingDecision::WaveCommit { spells, .. } = &frame.decision;
+    let spells = match &frame.decision {
+        PendingDecision::WaveCommit { spells, .. } => spells.as_slice(),
+        // The Brewer pick never reaches the prompt: the agent brain answers it
+        // deterministically without an API call.
+        PendingDecision::BrewerPick { .. } => &[],
+    };
     out.push_str("\nDecide now: play one of your hand ingredients (listed in the tool) or pass");
     if spells.is_empty() {
         out.push_str(". No spell is castable this wave.");
@@ -150,6 +155,7 @@ mod tests {
                 playable: vec![],
                 can_pass: true,
                 spells: vec![],
+                can_defer: false,
             },
         }
     }

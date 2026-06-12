@@ -51,8 +51,10 @@ pub struct SpellChoice {
 }
 
 /// One player's full choice for a wave: the mandatory ingredient-or-pass plus
-/// up to one spell. Serializable so the per-game action log can ride in a
-/// timeless replay payload (the deterministic input the engine re-runs).
+/// up to one spell — two for the Channeler (`boom2-brewers`), whose second
+/// cast rides `second_spell`. Serializable so the per-game action log can ride
+/// in a timeless replay payload (the deterministic input the engine re-runs;
+/// `second_spell` defaults to `None` so pre-brewer payloads still decode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WaveChoice {
     /// Play an ingredient or pass.
@@ -60,6 +62,9 @@ pub struct WaveChoice {
     /// The optional spell (a spell never substitutes for the action and never
     /// keeps a passed player active).
     pub spell: Option<SpellChoice>,
+    /// The Channeler's optional second cast (dropped for everyone else).
+    #[serde(default)]
+    pub second_spell: Option<SpellChoice>,
 }
 
 impl WaveChoice {
@@ -68,6 +73,7 @@ impl WaveChoice {
         WaveChoice {
             action: WaveAction::Pass,
             spell: None,
+            second_spell: None,
         }
     }
 }
@@ -78,12 +84,38 @@ impl WaveChoice {
 pub struct WaveInput {
     /// Players who played, with the ingredient and how it was played.
     pub committed: Vec<(PlayerId, Ingredient, bool)>,
-    /// Validated spell commits (at most one per player).
+    /// Validated spell commits (at most one per player; two for a Channeler).
     pub spells: Vec<CastCommit>,
     /// Active players who passed or timed out this wave.
     pub passers: Vec<PlayerId>,
     /// Players who played but cannot act next wave (no ingredients anywhere).
     pub exhausted: Vec<PlayerId>,
+}
+
+impl WaveInput {
+    /// An input that lands nothing — the no-late-commit case of a staged wave.
+    pub fn empty() -> Self {
+        WaveInput {
+            committed: Vec::new(),
+            spells: Vec::new(),
+            passers: Vec::new(),
+            exhausted: Vec::new(),
+        }
+    }
+}
+
+/// The half-applied state of a staged (Lurker-deferred) wave between
+/// [`Round::apply_wave_partial`] and [`Round::finalize_wave`]: who has acted
+/// so far and whether a Quench shield was consumed at the wave's start.
+struct StagedWave {
+    /// Players whose ingredients landed in the partial step.
+    played: Vec<PlayerId>,
+    /// Players who passed in the partial step.
+    passers: Vec<PlayerId>,
+    /// Players exhausted by the partial step.
+    exhausted: Vec<PlayerId>,
+    /// Whether a Quench shields this wave's (deferred) explosion check.
+    quench_shield: bool,
 }
 
 /// What happened in a wave.
@@ -148,6 +180,12 @@ pub struct Round {
     final_wave_used: bool,
     /// Set once the round ends.
     ended: Option<RoundEnd>,
+    /// Players whose cards count as the lowest at their value in the
+    /// fatal-wave sort (the Featherhand bend, `boom2-brewers`).
+    featherhands: HashSet<PlayerId>,
+    /// The half-applied state of a staged (Lurker-deferred) wave, between the
+    /// partial step and its finalize.
+    staged: Option<StagedWave>,
 }
 
 impl Round {
@@ -165,7 +203,16 @@ impl Round {
             wave_number: 1,
             final_wave_used: false,
             ended: None,
+            featherhands: HashSet::new(),
+            staged: None,
         }
+    }
+
+    /// Mark which players hold the Featherhand bend (their cards sort lowest
+    /// at their value in the fatal-wave liability sort).
+    pub fn with_featherhands(mut self, featherhands: HashSet<PlayerId>) -> Self {
+        self.featherhands = featherhands;
+        self
     }
 
     /// Players still active (will act next wave).
@@ -223,21 +270,66 @@ impl Round {
     /// commits, run the explosion check (honouring a Quench window), then
     /// update the active set and decide whether the round ends.
     pub fn apply_wave(&mut self, values: &SpellValues, input: WaveInput) -> WaveReport {
-        debug_assert!(self.is_open(), "wave applied to a finished round");
+        let outcome = self.apply_wave_partial(values, input);
+        let mut report = self.finalize_wave(values, WaveInput::empty());
+        // The finalize's own outcome is empty (no late input); the wave's real
+        // spell outcome is the partial one.
+        report.outcome = outcome;
+        report
+    }
 
-        // A Quench cast last wave shields this wave's check.
+    /// Land one wave's `input` (cards + spells) **without** running the
+    /// explosion check or closing the wave — the first step of a staged wave
+    /// (the Lurker's deferred commit, `boom2-brewers`). The wave stays open at
+    /// the same number until [`Round::finalize_wave`] lands the late commit
+    /// and runs the deferred check, so the late card joins this same wave's
+    /// pot and liability sort. A staged wave finalized with an empty late
+    /// input is byte-identical to the one-shot [`Round::apply_wave`] — replays
+    /// re-run staged waves as simultaneous ones.
+    pub fn apply_wave_partial(
+        &mut self,
+        values: &SpellValues,
+        input: WaveInput,
+    ) -> WaveSpellOutcome {
+        debug_assert!(self.is_open(), "wave applied to a finished round");
+        debug_assert!(self.staged.is_none(), "a staged wave is already open");
+
+        // A Quench cast last wave shields this wave's (possibly deferred) check.
         let quench_shield = self.quench_next_wave;
         self.quench_next_wave = false;
 
-        // Freeze the pre-wave per-colour snapshot (what score spells read).
+        let WaveInput {
+            committed,
+            spells,
+            passers,
+            exhausted,
+        } = input;
+        let (played, outcome) = self.land(values, committed, spells);
+        self.staged = Some(StagedWave {
+            played,
+            passers,
+            exhausted,
+            quench_shield,
+        });
+        outcome
+    }
+
+    /// Land cards into the open wave and resolve spells against the pre-input
+    /// snapshot. Shared by the partial and finalize steps.
+    fn land(
+        &mut self,
+        values: &SpellValues,
+        committed: Vec<(PlayerId, Ingredient, bool)>,
+        spells: Vec<CastCommit>,
+    ) -> (Vec<PlayerId>, WaveSpellOutcome) {
+        // Freeze the pre-input per-colour snapshot (what score spells read).
         let snapshot: HashMap<Color, u32> = Color::PLAYER_COLORS
             .into_iter()
             .map(|c| (c, self.pot.color_points(c)))
             .collect();
 
-        // Land this wave's ingredients.
-        let played: Vec<PlayerId> = input.committed.iter().map(|(p, _, _)| *p).collect();
-        for (player, ingredient, colorless) in input.committed {
+        let played: Vec<PlayerId> = committed.iter().map(|(p, _, _)| *p).collect();
+        for (player, ingredient, colorless) in committed {
             self.pot.cards.push(PotIngredient {
                 player,
                 ingredient,
@@ -247,18 +339,36 @@ impl Round {
             });
         }
 
-        // Resolve the wave's spells (Instants fire, Actives prime).
-        let outcome = resolve_wave_spells(
-            &mut self.pot,
-            &snapshot,
-            input.spells,
-            &mut self.primed,
-            values,
-        );
+        let outcome =
+            resolve_wave_spells(&mut self.pot, &snapshot, spells, &mut self.primed, values);
         if outcome.quenched {
             self.quench_next_wave = true;
         }
         self.removed.extend(outcome.skimmed.iter().copied());
+        (played, outcome)
+    }
+
+    /// Finalize the open (staged) wave: land the `late` input (the Lurker's
+    /// post-reveal commit — or nothing), run the single explosion check on the
+    /// full wave, update the active set, and decide whether the round ends.
+    pub fn finalize_wave(&mut self, values: &SpellValues, late: WaveInput) -> WaveReport {
+        let WaveInput {
+            committed,
+            spells,
+            passers: late_passers,
+            exhausted: late_exhausted,
+        } = late;
+        let (late_played, outcome) = self.land(values, committed, spells);
+        let mut staged = self.staged.take().expect("a staged wave is open");
+        staged.played.extend(late_played);
+        staged.passers.extend(late_passers);
+        staged.exhausted.extend(late_exhausted);
+        let StagedWave {
+            played,
+            passers: _,
+            exhausted,
+            quench_shield,
+        } = staged;
 
         // The single explosion check, on the running total (cards + spell deltas).
         let exploded = !quench_shield && self.pot.total_volatility() > self.boiling_point;
@@ -268,7 +378,7 @@ impl Round {
 
         // Players still active after this wave: those who played and can act again.
         let played_set: HashSet<PlayerId> = played.iter().copied().collect();
-        let exhausted: HashSet<PlayerId> = input.exhausted.iter().copied().collect();
+        let exhausted: HashSet<PlayerId> = exhausted.into_iter().collect();
         let next: Vec<PlayerId> = self
             .active
             .iter()
@@ -320,6 +430,18 @@ impl Round {
         players
     }
 
+    /// The fatal-wave sort key: ascending effective volatility, with a
+    /// Featherhand's cards counting as the **lowest at their value**
+    /// (`boom2-brewers`) — they sort before equal-volatility cards and slip
+    /// out of ties. With no Featherhand seated this is exactly the plain
+    /// volatility sort.
+    fn sort_key(&self, card: &PotIngredient) -> (u8, u8) {
+        (
+            card.effective_volatility(),
+            u8::from(!self.featherhands.contains(&card.player)),
+        )
+    }
+
     /// Liability computation shared by [`Round::detonators`] and the depile's
     /// per-entry flags: the liable players and the liable card ids.
     fn liability(&self) -> (Vec<PlayerId>, HashSet<CardId>) {
@@ -335,7 +457,7 @@ impl Round {
         if fatal_cards.is_empty() {
             return (Vec::new(), HashSet::new());
         }
-        fatal_cards.sort_by_key(|p| p.effective_volatility());
+        fatal_cards.sort_by_key(|p| self.sort_key(p));
 
         // The hidden pre-wave base: everything in the running total except the
         // fatal wave's cards (cauldron-level spell deltas sit in the base, not
@@ -354,28 +476,30 @@ impl Round {
                 .sum::<i32>()
                 - fatal_sum);
 
-        // Walk the ascending sort to find the trigger volatility.
+        // Walk the ascending sort to find the trigger card's key.
         let mut cumulative = base;
-        let mut trigger_vol: Option<u8> = None;
+        let mut trigger_key: Option<(u8, u8)> = None;
         for card in &fatal_cards {
             cumulative += card.effective_volatility() as i32;
             if cumulative > self.boiling_point {
-                trigger_vol = Some(card.effective_volatility());
+                trigger_key = Some(self.sort_key(card));
                 break;
             }
         }
-        let Some(trigger_vol) = trigger_vol else {
+        let Some(trigger_key) = trigger_key else {
             // The check fired but the climb never crosses card-by-card — only
             // possible when a spell delta alone tipped the total. Nobody pays.
             return (Vec::new(), HashSet::new());
         };
 
-        // Trigger + every equal-or-heavier card in the fatal wave is liable
-        // (equal volatilities are simultaneous).
+        // Trigger + everything at-or-after it in the sort is liable (equal
+        // volatilities are simultaneous — except a Featherhand's, which sort
+        // strictly below equal-volatility cards and so slip out of the tie
+        // unless their own card is the trigger).
         let mut players: Vec<PlayerId> = Vec::new();
         let mut cards: HashSet<CardId> = HashSet::new();
         for card in &fatal_cards {
-            if card.effective_volatility() >= trigger_vol {
+            if self.sort_key(card) >= trigger_key {
                 cards.insert(card.ingredient.id);
                 if !players.contains(&card.player) {
                     players.push(card.player);
@@ -395,7 +519,7 @@ impl Round {
         let (_, liable_cards) = self.liability();
 
         let mut sorted: Vec<&PotIngredient> = self.pot.cards.iter().collect();
-        sorted.sort_by_key(|p| p.effective_volatility());
+        sorted.sort_by_key(|p| self.sort_key(p));
 
         let base = (self.pot.start_volatility + self.pot.spell_volatility_delta).max(0);
         let mut running = base;
@@ -634,6 +758,103 @@ mod tests {
         );
         assert_eq!(r3.ended, Some(RoundEnd::Exploded));
         assert_eq!(round.detonators(), vec![ps[0]]);
+    }
+
+    /// The Featherhand bend (`boom2-brewers`): in the fatal-wave sort their
+    /// cards count as the lowest at their value, so they slip out of the
+    /// equal-volatility tie that would otherwise make them liable.
+    #[test]
+    fn featherhand_slips_out_of_ties() {
+        let ps: Vec<PlayerId> = (1..=3).map(pid).collect();
+        let mut round = Round::start(ps.clone(), 5, 0).with_featherhands(HashSet::from([ps[0]]));
+        // Same wave as `equal_volatility_cards_are_simultaneous`: two 3s and a
+        // 1 against boiling point 5 — but p1's 3 sorts below p2's, so the
+        // climb (1 → 4 → 7) crosses on p2's card alone.
+        let r = round.apply_wave(
+            &values(),
+            wave(
+                vec![
+                    (ps[0], ing(1, 3), false),
+                    (ps[1], ing(2, 3), false),
+                    (ps[2], ing(3, 1), false),
+                ],
+                vec![],
+            ),
+        );
+        assert_eq!(r.ended, Some(RoundEnd::Exploded));
+        assert_eq!(
+            round.detonators(),
+            vec![ps[1]],
+            "the Featherhand slips the tie"
+        );
+    }
+
+    /// A Featherhand whose own card triggers the crossing is still liable —
+    /// the bend moves them out of ties, never out of causality.
+    #[test]
+    fn featherhand_still_pays_when_their_card_triggers() {
+        let ps: Vec<PlayerId> = (1..=2).map(pid).collect();
+        let mut round = Round::start(ps.clone(), 3, 0).with_featherhands(HashSet::from([ps[0]]));
+        let r = round.apply_wave(
+            &values(),
+            wave(
+                vec![(ps[0], ing(1, 3), false), (ps[1], ing(2, 1), false)],
+                vec![],
+            ),
+        );
+        assert_eq!(r.ended, Some(RoundEnd::Exploded));
+        // Climb: p2's 1 (key 1,1) then p1's 3 (key 3,0) crosses 3 → 4 > 3.
+        // The equal-or-heavier rule then catches nothing above (3,0) but p1.
+        assert_eq!(round.detonators(), vec![ps[0]]);
+    }
+
+    /// A staged wave (the Lurker's deferred commit) finalized with the same
+    /// cards is state-identical to the one-shot wave: same end, same
+    /// detonators, same pot — replays may re-run it as simultaneous.
+    #[test]
+    fn staged_wave_matches_the_one_shot_wave() {
+        let ps: Vec<PlayerId> = (1..=3).map(pid).collect();
+        let run_one_shot = || {
+            let mut round = Round::start(ps.clone(), 6, 0);
+            let r = round.apply_wave(
+                &values(),
+                wave(
+                    vec![
+                        (ps[0], ing(1, 2), false),
+                        (ps[1], ing(2, 3), false),
+                        (ps[2], ing(3, 4), false),
+                    ],
+                    vec![],
+                ),
+            );
+            (r.ended, round.detonators(), round.pot().total_volatility())
+        };
+        let run_staged = || {
+            let mut round = Round::start(ps.clone(), 6, 0);
+            // Stage A: everyone but the lurker (p3).
+            let _ = round.apply_wave_partial(
+                &values(),
+                wave(
+                    vec![(ps[0], ing(1, 2), false), (ps[1], ing(2, 3), false)],
+                    vec![],
+                ),
+            );
+            // The wave is still open at the same number; no check has run.
+            assert!(round.is_open());
+            assert_eq!(round.wave_number(), 1);
+            // The late commit lands into the same wave; the check runs once.
+            let r = round.finalize_wave(&values(), wave(vec![(ps[2], ing(3, 4), false)], vec![]));
+            (r.ended, round.detonators(), round.pot().total_volatility())
+        };
+        assert_eq!(run_one_shot(), run_staged());
+        // The late card is part of the fatal wave's liability sort: vol 4
+        // triggers (2 → 5 → 9 crosses at the 4 past 6... climb 2, 5, 9: the 4
+        // crosses), so the deferring player pays.
+        let (_, detonators, _) = run_staged();
+        assert!(
+            detonators.contains(&ps[2]),
+            "the late card carries liability"
+        );
     }
 
     /// The depile sorts ascending by volatility, reveals the boiling point on a

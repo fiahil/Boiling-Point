@@ -22,7 +22,7 @@ pub use frame::{CastableSpell, PendingDecision, PlayableIngredient, TargetOption
 pub use ids::{CardId, EmoteId, GroupCode, PlayerId};
 pub use server::{Audience, Outbound, ServerMessage};
 pub use vocab::{
-    Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellMode,
+    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellMode,
     SpellTarget, TargetKind,
 };
 
@@ -89,6 +89,10 @@ mod tests {
                 }),
             },
             ClientMessage::CommitPass,
+            ClientMessage::CommitDefer,
+            ClientMessage::PickBrewer {
+                brewer: Brewer::Cinderwright,
+            },
             ClientMessage::LockIn,
             ClientMessage::Emote { emote: EmoteId(3) },
             ClientMessage::PlayAgain,
@@ -181,7 +185,22 @@ mod tests {
                             },
                         },
                     ],
+                    can_defer: true,
                 },
+            },
+            ServerMessage::DecisionFrame {
+                round_number: 0,
+                wave_number: 0,
+                timer_ms: Some(20_000),
+                decision: PendingDecision::BrewerPick {
+                    options: vec![Brewer::Featherhand, Brewer::Lurker],
+                },
+            },
+            ServerMessage::BrewersRevealed {
+                brewers: vec![server::PlayerBrewer {
+                    player: p,
+                    brewer: Brewer::Broker,
+                }],
             },
             ServerMessage::SpellCast {
                 player: p,
@@ -287,6 +306,10 @@ mod tests {
                 your_player_id: p,
                 round_number: 3,
                 players: vec![],
+                brewers: vec![server::PlayerBrewer {
+                    player: p,
+                    brewer: Brewer::Forager,
+                }],
                 scores: vec![PlayerScore {
                     player: p,
                     score: 5,
@@ -348,6 +371,7 @@ mod tests {
                 your_player_id: p,
                 round_number: 2,
                 players: vec![],
+                brewers: vec![],
                 scores: vec![],
                 active_modifiers: vec![],
                 contributions: vec![],
@@ -432,6 +456,7 @@ mod tests {
                     kind: SpellKind::Redirect,
                     targets: TargetOptions::Players { players: vec![p] },
                 }],
+                can_defer: false,
             },
         };
         assert!(frame.is_private_only());
@@ -475,12 +500,18 @@ mod tests {
                     },
                 },
             ],
+            can_defer: false,
         };
         // Plays: the held card (either way), never an unlisted card.
         assert!(decision.permits_play(CardId(1), false));
         assert!(decision.permits_play(CardId(1), true));
         assert!(!decision.permits_play(CardId(99), false));
         assert!(decision.permits_pass());
+        assert!(!decision.permits_defer(), "defer is off unless enumerated");
+        assert!(
+            !decision.permits_pick(Brewer::Lurker),
+            "a wave commit never accepts a brewer pick"
+        );
         // Casts: bare Peek, Hex at the listed player only, Sour at player
         // colours only — and never an unlisted spell.
         assert!(decision.permits_cast(CardId(2), None));
@@ -491,6 +522,38 @@ mod tests {
         assert!(decision.permits_cast(CardId(4), Some(SpellTarget::Color { color: Color::Ruby })));
         assert!(!decision.permits_cast(CardId(4), Some(SpellTarget::Color { color: Color::Wild })));
         assert!(!decision.permits_cast(CardId(99), None));
+    }
+
+    /// Brewer metadata is total: exactly 12, unique names that round-trip
+    /// through `by_name`, each with a non-empty one-sentence bent rule.
+    #[test]
+    fn brewer_metadata_is_total() {
+        assert_eq!(Brewer::ALL.len(), 12);
+        let mut names: Vec<&str> = Brewer::ALL.iter().map(|b| b.name()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 12, "brewer names must be unique");
+        for brewer in Brewer::ALL {
+            assert_eq!(Brewer::by_name(brewer.name()), Some(brewer));
+            assert!(!brewer.bent_rule().is_empty());
+        }
+        assert_eq!(Brewer::by_name("Bartender"), None);
+    }
+
+    /// A brewer-pick frame permits exactly its two offered options and none of
+    /// the wave-commit actions.
+    #[test]
+    fn brewer_pick_frame_permits_only_its_pair() {
+        let decision = PendingDecision::BrewerPick {
+            options: vec![Brewer::Featherhand, Brewer::Broker],
+        };
+        assert!(decision.permits_pick(Brewer::Featherhand));
+        assert!(decision.permits_pick(Brewer::Broker));
+        assert!(!decision.permits_pick(Brewer::Lurker));
+        assert!(!decision.permits_pass());
+        assert!(!decision.permits_play(CardId(1), false));
+        assert!(!decision.permits_cast(CardId(1), None));
+        assert!(!decision.permits_defer());
     }
 
     /// Building an `Outbound` must classify audiences correctly.

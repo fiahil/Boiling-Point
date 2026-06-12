@@ -21,7 +21,8 @@ use tokio::sync::mpsc;
 use tracing::Instrument as _;
 use uuid::Uuid;
 
-use boiling_point_protocol::vocab::Color;
+use boiling_point_protocol::frame::PendingDecision;
+use boiling_point_protocol::vocab::{Brewer, Color};
 use boiling_point_protocol::{CardId, ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use boiling_point_server::admin::AdminProjection;
@@ -56,6 +57,7 @@ fn play_first_else_pass(_player: PlayerId, hand: &Hand) -> WaveChoice {
                 colorless: false,
             },
             spell: None,
+            second_spell: None,
         },
         None => WaveChoice::pass(),
     }
@@ -74,6 +76,19 @@ async fn bot(
         match msg {
             ServerMessage::YourHand { ingredients, .. } => {
                 hand = ingredients.iter().map(|c| c.id).collect();
+            }
+            // Pick the first offered Brewer — the auto-pick rule, so the sync
+            // ground truth reproduces the assignments.
+            ServerMessage::DecisionFrame {
+                decision: PendingDecision::BrewerPick { options },
+                ..
+            } => {
+                let _ = tx
+                    .send(GroupCommand::Action {
+                        player,
+                        msg: ClientMessage::PickBrewer { brewer: options[0] },
+                    })
+                    .await;
             }
             ServerMessage::WaveOpened { wave_number, .. } => {
                 if wave_number == 1 {
@@ -149,7 +164,14 @@ async fn a_seeded_boom_appears_in_spans_and_the_boom_rate_metric() {
             display_name: format!("p{id}", id = id.0),
         })
         .collect();
-    let mut sync_game = Game::new(&registry, &cfg, sync_players, SEED);
+    // The bots pick the first of each dealt pair — the deterministic deal +
+    // auto-pick rule — so the ground truth carries the same brewers.
+    let brewers: std::collections::HashMap<PlayerId, Brewer> = sync_players
+        .iter()
+        .zip(session::deal_brewer_pairs(SEED, sync_players.len()))
+        .map(|(p, pair)| (p.id, session::auto_pick(&pair)))
+        .collect();
+    let mut sync_game = Game::with_brewers(&registry, &cfg, sync_players, brewers, SEED);
     let mut decider = play_first_else_pass;
     let truth = sync_game.play_out(&mut decider);
     let expected_rounds = truth.rounds.len() as u64;

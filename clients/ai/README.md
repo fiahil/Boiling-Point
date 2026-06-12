@@ -83,6 +83,16 @@ seats = [
     { brain = "bot", archetype = "political" },
     { brain = "bot", archetype = "random" },   # keep the baseline in samples
 ]
+
+[[cells]]
+name = "spicy-cinderwright"                    # concentrate samples on one Brewer
+games = 500
+seats = [
+    { brain = "bot", archetype = "cautious",   brewer = "Cinderwright" },
+    { brain = "bot", archetype = "aggressive", brewer = "Cinderwright" },
+    { brain = "bot", archetype = "political",  brewer = "Cinderwright" },
+    { brain = "bot", archetype = "random" },
+]
 ```
 
 Reports land as markdown (eyeballs) + JSON (diffs), keyed to a fingerprint of
@@ -94,9 +104,14 @@ freezes. Bot-only in-process runs are **byte-reproducible from the root seed**;
 agent seats (which require `--allow-agents` — the no-accidental-spend gate) and
 WebSocket runs are marked non-reproducible.
 
-The `brewer` and `deck_archetype` seat axes are declared in the spec schema but
-**rejected until `boom2-brewers` / `boom2-apothecary` land** their decision
-kinds — a spec never silently runs a different experiment than written.
+The `brewer` seat axis is **live** (`boom2-brewers`): a bot seat's
+`brewer = "Cinderwright"` is a pick *preference* — taken whenever the dealt
+disjoint pair offers it, else the first option — and the report's
+**persona × Brewer matrix** aggregates by the Brewer each seat *actually*
+picked, so every cell contributes signal regardless of the deal. The
+`deck_archetype` axis stays declared-but-**rejected until `boom2-apothecary`
+lands** its decision kind — a spec never silently runs a different experiment
+than written.
 
 ## Seat-filler mode — summoning familiars
 

@@ -8,11 +8,11 @@
 //! Double Stakes multiplier, Reversal flip); their magnitudes are v1-scaled and
 //! flagged for a follow-up rescale.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use boiling_point_protocol::PlayerId;
 use boiling_point_protocol::server::SpellFire;
-use boiling_point_protocol::vocab::Color;
+use boiling_point_protocol::vocab::{Brewer, Color};
 
 use crate::content::registry::ContentRegistry;
 
@@ -32,6 +32,10 @@ pub struct ScoringContext<'a> {
     pub player_color: &'a HashMap<PlayerId, Color>,
     /// All players at the table.
     pub all_players: &'a [PlayerId],
+    /// Each player's public Brewer (`boom2-brewers`) — the scoring bends
+    /// (Broker's round-up split, Cinderwright's half detonator damage) key off
+    /// it. Empty when no brewer phase ran (e.g. the sync test runner).
+    pub brewers: &'a HashMap<PlayerId, Brewer>,
 }
 
 /// Result of scoring a safely-resolved pot.
@@ -109,14 +113,21 @@ pub fn score_safe(pot: &Pot, ctx: &ScoringContext, primed: &mut [PrimedSpell]) -
         .map(|(c, _)| *c)
         .collect();
 
-    // Split the pot equally among winning colours, rounding down (integer-only).
-    let share = (value / winners.len() as u32) as i32;
+    // Split the pot equally among winning colours, rounding down (integer-only)
+    // — except for a Broker, whose share rounds up (`boom2-brewers`): everyone's
+    // preferred ally. A sole winner's exact division is unaffected.
+    let split = winners.len() as u32;
     for color in &winners {
         if let Some(owner) = ctx.color_owner.get(color) {
             // A player who contributed nothing scores 0 either way (P-symmetry).
             let contributed = pot.cards.iter().any(|pc| pc.player == *owner);
             if contributed {
-                *awards.entry(*owner).or_insert(0) += share;
+                let share = if ctx.brewers.get(owner) == Some(&Brewer::Broker) {
+                    value.div_ceil(split)
+                } else {
+                    value / split
+                };
+                *awards.entry(*owner).or_insert(0) += share as i32;
             }
         }
     }
@@ -143,9 +154,10 @@ pub fn score_safe(pot: &Pot, ctx: &ScoringContext, primed: &mut [PrimedSpell]) -
 }
 
 /// Compute the detonator-only explosion: the liable players split −P (rounded
-/// down), each loss modified by their wards (Redirect cascading); every primed
-/// Hex then lands its extra on its target. Non-liable, un-hexed players lose
-/// nothing.
+/// down), each loss modified by their wards (Redirect cascading) — a
+/// Cinderwright detonator takes half, rounded up (`boom2-brewers`); every
+/// primed Hex then lands its extra on its target. Non-liable, un-hexed players
+/// lose nothing.
 pub fn explosion(
     pot: &Pot,
     ctx: &ScoringContext,
@@ -153,8 +165,19 @@ pub fn explosion(
     primed: &mut [PrimedSpell],
 ) -> ExplosionResult {
     let value = pot_value(pot, ctx);
-    let (mut deltas, fired) =
-        resolve_explosion(&detonators, value, ctx.registry.spell_values(), primed);
+    let cinderwrights: HashSet<PlayerId> = ctx
+        .brewers
+        .iter()
+        .filter(|(_, b)| **b == Brewer::Cinderwright)
+        .map(|(p, _)| *p)
+        .collect();
+    let (mut deltas, fired) = resolve_explosion(
+        &detonators,
+        value,
+        ctx.registry.spell_values(),
+        primed,
+        &cinderwrights,
+    );
     // Every player gets an explicit (possibly zero) delta for a stable wire shape.
     for player in ctx.all_players {
         deltas.entry(*player).or_insert(0);
@@ -225,6 +248,13 @@ mod tests {
         pot
     }
 
+    /// The shared brewerless default for tests that don't exercise a bend.
+    fn no_brewers() -> &'static HashMap<PlayerId, Brewer> {
+        static EMPTY: std::sync::LazyLock<HashMap<PlayerId, Brewer>> =
+            std::sync::LazyLock::new(HashMap::new);
+        &EMPTY
+    }
+
     fn ctx<'a>(
         mods: &'a ActiveModifiers,
         reg: &'a ContentRegistry,
@@ -237,6 +267,7 @@ mod tests {
             registry: reg,
             color_owner: owner,
             player_color,
+            brewers: no_brewers(),
             all_players: all,
         }
     }
@@ -323,6 +354,39 @@ mod tests {
         assert_eq!(s.pot_value, 12);
         assert_eq!(s.winners, vec![Color::Ruby]);
         assert_eq!(s.awards[&all[0]], 12);
+    }
+
+    /// The Broker bend (`boom2-brewers`): on a split pot the Broker's share
+    /// rounds up; the other winner still rounds down (everyone's preferred
+    /// ally — they cost the pot, not their partner).
+    #[test]
+    fn broker_rounds_up_on_a_split() {
+        let reg = registry();
+        let (all, owner, pc) = players();
+        let mods = ActiveModifiers::new();
+        // Ruby 3, Sapphire 3, plus a third vote worth 1 → pot 7: a 3/3 split.
+        let pot = pot_with(&[
+            (all[0], Color::Ruby, 3),
+            (all[1], Color::Sapphire, 3),
+            (all[2], Color::Emerald, 1),
+        ]);
+        let brewers: HashMap<PlayerId, Brewer> = [(all[0], Brewer::Broker)].into();
+        let ctx = ScoringContext {
+            modifiers: &mods,
+            registry: &reg,
+            color_owner: &owner,
+            player_color: &pc,
+            all_players: &all,
+            brewers: &brewers,
+        };
+        let mut primed = Vec::new();
+        let s = score_safe(&pot, &ctx, &mut primed);
+        assert_eq!(s.awards[&all[0]], 4, "the Broker rounds up");
+        assert_eq!(s.awards[&all[1]], 3, "the partner still rounds down");
+        // A sole win divides exactly: the bend changes nothing.
+        let solo = pot_with(&[(all[0], Color::Ruby, 5)]);
+        let s = score_safe(&solo, &ctx, &mut primed);
+        assert_eq!(s.awards[&all[0]], 5);
     }
 
     /// The P-symmetry: an explosion costs only the detonators, who split −P.

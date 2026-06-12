@@ -22,18 +22,24 @@ pub enum Policy {
 }
 
 /// The host's per-decision-kind policy table. Grows a field per decision kind
-/// as the v2 surface lands (Brewer pick, Apothecary draft) — each defaulting
+/// as the v2 surface lands (the Apothecary draft is next) — each defaulting
 /// to `Delegated`, the seat-filler posture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostPolicy {
     /// Who answers wave-commit frames.
     pub wave_commit: Policy,
+    /// Who answers the pre-game brewer pick (`boom2-brewers`). The harness's
+    /// brewer axis rides the bot brain's *preference* rather than a script
+    /// (the dealt pair is random, so a fixed scripted pick would mostly be
+    /// illegal); this stays `Delegated` unless an experiment pins it.
+    pub brewer_pick: Policy,
 }
 
 impl Default for HostPolicy {
     fn default() -> Self {
         HostPolicy {
             wave_commit: Policy::Delegated,
+            brewer_pick: Policy::Delegated,
         }
     }
 }
@@ -43,6 +49,7 @@ impl HostPolicy {
     pub fn route(&self, decision: &PendingDecision) -> Policy {
         match decision {
             PendingDecision::WaveCommit { .. } => self.wave_commit,
+            PendingDecision::BrewerPick { .. } => self.brewer_pick,
         }
     }
 }
