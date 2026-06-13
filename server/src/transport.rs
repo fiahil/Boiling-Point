@@ -390,6 +390,7 @@ fn message_kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::CommitPass => "CommitPass",
         ClientMessage::CommitDefer => "CommitDefer",
         ClientMessage::PickBrewer { .. } => "PickBrewer",
+        ClientMessage::SubmitRecipe { .. } => "SubmitRecipe",
         ClientMessage::LockIn => "LockIn",
         ClientMessage::Emote { .. } => "Emote",
         ClientMessage::PlayAgain => "PlayAgain",
@@ -428,10 +429,12 @@ mod tests {
         // Short wave timers so tests don't wait out the real 30s/10s budgets.
         config.timing.wave1_ms = 250;
         config.timing.wave_ms = 200;
-        // These scripted clients never answer the pre-game brewer pick: a short
-        // timer lets the server's deterministic auto-pick close the phase (the
-        // auto-pick path gets live coverage for free).
+        // These scripted clients never answer the pre-game brewer pick or the
+        // Apothecary draft: short timers let the server's deterministic
+        // auto-pick / suggested quick-pick close both phases (the straggler
+        // paths get live coverage for free).
         config.timing.brewer_pick_ms = 250;
+        config.timing.draft_ms = 250;
         let registry = Arc::new(config.build_registry().unwrap());
         let config = Arc::new(config);
         let groups = Arc::new(GroupRegistry::new(registry, config));

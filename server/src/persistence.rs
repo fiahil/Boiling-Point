@@ -434,6 +434,7 @@ mod tests {
             &cfg,
             std::iter::empty(),
             std::iter::empty(),
+            std::iter::empty(),
             &[],
             &[],
         )

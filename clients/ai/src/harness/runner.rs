@@ -85,6 +85,11 @@ pub struct SeatRecord {
     /// The Brewer this seat actually picked (from the public reveal) — the
     /// persona × Brewer matrix key.
     pub brewer: Option<String>,
+    /// The deck archetype this seat was configured to draft
+    /// (`boom2-apothecary`) — the deck-archetype matrix key. The *configured
+    /// plan*, not a read-back: the bot legalizes it per frame, so a
+    /// Cinderwright seat's realized recipe may drop a planned bucket.
+    pub deck_archetype: Option<String>,
     /// Decisions the seat answered.
     pub decisions: u32,
     /// Fallback commits (budget misses + illegal answers).
@@ -156,12 +161,16 @@ fn build_brains(
         BrainSpec::Bot { archetype, epsilon } => {
             let archetype = Archetype::by_name(archetype).expect("validated by the spec");
             let preference = seat_spec.brewer_preference();
+            let plan = seat_spec.deck_plan();
             let brain = BotBrain::new(archetype, seeds.bot_rng(seat))
                 .with_epsilon(*epsilon)
-                .with_brewer_preference(preference);
+                .with_brewer_preference(preference)
+                .with_deck_plan(plan.clone());
             (
                 Box::new(brain),
-                BotBrain::new(archetype, fallback_rng).with_brewer_preference(preference),
+                BotBrain::new(archetype, fallback_rng)
+                    .with_brewer_preference(preference)
+                    .with_deck_plan(plan),
             )
         }
         BrainSpec::Agent { model, persona } => {
@@ -210,10 +219,14 @@ fn emote_palette(config: &ContentConfig) -> Vec<EmoteId> {
         .collect()
 }
 
+/// One seat's identity as configured: report label, player, colour, and the
+/// configured deck-archetype name (the matrix key), if any.
+type SeatIdentity = (String, PlayerId, Color, Option<String>);
+
 /// Assemble a [`GameRecord`] from the four seats' outcomes.
 fn record_game(
     index: u64,
-    identities: Vec<(String, PlayerId, Color)>,
+    identities: Vec<SeatIdentity>,
     outcomes: Vec<crate::seat::SeatOutcome>,
 ) -> Result<GameRecord, ClientError> {
     let seat_zero = outcomes
@@ -234,8 +247,8 @@ fn record_game(
     let color_of = |player: &PlayerId| -> String {
         identities
             .iter()
-            .find(|(_, p, _)| p == player)
-            .map(|(_, _, c)| format!("{c:?}"))
+            .find(|(_, p, _, _)| p == player)
+            .map(|(_, _, c, _)| format!("{c:?}"))
             .unwrap_or_else(|| "?".into())
     };
     let observation = &seat_zero.observation;
@@ -251,7 +264,7 @@ fn record_game(
     let seats = identities
         .into_iter()
         .zip(&outcomes)
-        .map(|((label, player, color), o)| SeatRecord {
+        .map(|((label, player, color, deck_archetype), o)| SeatRecord {
             label,
             player,
             color,
@@ -260,6 +273,7 @@ fn record_game(
                 .iter()
                 .find(|(p, _)| *p == player)
                 .map(|(_, b)| b.name().to_string()),
+            deck_archetype,
             decisions: o.decisions,
             fallbacks: o.fallbacks(),
         })
@@ -348,7 +362,12 @@ async fn run_cell_in_process(
         let mut futures = Vec::with_capacity(4);
         for (seat_index, seat) in booted.seats.into_iter().enumerate() {
             let seat_spec = &cell.seats[seat_index];
-            identities.push((seat_spec.brain.label(), seat.player, seat.color));
+            identities.push((
+                seat_spec.brain.label(),
+                seat.player,
+                seat.color,
+                seat_spec.deck_archetype.clone(),
+            ));
             let (mut brain, mut fallback) = build_brains(seat_spec, &seeds, seat_index, api, spend);
             let cfg = seat_config(seat_spec.brain.is_agent(), None, palette.clone());
             let mut conn = ChannelConnection::new(seat.to_server, seat.from_server);
@@ -435,7 +454,7 @@ async fn run_cell_websocket(
 
         // Seat 0 creates the group; 1–3 join by code (the fourth starts it).
         let mut conns = Vec::with_capacity(4);
-        let mut identities: Vec<(String, PlayerId, Color)> = Vec::with_capacity(4);
+        let mut identities: Vec<SeatIdentity> = Vec::with_capacity(4);
         let mut group_code: Option<GroupCode> = None;
         for (seat_index, seat_spec) in cell.seats.iter().enumerate() {
             let mut conn = WsConnection::connect(&url).await?;
@@ -447,14 +466,19 @@ async fn run_cell_websocket(
             if seat_index == 0 {
                 group_code = Some(joined.group_code.clone());
             }
-            identities.push((seat_spec.brain.label(), joined.player, joined.color));
+            identities.push((
+                seat_spec.brain.label(),
+                joined.player,
+                joined.color,
+                seat_spec.deck_archetype.clone(),
+            ));
             conns.push(conn);
         }
 
         let mut futures = Vec::with_capacity(4);
         for (seat_index, mut conn) in conns.into_iter().enumerate() {
             let seat_spec = &cell.seats[seat_index];
-            let (_, player, color) = identities[seat_index].clone();
+            let (_, player, color, _) = identities[seat_index].clone();
             let (mut brain, mut fallback) = build_brains(seat_spec, &seeds, seat_index, api, spend);
             let cfg = seat_config(
                 seat_spec.brain.is_agent(),

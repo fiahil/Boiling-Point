@@ -484,6 +484,95 @@ four 🌶️ Brewers sit inside the band. Rerun:
 
 ---
 
+## Apothecary as built + persona × deck-archetype derivation (2026-06-13, `boom2-apothecary`)
+
+The Apothecary replaced the fixed-deck deal with the procedural **realizer**
+(protocol v7, replay format v5 / engine v4). Implementation decisions worth
+recording beyond the spec:
+
+- **The draft is a decision frame, after the Brewer.** The bucket rosters +
+  allowances ride a `PendingDecision::ApothecaryDraft` (round 0, wave 0) carrying
+  a **suggested quick-pick**; the intent is `SubmitRecipe`, final on receipt; the
+  phase closes early once all four land and a straggler gets the suggested recipe
+  at `timing.draft_ms` (30s). It runs **after** `brewer.pick` and **before** deck
+  realization — you draft knowing who you are, and `Game::with_recipes` realizes
+  off the picks. The public `RecipesRevealed` broadcasts before the first deal;
+  the `draft` span landed additively (no schema bump, like `brewer.pick`).
+- **Availability, not distribution, enforced in the realizer.** A recipe's
+  buckets define the eligible pool; the realizer composes a fixed-size deck
+  (pantry 30 / grimoire 20) under absolute caps — toolkit ≤7 (the ~75% colour
+  anchor's complement), Treasure ≤3, **god-tier ≤2**. A capped-out slot falls
+  through to **commons** (Sage/Mint own-colour for the pantry; the non-god
+  role-groups for the grimoire), so *any* pick-set yields a legal, right-sized,
+  colour-anchored deck and a bigger/greedier draft adds commons, never premium.
+  Re-rolled every game off the per-seat seed; the realized cards and draw order
+  stay server-side (learn-as-you-draw, C5) — only the recipe is public.
+- **The reserve is placed first**, so a named spell is guaranteed unless excluded
+  or cap-busting; the Reservist locks two. The Cinderwright's no-Ward rule extends
+  to the draft — Ironbark (whose family *is* the three wards) is never offered, so
+  the frame's exact-enumeration contract holds.
+- **The Brewer draft seams are now live:** Connoisseur takes a 4th bucket in one
+  ledger (`bonus_buckets`), Reservist two reserves (`reserves_max`) — the
+  constants `boom2-brewers` defined-but-didn't-consult.
+
+**Persona × deck-archetype derivation (20,000 games, default content).** Four
+bot **archetypes** (planned recipes the bot legalizes per frame): Warlord
+(Nightshade+Saffron+Bilberry / Ironbark+Brimstone, Redirect), Fortress
+(Sage+Hellebore+Chalk / Hoarfrost+Ironbark+Farsight, Cap), Kingmaker
+(Ochre+Wisp+Mint / Farsight+Wormwood+Goldenseal, Sour), Loyalist
+(Sage+Mint+Nightshade / Eyebright+Goldenseal+Mandrake, Peek). Two sweeps:
+
+- **Same-persona mirror** (`specs/deck-archetype-sweep.toml`, seed 42): four seats
+  one persona, one archetype each. This reads the axis *cleanly* but in a **freeze
+  regime** — an all-one-persona table never pushes, so pots settle on raw
+  own-colour point density. The gradient looked alarming (cautious mirror: Warlord
+  **44.0%**, Loyalist 28.4%, Fortress 16.4%, Kingmaker **13.7%**; 80% all-pass,
+  1.2% explosion) — but that is the mirror artifact, not the archetypes.
+- **Archetype vs a mixed field** (`specs/deck-archetype-vs-field.toml`, seed 1234):
+  one cautious seat varies only its archetype against an identical
+  aggressive/political/random field (quick-pick decks) — a varied, *pushing*
+  table. The gradient collapses to **~8pp**: Warlord **36.0%**, Kingmaker 30.1%,
+  Loyalist 29.9%, Fortress 27.6%. Explosion rates are healthy (Warlord 47.8%,
+  Loyalist 48.7% in-band; the cooler Fortress 32.2% / Kingmaker 36.8% lower the
+  table's heat, the designed effect). Kingmaker — "crippled" at 13% in the mirror
+  — is a healthy 30% against a real field, confirming the freeze diagnosis.
+
+**The Peek economy holds under player-shaped supply** (the §IV / O4 keystone
+question). The absolute **god-tier cap (≤2 per 20-spell grimoire)** is the
+structural bound and it held at both ends: a realistic field casts ~0.7 Peeks/game;
+the **all-Loyalist** mirror (4× *guaranteed* Peek via the reserve — the maximal
+player-shaped Peek demand) still bounded at **5.92 casts/game** with no flood, and
+the table's explosion rate fell to 15% (shared perfect info → safe folds) while the
+Eavesdropper climbed to 40% — exactly the designed know-vs-survive tradeoff, not a
+runaway. The cap is verified absolute in `realizer::tests` (both god buckets → ≤2)
+and `protocol` `bucket_metadata_is_total`.
+
+**Watch items & caveats:**
+- **Warlord is the standing watch item:** the top archetype against a real field
+  (36.0%, ~1pp over the [15%, 35%] band), driven by Bilberry (greedy high-vol
+  high-point) + Saffron treasure. The first content-tuning candidate (lower
+  Bilberry's point density) if humans confirm the lean.
+- **The same-persona mirror over-reads the axis.** Its freeze regime decides pots
+  on point density alone, inflating the spread ~4×; the vs-field cells are the
+  balance read. Recorded so a future run does not mistake the mirror for the verdict.
+- **Cinderwright × hot-deck interaction:** Cinderwright spikes (≈50–60% in the
+  aggressive seats of the hot Warlord/Fortress cells) — the brewers' standing
+  Cinderwright lean, now amplified when half-damage meets a high-explosion realized
+  deck. A brewers-side watch item, surfaced (not created) here.
+- The standing **runaway_pots** smell (~29–31 avg scored pot vs the 25 threshold)
+  fired in every vs-field cell, as it has since the combat core — the fat-pot
+  points-curve work predates and is untouched by this change.
+
+**Verdict (per Principle IV):** ship the realizer and the archetype catalog
+untuned — against a realistic field every archetype sits in (or 1pp over) the band,
+the caps hold every deck, and the Peek economy is structurally bounded. Warlord is
+the watch item; the content numbers stay `[needs playtesting]` by humans. Rerun:
+`cargo run --release -p boiling-point-ai-client --features harness --bin balance_tester -- --spec clients/ai/specs/deck-archetype-vs-field.toml`
+(swap `--spec …/deck-archetype-sweep.toml` for the mirror + the all-Loyalist Peek
+stress).
+
+---
+
 ## Pointers
 
 - Rationale & alternatives: [`06_depth-and-complexity.md`](01_depth-and-complexity.md)

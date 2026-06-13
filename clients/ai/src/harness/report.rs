@@ -103,7 +103,7 @@ pub struct Report {
     pub transport: String,
     /// False when an agent seat took part — same seed will NOT reproduce.
     pub reproducible: bool,
-    /// Brewer/deck-archetype axis status (lands with later boom2 changes).
+    /// Axis status line (all three axes live since `boom2-apothecary`).
     pub pending_axes: &'static str,
     /// The thresholds smell detection ran against.
     pub thresholds: Thresholds,
@@ -208,31 +208,43 @@ fn detect(cell: &CellReport, thresholds: &Thresholds) -> Vec<Smell> {
             }
         }
     }
-    // The mutual-balance gate (`boom2-brewers`): a Brewer whose cross-label
-    // per-seat win rate sits outside the band, with enough games behind it, is
-    // breaking (or crippled) — the matrix below names which persona it breaks.
-    for (brewer, totals) in stats.brewer_totals() {
-        if totals.games < thresholds.brewer_min_games {
-            continue;
-        }
-        let rate = totals.win_rate();
-        if rate > thresholds.brewer_win_rate_max || rate < thresholds.brewer_win_rate_min {
-            let side = if rate > thresholds.brewer_win_rate_max {
-                "above"
-            } else {
-                "below"
-            };
-            smells.push(Smell {
-                cell: cell.name.clone(),
-                kind: "brewer_outlier".into(),
-                detail: format!(
-                    "Brewer '{brewer}' wins {:.1}% of its {} seated games — {side} the [{:.0}%, {:.0}%] band around the 25% seat baseline",
-                    rate * 100.0,
-                    totals.games,
-                    thresholds.brewer_win_rate_min * 100.0,
-                    thresholds.brewer_win_rate_max * 100.0,
-                ),
-            });
+    // The mutual-balance gates: a Brewer (`boom2-brewers`) or a deck archetype
+    // (`boom2-apothecary`) whose cross-label per-seat win rate sits outside
+    // the band, with enough games behind it, is breaking (or crippled) — the
+    // matrices below name which persona it breaks. Both axes share the
+    // per-seat band (baseline 0.25 either way).
+    let axis_outliers = [
+        ("brewer_outlier", "Brewer", stats.brewer_totals()),
+        (
+            "archetype_outlier",
+            "Deck archetype",
+            stats.archetype_totals(),
+        ),
+    ];
+    for (kind, axis, totals_by_key) in axis_outliers {
+        for (key, totals) in totals_by_key {
+            if totals.games < thresholds.brewer_min_games {
+                continue;
+            }
+            let rate = totals.win_rate();
+            if rate > thresholds.brewer_win_rate_max || rate < thresholds.brewer_win_rate_min {
+                let side = if rate > thresholds.brewer_win_rate_max {
+                    "above"
+                } else {
+                    "below"
+                };
+                smells.push(Smell {
+                    cell: cell.name.clone(),
+                    kind: kind.into(),
+                    detail: format!(
+                        "{axis} '{key}' wins {:.1}% of its {} seated games — {side} the [{:.0}%, {:.0}%] band around the 25% seat baseline",
+                        rate * 100.0,
+                        totals.games,
+                        thresholds.brewer_win_rate_min * 100.0,
+                        thresholds.brewer_win_rate_max * 100.0,
+                    ),
+                });
+            }
         }
     }
     if stats.rounds > 0 && stats.all_pass_rate > thresholds.freeze_max {
@@ -279,7 +291,7 @@ impl Report {
             root_seed: run.root_seed,
             transport: run.transport.label().to_string(),
             reproducible: !run.agent_seats_present && run.transport == TransportKind::InProcess,
-            pending_axes: "deck-archetype axis pending boom2-apothecary (persona and Brewer axes live)",
+            pending_axes: "persona, Brewer, and deck-archetype axes live (none pending)",
             thresholds,
             cells,
             smells,
@@ -389,6 +401,39 @@ impl Report {
                     .collect();
                 out.push_str(&format!(
                     "\nPer-Brewer win rates across personas: {}.\n",
+                    totals.join(", ")
+                ));
+            }
+            if !s.archetype_matrix.is_empty() {
+                out.push_str(
+                    "\n### Persona × deck archetype (configured plans; win rate vs the 25% seat baseline)\n\n",
+                );
+                out.push_str("| persona | archetype | games | wins | win rate | detonations |\n");
+                out.push_str("|---|---|---|---|---|---|\n");
+                for (label, archetypes) in &s.archetype_matrix {
+                    for (archetype, cell) in archetypes {
+                        out.push_str(&format!(
+                            "| {label} | {archetype} | {} | {} | {:.1}% | {} |\n",
+                            cell.games,
+                            cell.wins,
+                            cell.win_rate() * 100.0,
+                            cell.detonations,
+                        ));
+                    }
+                }
+                let totals: Vec<String> = s
+                    .archetype_totals()
+                    .iter()
+                    .map(|(archetype, t)| {
+                        format!(
+                            "{archetype} {:.1}% ({} games)",
+                            t.win_rate() * 100.0,
+                            t.games
+                        )
+                    })
+                    .collect();
+                out.push_str(&format!(
+                    "\nPer-archetype win rates across personas: {}.\n",
                     totals.join(", ")
                 ));
             }

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{CardId, EmoteId, GroupCode};
-use crate::vocab::{Brewer, SpellTarget};
+use crate::vocab::{Brewer, Recipe, SpellTarget};
 
 /// The protocol version a client speaks, sent on the first (entry) message so
 /// the server can reject incompatible clients before sharing any state.
@@ -35,7 +35,14 @@ pub type ProtocolVersion = u16;
 /// [`crate::server::ServerMessage::BrewersRevealed`]), plus the Lurker's
 /// once-per-round deferred commit ([`ClientMessage::CommitDefer`] against a
 /// frame whose `can_defer` is set).
-pub const PROTOCOL_VERSION: ProtocolVersion = 6;
+/// v7: the Apothecary (`boom2-apothecary`) — the pre-game two-ledger draft
+/// after the Brewer pick (the bucket rosters and allowances ride an
+/// `ApothecaryDraft` decision frame; the intent is
+/// [`ClientMessage::SubmitRecipe`]; the table's public recipes arrive in
+/// [`crate::server::ServerMessage::RecipesRevealed`] and on the snapshot).
+/// Decks are realized server-side from the recipes and stay hidden, owner
+/// included.
+pub const PROTOCOL_VERSION: ProtocolVersion = 7;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays
 /// human-readable for debugging.
@@ -93,6 +100,15 @@ pub enum ClientMessage {
     PickBrewer {
         /// The chosen Brewer (must be one of the frame's two options).
         brewer: Brewer,
+    },
+    /// Submit the whole Apothecary recipe — both ledgers' bucket sets plus any
+    /// grimoire reserve(s) — in one message (answers the
+    /// [`crate::frame::PendingDecision::ApothecaryDraft`] frame; final on
+    /// receipt, like the Brewer pick).
+    SubmitRecipe {
+        /// The submitted recipe (must satisfy the frame's
+        /// [`crate::frame::PendingDecision::permits_recipe`]).
+        recipe: Recipe,
     },
     /// Cast a spell this wave (at most one per player per wave; optional, layered
     /// on the ingredient-or-pass choice — a spell never substitutes for it and

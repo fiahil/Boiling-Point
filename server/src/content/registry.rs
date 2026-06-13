@@ -5,9 +5,11 @@
 
 use std::collections::HashMap;
 
-use boiling_point_protocol::vocab::ModifierKind;
+use boiling_point_protocol::vocab::{ModifierKind, PantryBucket};
 
-use super::card::IngredientDef;
+use crate::config::ApothecaryConfig;
+
+use super::card::{BucketCard, IngredientDef};
 use super::modifier::{Modifier, behavior_for as modifier_behavior};
 use super::spell::{SpellDef, SpellValues};
 
@@ -29,6 +31,11 @@ pub struct ContentRegistry {
     spell_values: SpellValues,
     /// Enabled modifier pool (kind → entry) for weighted draws.
     modifiers: HashMap<ModifierKind, ModifierPoolEntry>,
+    /// The Apothecary realizer caps (`boom2-apothecary`).
+    apothecary: ApothecaryConfig,
+    /// Per-bucket pantry card families, in [`PantryBucket::ALL`] order (a
+    /// stable base order keeps the realizer's seeded rolls reproducible).
+    pantry_families: Vec<(PantryBucket, Vec<BucketCard>)>,
 }
 
 impl ContentRegistry {
@@ -39,6 +46,8 @@ impl ContentRegistry {
         spells: Vec<SpellDef>,
         spell_values: SpellValues,
         enabled_modifiers: &[(ModifierKind, u16)],
+        apothecary: ApothecaryConfig,
+        pantry_families: Vec<(PantryBucket, Vec<BucketCard>)>,
     ) -> Self {
         let mut modifiers: HashMap<ModifierKind, ModifierPoolEntry> = HashMap::new();
         for &(kind, copies) in enabled_modifiers {
@@ -55,6 +64,8 @@ impl ContentRegistry {
             spells,
             spell_values,
             modifiers,
+            apothecary,
+            pantry_families,
         }
     }
 
@@ -102,5 +113,19 @@ impl ContentRegistry {
     /// Total physical spells in one grimoire (sum of enabled archetype copies).
     pub fn grimoire_size(&self) -> u32 {
         self.spells.iter().map(|s| s.copies as u32).sum()
+    }
+
+    /// The Apothecary realizer caps.
+    pub fn apothecary(&self) -> &ApothecaryConfig {
+        &self.apothecary
+    }
+
+    /// A pantry bucket's eligible card family.
+    pub fn bucket_family(&self, bucket: PantryBucket) -> &[BucketCard] {
+        self.pantry_families
+            .iter()
+            .find(|(b, _)| *b == bucket)
+            .map(|(_, cards)| cards.as_slice())
+            .unwrap_or(&[])
     }
 }

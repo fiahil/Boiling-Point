@@ -288,6 +288,228 @@ impl Brewer {
     }
 }
 
+/// The twelve pantry buckets (change `boom2-apothecary`): the named families a
+/// player drafts ingredient *availability* from. A bucket makes a family of
+/// cards eligible; it never sets how many appear — the server-side realizer
+/// composes the fixed-size deck. The protocol names the buckets and carries the
+/// static metadata a client needs to render the draft (the one-line family
+/// read); the card families themselves are server content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum PantryBucket {
+    /// Low-volatility own-colour safe pushes. (Posture)
+    Sage,
+    /// Balanced mid-volatility / mid-point own-colour. (Posture)
+    Mint,
+    /// High-volatility own-colour weapons. (Posture)
+    Nightshade,
+    /// High-point own-colour treasure — the realizer caps these. (Posture)
+    Saffron,
+    /// Zero-point ghosts: volatility and colour presence, no prize. (Posture)
+    Chalk,
+    /// Greedy own-colour — high-volatility AND high-point. (Posture)
+    Bilberry,
+    /// Off-colour cards (kingmake / misdirect). (Toolkit)
+    Ochre,
+    /// Wilds — colourless pure danger / go-neutral. (Toolkit)
+    Wisp,
+    /// Named-combo pairs (mechanical teeth land with `boom2-compounding`). (Chemistry)
+    Bramble,
+    /// Count-threshold cards — score more in big / late pots (teeth land with
+    /// `boom2-compounding`). (Chemistry)
+    Honey,
+    /// Ultra-low-volatility tiptoe cards (dodge detonator liability). (Specialist)
+    Hellebore,
+    /// Escalating cards — volatility climbs the longer they sit (teeth land
+    /// with `boom2-compounding`). (Specialist)
+    Embercap,
+}
+
+impl PantryBucket {
+    /// Every pantry bucket, in a stable order (the full roster of 12).
+    pub const ALL: [PantryBucket; 12] = [
+        PantryBucket::Sage,
+        PantryBucket::Mint,
+        PantryBucket::Nightshade,
+        PantryBucket::Saffron,
+        PantryBucket::Chalk,
+        PantryBucket::Bilberry,
+        PantryBucket::Ochre,
+        PantryBucket::Wisp,
+        PantryBucket::Bramble,
+        PantryBucket::Honey,
+        PantryBucket::Hellebore,
+        PantryBucket::Embercap,
+    ];
+
+    /// The stable display/config name (used by harness specs and reports).
+    pub fn name(self) -> &'static str {
+        match self {
+            PantryBucket::Sage => "Sage",
+            PantryBucket::Mint => "Mint",
+            PantryBucket::Nightshade => "Nightshade",
+            PantryBucket::Saffron => "Saffron",
+            PantryBucket::Chalk => "Chalk",
+            PantryBucket::Bilberry => "Bilberry",
+            PantryBucket::Ochre => "Ochre",
+            PantryBucket::Wisp => "Wisp",
+            PantryBucket::Bramble => "Bramble",
+            PantryBucket::Honey => "Honey",
+            PantryBucket::Hellebore => "Hellebore",
+            PantryBucket::Embercap => "Embercap",
+        }
+    }
+
+    /// Parse a name back into a bucket.
+    pub fn by_name(name: &str) -> Option<PantryBucket> {
+        PantryBucket::ALL.into_iter().find(|b| b.name() == name)
+    }
+
+    /// The one-line family read, as shown in the draft UI (static design
+    /// metadata, like a Brewer's bent rule).
+    pub fn blurb(self) -> &'static str {
+        match self {
+            PantryBucket::Sage => "Low-volatility own-colour — safe pushes.",
+            PantryBucket::Mint => "Balanced mid-volatility, mid-point own-colour.",
+            PantryBucket::Nightshade => "High-volatility own-colour weapons.",
+            PantryBucket::Saffron => "High-point own-colour treasure (at most 3 realized).",
+            PantryBucket::Chalk => "Zero-point ghosts — volatility and colour presence, no prize.",
+            PantryBucket::Bilberry => "Greedy own-colour — high-volatility and high-point.",
+            PantryBucket::Ochre => "Off-colour cards — kingmake and misdirect.",
+            PantryBucket::Wisp => "Wilds — colourless pure danger, go-neutral.",
+            PantryBucket::Bramble => "Named-combo pairs — better together.",
+            PantryBucket::Honey => "Count-threshold cards — score more in big pots.",
+            PantryBucket::Hellebore => "Ultra-low-volatility tiptoe cards.",
+            PantryBucket::Embercap => "Escalating cards — volatility climbs as they sit.",
+        }
+    }
+
+    /// Whether this is a toolkit bucket (off-colour / wild families): the
+    /// realizer's toolkit cap keys on the *cards*, but the Loyalist↔Diplomat
+    /// read keys on whether any toolkit bucket was taken at all.
+    pub fn is_toolkit(self) -> bool {
+        matches!(self, PantryBucket::Ochre | PantryBucket::Wisp)
+    }
+}
+
+/// The eight grimoire reagent buckets (change `boom2-apothecary`): each makes a
+/// role-group of spells eligible; the realizer rolls a random spell within the
+/// group per slot. The role-groups are static design metadata ([`Self::spells`]),
+/// fixed alongside the 15 spell kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum GrimoireBucket {
+    /// Peek — know the line. (God-tier)
+    Eyebright,
+    /// The Wards: Cap, Halve, Redirect — survive the boom. (God-tier)
+    Ironbark,
+    /// Expose, Assay. (Info)
+    Farsight,
+    /// Surge, Hex. (Offense)
+    Brimstone,
+    /// Sour, Skim. (Disruption)
+    Wormwood,
+    /// Harvest, Double Down. (Cash-in)
+    Goldenseal,
+    /// Dampen, Quench. (Defense)
+    Hoarfrost,
+    /// Forage. (Tempo)
+    Mandrake,
+}
+
+impl GrimoireBucket {
+    /// Every grimoire bucket, in a stable order (the full roster of 8).
+    pub const ALL: [GrimoireBucket; 8] = [
+        GrimoireBucket::Eyebright,
+        GrimoireBucket::Ironbark,
+        GrimoireBucket::Farsight,
+        GrimoireBucket::Brimstone,
+        GrimoireBucket::Wormwood,
+        GrimoireBucket::Goldenseal,
+        GrimoireBucket::Hoarfrost,
+        GrimoireBucket::Mandrake,
+    ];
+
+    /// The god-tier spells (the Eyebright + Ironbark families): know vs
+    /// survive. The realizer's absolute god-tier cap keys on these kinds.
+    pub const GOD_TIER_SPELLS: [SpellKind; 4] = [
+        SpellKind::Peek,
+        SpellKind::Cap,
+        SpellKind::Halve,
+        SpellKind::Redirect,
+    ];
+
+    /// The stable display/config name (used by harness specs and reports).
+    pub fn name(self) -> &'static str {
+        match self {
+            GrimoireBucket::Eyebright => "Eyebright",
+            GrimoireBucket::Ironbark => "Ironbark",
+            GrimoireBucket::Farsight => "Farsight",
+            GrimoireBucket::Brimstone => "Brimstone",
+            GrimoireBucket::Wormwood => "Wormwood",
+            GrimoireBucket::Goldenseal => "Goldenseal",
+            GrimoireBucket::Hoarfrost => "Hoarfrost",
+            GrimoireBucket::Mandrake => "Mandrake",
+        }
+    }
+
+    /// Parse a name back into a bucket.
+    pub fn by_name(name: &str) -> Option<GrimoireBucket> {
+        GrimoireBucket::ALL.into_iter().find(|b| b.name() == name)
+    }
+
+    /// The one-line family read, as shown in the draft UI (static design
+    /// metadata, like a Brewer's bent rule).
+    pub fn blurb(self) -> &'static str {
+        match self {
+            GrimoireBucket::Eyebright => "Peek — know the boiling point.",
+            GrimoireBucket::Ironbark => "The Wards: Cap, Halve, Redirect — survive the boom.",
+            GrimoireBucket::Farsight => "Expose and Assay — read the pot.",
+            GrimoireBucket::Brimstone => "Surge and Hex — push the pot hot and curse a rival.",
+            GrimoireBucket::Wormwood => "Sour and Skim — disrupt scores, shed liability.",
+            GrimoireBucket::Goldenseal => "Harvest and Double Down — cash a winning pot in.",
+            GrimoireBucket::Hoarfrost => "Dampen and Quench — cool the cauldron.",
+            GrimoireBucket::Mandrake => "Forage — the only in-round spell replenisher.",
+        }
+    }
+
+    /// The role-group this bucket makes eligible (static design metadata —
+    /// fixed alongside the 15 spell kinds, not server content).
+    pub fn spells(self) -> &'static [SpellKind] {
+        match self {
+            GrimoireBucket::Eyebright => &[SpellKind::Peek],
+            GrimoireBucket::Ironbark => &[SpellKind::Cap, SpellKind::Halve, SpellKind::Redirect],
+            GrimoireBucket::Farsight => &[SpellKind::Expose, SpellKind::Assay],
+            GrimoireBucket::Brimstone => &[SpellKind::Surge, SpellKind::Hex],
+            GrimoireBucket::Wormwood => &[SpellKind::Sour, SpellKind::Skim],
+            GrimoireBucket::Goldenseal => &[SpellKind::Harvest, SpellKind::DoubleDown],
+            GrimoireBucket::Hoarfrost => &[SpellKind::Dampen, SpellKind::Quench],
+            GrimoireBucket::Mandrake => &[SpellKind::Forage],
+        }
+    }
+
+    /// Whether this bucket's family is god-tier (Peek / the Wards) — drafting
+    /// it never lifts the realizer's absolute god-tier cap.
+    pub fn is_god_tier(self) -> bool {
+        matches!(self, GrimoireBucket::Eyebright | GrimoireBucket::Ironbark)
+    }
+}
+
+/// A player's **recipe** (change `boom2-apothecary`): the buckets they took per
+/// ledger plus the grimoire reserve(s) — the locked named spells. The recipe is
+/// **public** (the table reads intent); the realized cards and draw order are
+/// hidden from everyone, including the owner.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recipe {
+    /// The pantry buckets taken (2–3 distinct; the Connoisseur may take a 4th
+    /// in one ledger).
+    pub pantry: Vec<PantryBucket>,
+    /// The grimoire buckets taken (2–3 distinct; same Connoisseur allowance).
+    pub grimoire: Vec<GrimoireBucket>,
+    /// The reserved (guaranteed) grimoire spells: at most one, two for the
+    /// Reservist; each must belong to a taken bucket's role-group. The pantry
+    /// is always pure-roll.
+    pub reserves: Vec<SpellKind>,
+}
+
 /// The fully-revealed attributes of an ingredient, as shown in a hand (to its
 /// owner), on an Expose, or at the depile (to everyone). Ingredients in the
 /// cauldron are NOT sent as `IngredientView` during play — they are hidden

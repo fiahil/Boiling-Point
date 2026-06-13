@@ -10,6 +10,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use boiling_point_protocol::frame::PendingDecision;
 use boiling_point_protocol::vocab::{Color, SpellKind};
 use boiling_point_protocol::{CardId, ClientMessage, PlayerId, ServerMessage};
 
@@ -78,7 +79,10 @@ pub async fn run_seat<C: Connection>(
     let mut out = SeatOutcome::default();
     let mut rounds: Vec<RoundObservation> = Vec::new();
     let mut current: Option<RoundObservation> = None;
-    let mut acted: Option<(u8, u8)> = None;
+    // The (round, wave, kind) already answered — the kind discriminant keeps
+    // the pre-game frames apart (the brewer pick and the draft both arrive as
+    // round 0, wave 0).
+    let mut acted: Option<(u8, u8, std::mem::Discriminant<PendingDecision>)> = None;
     let mut pending_commit: Option<CardId> = None;
     let mut last_wave_all_passed = false;
     // Who passed in earlier waves of the open round (fold-to-safety candidates).
@@ -126,10 +130,11 @@ pub async fn run_seat<C: Connection>(
                 decision,
             } => {
                 // A refresh of an already-answered decision never re-acts.
-                if acted == Some((round_number, wave_number)) {
+                let kind = std::mem::discriminant(&decision);
+                if acted == Some((round_number, wave_number, kind)) {
                     continue;
                 }
-                acted = Some((round_number, wave_number));
+                acted = Some((round_number, wave_number, kind));
 
                 let frame = FrameContext {
                     round_number,
@@ -140,7 +145,7 @@ pub async fn run_seat<C: Connection>(
                 let budget = cfg.budget.budget_for(&frame);
                 let (answer, resolution) = match cfg.policy.route(&frame.decision) {
                     Policy::Scripted(scripted) if scripted.is_legal(&frame.decision) => {
-                        (scripted, Resolution::Brain)
+                        (scripted.clone(), Resolution::Brain)
                     }
                     // An illegal script degrades exactly like an illegal answer.
                     Policy::Scripted(_) => {
@@ -179,6 +184,9 @@ pub async fn run_seat<C: Connection>(
                     // The pick is final on receipt; the table assignment
                     // arrives in the BrewersRevealed broadcast.
                     Answer::BrewerPick { .. } => {}
+                    // The submission is final on receipt; the public recipes
+                    // arrive in the RecipesRevealed broadcast.
+                    Answer::ApothecaryDraft { .. } => {}
                 }
                 if let Some(emote) = brain.emote(&view, &cfg.emote_palette) {
                     conn.send(&ClientMessage::Emote { emote }).await?;
@@ -280,6 +288,11 @@ pub async fn run_seat<C: Connection>(
                     me: Some(view.me),
                     my_color: Some(view.my_color),
                     brewers: view.brewers.iter().map(|b| (b.player, b.brewer)).collect(),
+                    recipes: view
+                        .recipes
+                        .iter()
+                        .map(|r| (r.player, r.recipe.clone()))
+                        .collect(),
                     rounds: std::mem::take(&mut rounds),
                     winners,
                     final_scores: final_scores
@@ -302,6 +315,11 @@ pub async fn run_seat<C: Connection>(
         me: Some(view.me),
         my_color: Some(view.my_color),
         brewers: view.brewers.iter().map(|b| (b.player, b.brewer)).collect(),
+        recipes: view
+            .recipes
+            .iter()
+            .map(|r| (r.player, r.recipe.clone()))
+            .collect(),
         rounds,
         completed: false,
         ..GameObservation::default()
@@ -459,6 +477,7 @@ mod tests {
         let policy = HostPolicy {
             wave_commit: Policy::Scripted(Answer::pass()),
             brewer_pick: Policy::Delegated,
+            apothecary_draft: Policy::Delegated,
         };
         let (outcome, sent, brain_calls, fallback_calls) = run_with_policy(policy).await;
         assert_eq!(brain_calls, 0, "the brain must never see a scripted kind");
@@ -482,6 +501,7 @@ mod tests {
                 spell: None,
             }),
             brewer_pick: Policy::Delegated,
+            apothecary_draft: Policy::Delegated,
         };
         let (outcome, sent, brain_calls, fallback_calls) = run_with_policy(policy).await;
         assert_eq!(brain_calls, 0);

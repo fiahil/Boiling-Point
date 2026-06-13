@@ -34,11 +34,12 @@ impl LabelStats {
     }
 }
 
-/// One persona × Brewer matrix cell: outcomes of the games in which a seat
-/// with this label actually picked this Brewer (`boom2-brewers`).
+/// One matrix cell on a secondary axis (persona × Brewer, persona ×
+/// deck-archetype): outcomes of the games in which a seat with this label
+/// carried this axis value.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
 pub struct BrewerCell {
-    /// Games this (label, Brewer) pairing was seated in.
+    /// Games this (label, axis-value) pairing was seated in.
     pub games: usize,
     /// Win credits (co-winners each count).
     pub wins: usize,
@@ -100,6 +101,10 @@ pub struct CellStats {
     /// by seat label then by the Brewer the seat **actually picked**. Ordered
     /// maps keep the same seed byte-identical.
     pub brewer_matrix: BTreeMap<String, BTreeMap<String, BrewerCell>>,
+    /// The persona × deck-archetype win/break matrix (`boom2-apothecary`):
+    /// outcomes keyed by seat label then by the archetype the seat was
+    /// **configured to draft** (the bot legalizes the plan per frame).
+    pub archetype_matrix: BTreeMap<String, BTreeMap<String, BrewerCell>>,
     /// How often each modifier was drawn.
     pub modifier_draws: BTreeMap<String, usize>,
 }
@@ -122,6 +127,7 @@ impl CellStats {
         let mut by_label: BTreeMap<String, LabelStats> = BTreeMap::new();
         let mut wins_by_color: BTreeMap<String, usize> = BTreeMap::new();
         let mut brewer_matrix: BTreeMap<String, BTreeMap<String, BrewerCell>> = BTreeMap::new();
+        let mut archetype_matrix: BTreeMap<String, BTreeMap<String, BrewerCell>> = BTreeMap::new();
         let mut modifier_draws: BTreeMap<String, usize> = BTreeMap::new();
 
         for game in &cell.games {
@@ -143,6 +149,12 @@ impl CellStats {
                     .find(|s| s.player == player)
                     .and_then(|s| s.brewer.clone())
             };
+            let archetype_of = |player| {
+                game.seats
+                    .iter()
+                    .find(|s| s.player == player)
+                    .and_then(|s| s.deck_archetype.clone())
+            };
             for seat in &game.seats {
                 let entry = by_label.entry(seat.label.clone()).or_default();
                 entry.decisions += seat.decisions as u64;
@@ -152,6 +164,14 @@ impl CellStats {
                         .entry(seat.label.clone())
                         .or_default()
                         .entry(brewer.clone())
+                        .or_default()
+                        .games += 1;
+                }
+                if let Some(archetype) = &seat.deck_archetype {
+                    archetype_matrix
+                        .entry(seat.label.clone())
+                        .or_default()
+                        .entry(archetype.clone())
                         .or_default()
                         .games += 1;
                 }
@@ -173,6 +193,12 @@ impl CellStats {
                         if let (Some(brewer), Some(cell)) =
                             (brewer_of(*detonator), brewer_matrix.get_mut(&label))
                             && let Some(entry) = cell.get_mut(&brewer)
+                        {
+                            entry.detonations += 1;
+                        }
+                        if let (Some(archetype), Some(cell)) =
+                            (archetype_of(*detonator), archetype_matrix.get_mut(&label))
+                            && let Some(entry) = cell.get_mut(&archetype)
                         {
                             entry.detonations += 1;
                         }
@@ -200,6 +226,12 @@ impl CellStats {
                     if let (Some(brewer), Some(cell)) =
                         (brewer_of(*winner), brewer_matrix.get_mut(&label))
                         && let Some(entry) = cell.get_mut(&brewer)
+                    {
+                        entry.wins += 1;
+                    }
+                    if let (Some(archetype), Some(cell)) =
+                        (archetype_of(*winner), archetype_matrix.get_mut(&label))
+                        && let Some(entry) = cell.get_mut(&archetype)
                     {
                         entry.wins += 1;
                     }
@@ -232,6 +264,7 @@ impl CellStats {
             by_label,
             wins_by_color,
             brewer_matrix,
+            archetype_matrix,
             modifier_draws,
         }
     }
@@ -240,10 +273,22 @@ impl CellStats {
     /// the mutual-balance read (no Brewer may break ANY persona, so the
     /// cross-label fold is the headline number; the matrix holds the detail).
     pub fn brewer_totals(&self) -> BTreeMap<String, BrewerCell> {
+        Self::axis_totals(&self.brewer_matrix)
+    }
+
+    /// Per-deck-archetype aggregates across every label — the
+    /// no-degenerate-archetype read (`boom2-apothecary`).
+    pub fn archetype_totals(&self) -> BTreeMap<String, BrewerCell> {
+        Self::axis_totals(&self.archetype_matrix)
+    }
+
+    fn axis_totals(
+        matrix: &BTreeMap<String, BTreeMap<String, BrewerCell>>,
+    ) -> BTreeMap<String, BrewerCell> {
         let mut totals: BTreeMap<String, BrewerCell> = BTreeMap::new();
-        for cells in self.brewer_matrix.values() {
-            for (brewer, cell) in cells {
-                let t = totals.entry(brewer.clone()).or_default();
+        for cells in matrix.values() {
+            for (key, cell) in cells {
+                let t = totals.entry(key.clone()).or_default();
                 t.games += cell.games;
                 t.wins += cell.wins;
                 t.detonations += cell.detonations;

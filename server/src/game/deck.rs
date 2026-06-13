@@ -79,6 +79,17 @@ impl Pantry {
         }
     }
 
+    /// Wrap an already-composed (and already-shuffled) deck — the Apothecary
+    /// realizer's output (`boom2-apothecary`). The seed drives only future
+    /// discard reshuffles; the realized draw order is kept as given.
+    pub fn from_cards(cards: Vec<Ingredient>, seed: u64) -> Self {
+        Pantry {
+            draw: cards,
+            discard: Vec::new(),
+            rng: StdRng::seed_from_u64(seed),
+        }
+    }
+
     /// Number of ingredients remaining in the draw pile.
     pub fn draw_remaining(&self) -> usize {
         self.draw.len()
@@ -166,6 +177,13 @@ impl Grimoire {
         }
         let mut rng = StdRng::seed_from_u64(seed);
         spells.shuffle(&mut rng);
+        Grimoire { draw: spells }
+    }
+
+    /// Wrap an already-composed (and already-shuffled) spell deck — the
+    /// Apothecary realizer's output (`boom2-apothecary`). No RNG: the grimoire
+    /// never reshuffles.
+    pub fn from_spells(spells: Vec<Spell>) -> Self {
         Grimoire { draw: spells }
     }
 

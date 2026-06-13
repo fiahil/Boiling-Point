@@ -197,6 +197,7 @@ mod tests {
         cfg.timing.wave1_ms = 2_000;
         cfg.timing.wave_ms = 2_000;
         cfg.timing.brewer_pick_ms = 2_000;
+        cfg.timing.draft_ms = 2_000;
         let reg = cfg.build_registry().unwrap();
         (Arc::new(reg), Arc::new(cfg))
     }
@@ -219,6 +220,14 @@ mod tests {
                 } => {
                     let pick = ClientMessage::PickBrewer { brewer: options[0] };
                     let _ = seat.to_server.send(codec::encode(&pick).unwrap()).await;
+                }
+                ServerMessage::DecisionFrame {
+                    decision:
+                        boiling_point_protocol::PendingDecision::ApothecaryDraft { suggested, .. },
+                    ..
+                } => {
+                    let submit = ClientMessage::SubmitRecipe { recipe: suggested };
+                    let _ = seat.to_server.send(codec::encode(&submit).unwrap()).await;
                 }
                 ServerMessage::WaveOpened { wave_number, .. } => {
                     if wave_number == 1 {

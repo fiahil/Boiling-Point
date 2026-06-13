@@ -17,9 +17,11 @@
 
 use boiling_point_protocol::ServerMessage;
 use boiling_point_protocol::frame::PendingDecision;
-use boiling_point_protocol::server::{Contribution, PlayerBrewer, PlayerPublic, PlayerScore};
+use boiling_point_protocol::server::{
+    Contribution, PlayerBrewer, PlayerPublic, PlayerRecipe, PlayerScore,
+};
 use boiling_point_protocol::vocab::{
-    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind,
+    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, Recipe, SpellKind,
 };
 use boiling_point_protocol::{CardId, PlayerId};
 
@@ -48,6 +50,9 @@ pub struct SeatView {
     /// Every player's public Brewer identity (empty until the pre-game pick
     /// closes; `boom2-brewers`).
     pub brewers: Vec<PlayerBrewer>,
+    /// Every player's public recipe (empty until the pre-game draft closes;
+    /// `boom2-apothecary`). Buckets and reserves only — never realized cards.
+    pub recipes: Vec<PlayerRecipe>,
     /// This seat's own private ingredient hand (topped up each wave).
     pub ingredients: Vec<HandIngredient>,
     /// This seat's own private spell hand (the hoard).
@@ -94,6 +99,7 @@ impl SeatView {
             my_color,
             players: Vec::new(),
             brewers: Vec::new(),
+            recipes: Vec::new(),
             ingredients: Vec::new(),
             spells: Vec::new(),
             round_number: 0,
@@ -174,6 +180,14 @@ impl SeatView {
             .iter()
             .find(|b| b.player == id)
             .map(|b| b.brewer)
+    }
+
+    /// A player's public recipe, once the draft has closed.
+    pub fn recipe_of(&self, id: PlayerId) -> Option<&Recipe> {
+        self.recipes
+            .iter()
+            .find(|r| r.player == id)
+            .map(|r| &r.recipe)
     }
 
     /// This seat's current cumulative score, if known.
@@ -432,10 +446,33 @@ impl SeatView {
                     format!("Brewers revealed: {}.", lines.join("; "))
                 });
             }
+            ServerMessage::RecipesRevealed { recipes } => {
+                self.recipes = recipes.clone();
+                let recipes = recipes.clone();
+                self.log(|v| {
+                    let lines: Vec<String> = recipes
+                        .iter()
+                        .map(|r| {
+                            let pantry: Vec<&str> =
+                                r.recipe.pantry.iter().map(|b| b.name()).collect();
+                            let grimoire: Vec<&str> =
+                                r.recipe.grimoire.iter().map(|b| b.name()).collect();
+                            format!(
+                                "{} took {} / {}",
+                                v.name_of(r.player),
+                                pantry.join("+"),
+                                grimoire.join("+"),
+                            )
+                        })
+                        .collect();
+                    format!("Recipes revealed: {}.", lines.join("; "))
+                });
+            }
             ServerMessage::StateSnapshot {
                 round_number,
                 players,
                 brewers,
+                recipes,
                 scores,
                 active_modifiers,
                 contributions,
@@ -448,6 +485,7 @@ impl SeatView {
                 self.round_number = *round_number;
                 self.players = players.clone();
                 self.brewers = brewers.clone();
+                self.recipes = recipes.clone();
                 self.scores = scores.clone();
                 self.active_modifiers = active_modifiers.clone();
                 self.contributions = contributions.clone();

@@ -2,22 +2,21 @@
 //! deck-archetype cells to run and how many games per cell — never only full
 //! factorial runs.
 //!
-//! The persona axis (bot archetypes + epsilon, or an agent persona) and the
-//! **Brewer axis** (`boom2-brewers`) are live. A seat's `brewer` is a pick
-//! *preference*: the server deals random disjoint pairs, so the seat picks the
-//! named Brewer whenever it is offered (else the first option), and the
-//! persona × Brewer matrix aggregates by the **actual** picks — every cell
-//! contributes signal regardless of the deal. The deck-archetype axis stays
-//! declared-but-rejected until `boom2-apothecary` lands: a spec that sets it
-//! fails loudly instead of silently running a different experiment than the
-//! one written down.
+//! All three axes are live. The persona axis is the bot archetype + epsilon
+//! (or an agent persona). A seat's `brewer` is a pick *preference*: the server
+//! deals random disjoint pairs, so the seat picks the named Brewer whenever it
+//! is offered (else the first option), and the persona × Brewer matrix
+//! aggregates by the **actual** picks — every cell contributes signal
+//! regardless of the deal. A seat's `deck_archetype` (`boom2-apothecary`)
+//! names a planned recipe ([`crate::bot::DeckArchetype`]) the bot legalizes
+//! against its own draft frame — the matrix keys on the configured plan.
 
 use serde::Deserialize;
 
-use boiling_point_protocol::vocab::Brewer;
+use boiling_point_protocol::vocab::{Brewer, Recipe};
 
 use crate::ClientError;
-use crate::bot::Archetype;
+use crate::bot::{Archetype, DeckArchetype};
 
 /// One seat's experimental assignment within a cell.
 #[derive(Debug, Clone, Deserialize)]
@@ -29,8 +28,9 @@ pub struct SeatSpec {
     /// offers it. Must name one of the 12 Brewers.
     #[serde(default)]
     pub brewer: Option<String>,
-    /// Scripted deck-archetype (the Apothecary draft as an experimental
-    /// variable) — reserved axis; rejected until `boom2-apothecary` lands.
+    /// Deck-archetype plan (bot seats only): the named recipe this seat drafts
+    /// (legalized against its frame). Must name one of the
+    /// [`DeckArchetype`] presets.
     #[serde(default)]
     pub deck_archetype: Option<String>,
 }
@@ -39,6 +39,14 @@ impl SeatSpec {
     /// The parsed Brewer preference (validated by [`SampleSpec::validate`]).
     pub fn brewer_preference(&self) -> Option<Brewer> {
         self.brewer.as_deref().and_then(Brewer::by_name)
+    }
+
+    /// The parsed deck plan (validated by [`SampleSpec::validate`]).
+    pub fn deck_plan(&self) -> Option<Recipe> {
+        self.deck_archetype
+            .as_deref()
+            .and_then(DeckArchetype::by_name)
+            .map(|a| a.recipe())
     }
 }
 
@@ -198,11 +206,24 @@ impl SampleSpec {
                         )));
                     }
                 }
-                if seat.deck_archetype.is_some() {
-                    return Err(ClientError::Config(format!(
-                        "cell '{}': the deck-archetype axis is not yet available (lands with boom2-apothecary)",
-                        cell.name
-                    )));
+                if let Some(name) = &seat.deck_archetype {
+                    if DeckArchetype::by_name(name).is_none() {
+                        return Err(ClientError::Config(format!(
+                            "cell '{}': unknown deck archetype '{name}' (one of: {})",
+                            cell.name,
+                            DeckArchetype::ALL
+                                .iter()
+                                .map(|a| a.name())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )));
+                    }
+                    if seat.brain.is_agent() {
+                        return Err(ClientError::Config(format!(
+                            "cell '{}': a deck archetype requires a bot brain (the agent drafts for itself)",
+                            cell.name
+                        )));
+                    }
                 }
             }
         }
@@ -240,8 +261,7 @@ mod tests {
     }
 
     /// The Brewer axis is live: a valid preference parses; an unknown name or
-    /// an agent-seat preference fails loudly; the deck-archetype axis is still
-    /// reserved.
+    /// an agent-seat preference fails loudly.
     #[test]
     fn brewer_axis_is_live_and_validated() {
         let spec = SampleSpec::from_toml(
@@ -299,11 +319,33 @@ mod tests {
         assert!(agent_pref.to_string().contains("bot brain"), "{agent_pref}");
     }
 
-    /// The not-yet-landed deck-archetype axis fails loudly instead of silently
-    /// no-oping.
+    /// The deck-archetype axis is live (`boom2-apothecary`): a preset name
+    /// parses to its planned recipe; an unknown name or an agent-seat plan
+    /// fails loudly.
     #[test]
-    fn reserved_axes_are_rejected() {
-        let err = SampleSpec::from_toml(
+    fn deck_archetype_axis_is_live_and_validated() {
+        let spec = SampleSpec::from_toml(
+            r#"
+            root_seed = 7
+            [[cells]]
+            name = "x"
+            games = 1
+            seats = [
+                { brain = "bot", archetype = "cautious", deck_archetype = "warlord" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+            ]
+            "#,
+        )
+        .expect("a live deck-archetype axis parses");
+        assert_eq!(
+            spec.cells[0].seats[0].deck_plan(),
+            Some(DeckArchetype::Warlord.recipe())
+        );
+        assert_eq!(spec.cells[0].seats[1].deck_plan(), None);
+
+        let unknown = SampleSpec::from_toml(
             r#"
             root_seed = 7
             [[cells]]
@@ -318,7 +360,27 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("boom2-apothecary"), "{err}");
+        assert!(
+            unknown.to_string().contains("unknown deck archetype"),
+            "{unknown}"
+        );
+
+        let agent_plan = SampleSpec::from_toml(
+            r#"
+            root_seed = 7
+            [[cells]]
+            name = "x"
+            games = 1
+            seats = [
+                { brain = "agent", deck_archetype = "fortress" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+                { brain = "bot", archetype = "cautious" },
+            ]
+            "#,
+        )
+        .unwrap_err();
+        assert!(agent_plan.to_string().contains("bot brain"), "{agent_plan}");
     }
 
     /// Bad shapes are rejected: seat counts, unknown archetypes, agent flags.

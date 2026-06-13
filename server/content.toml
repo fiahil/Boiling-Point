@@ -6,7 +6,12 @@
 # server validates this file at startup and refuses to run if it is inconsistent
 # (see `config::ContentConfig::validate`).
 #
-# Two decks per player, fixed until the Apothecary (boom2-apothecary) ships:
+# Two decks per player. Since boom2-apothecary the live deck source is the
+# REALIZER: players draft 2-3 buckets per ledger and the server composes a
+# fixed-size, capped, colour-anchored deck from the [[pantry_bucket]] families
+# below (grimoire role-groups are protocol metadata), re-rolled every game.
+# The fixed [[ingredient]]/[[spell]] decks below remain as the harness/teaching
+# fallback (games constructed without recipes deal them unchanged):
 # - the PANTRY: 30 ingredients, colour-anchored (~75% own colour + a toolkit of
 #   off-colour and wild cards), instantiated per player from the slots below;
 # - the GRIMOIRE: 20 spells across the 15 kinds, hoarded (drawn at round start).
@@ -16,6 +21,9 @@ wave1_ms = 25000
 wave_ms = 15000
 # The pre-game brewer pick (1 of 2); closes early once all four picks land.
 brewer_pick_ms = 20000
+# The pre-game Apothecary draft (two ledgers + reserve); closes early once all
+# four recipes land; a straggler gets the frame's suggested quick-pick.
+draft_ms = 30000
 
 [boiling_point]
 # The load-bearing dial. The design's starting window was 20-32; the revived
@@ -182,6 +190,120 @@ cap_max = 3      # a Capped detonator eats at most -3
 hex_bonus = 5    # the hexed take -5 extra on any explosion
 harvest_bonus = 3 # +3 on top of a won pot
 forage_draws = 2 # Forage draws 2 spells
+
+# ---- The Apothecary (boom2-apothecary): realizer caps + bucket families ----
+#
+# Buckets feed AVAILABILITY, not distribution: a bucket makes its family
+# eligible; the realizer composes the fixed-size deck (pantry 30 / grimoire 20)
+# and enforces every cap, so any legal pick-set yields a legal deck. Premium
+# caps are ABSOLUTE (a bigger deck adds commons, not premium). The realizer's
+# commons filler is the Sage + Mint families (the own-colour staples).
+# Every number here is `[needs playtesting]`.
+
+[apothecary]
+toolkit_cap = 7   # off-colour + wild cards, <=25% of the 30-card pantry
+treasure_cap = 3  # 3-point ingredients, absolute
+god_tier_cap = 2  # Peek / the Wards, absolute (~10% of the 20-spell grimoire)
+
+# Pantry bucket families: the archetypes the realizer rolls from per bucket.
+# Colour slots derive from the bucket (Ochre -> off-colour, Wisp -> wild, the
+# rest -> own colour). Volatility 0-7, points 0-3 (3 = Treasure, capped).
+
+[[pantry_bucket]]
+bucket = "Sage" # low-volatility own-colour safe pushes
+cards = [
+  { volatility = 0, points = 1 },
+  { volatility = 1, points = 1 },
+  { volatility = 1, points = 2 },
+]
+
+[[pantry_bucket]]
+bucket = "Mint" # balanced mid-vol / mid-point own-colour
+cards = [
+  { volatility = 2, points = 1 },
+  { volatility = 2, points = 2 },
+  { volatility = 3, points = 2 },
+]
+
+[[pantry_bucket]]
+bucket = "Nightshade" # high-volatility own-colour weapons
+cards = [
+  { volatility = 5, points = 1 },
+  { volatility = 6, points = 1 },
+  { volatility = 7, points = 1 },
+]
+
+[[pantry_bucket]]
+bucket = "Saffron" # high-point own-colour treasure (realizer caps at 3)
+cards = [
+  { volatility = 2, points = 3 },
+  { volatility = 3, points = 3 },
+  { volatility = 4, points = 3 },
+]
+
+[[pantry_bucket]]
+bucket = "Chalk" # 0-point ghosts: volatility + colour presence, no prize
+cards = [
+  { volatility = 1, points = 0 },
+  { volatility = 2, points = 0 },
+  { volatility = 4, points = 0 },
+]
+
+[[pantry_bucket]]
+bucket = "Bilberry" # greedy own-colour: high-vol AND high-point
+cards = [
+  { volatility = 4, points = 2 },
+  { volatility = 5, points = 2 },
+  { volatility = 6, points = 3 },
+]
+
+[[pantry_bucket]]
+bucket = "Ochre" # off-colour toolkit (kingmake / misdirect)
+cards = [
+  { volatility = 1, points = 2 },
+  { volatility = 2, points = 1 },
+  { volatility = 4, points = 3 },
+]
+
+[[pantry_bucket]]
+bucket = "Wisp" # wilds: colourless pure danger / go-neutral
+cards = [
+  { volatility = 2, points = 0 },
+  { volatility = 3, points = 0 },
+  { volatility = 7, points = 0 },
+]
+
+[[pantry_bucket]]
+bucket = "Bramble" # named-combo pairs (teeth land with boom2-compounding)
+cards = [
+  { volatility = 2, points = 1 },
+  { volatility = 3, points = 1 },
+  { volatility = 3, points = 2 },
+]
+
+[[pantry_bucket]]
+bucket = "Honey" # count-threshold cards (teeth land with boom2-compounding)
+cards = [
+  { volatility = 1, points = 1 },
+  { volatility = 2, points = 2 },
+  { volatility = 3, points = 2 },
+]
+
+[[pantry_bucket]]
+bucket = "Hellebore" # ultra-low-vol tiptoe (dodge detonator liability)
+cards = [
+  { volatility = 0, points = 1 },
+  { volatility = 0, points = 2 },
+  { volatility = 1, points = 2 },
+]
+
+[[pantry_bucket]]
+bucket = "Embercap" # escalating cards (teeth land with boom2-compounding)
+cards = [
+  { volatility = 3, points = 1 },
+  { volatility = 4, points = 1 },
+  { volatility = 5, points = 2 },
+]
 
 # ---- Cauldron modifier pool: 20 copies, dramatic ones rarer ----
 # Offsets are still v1-scaled; rescaling them to the 20-32 boiling-point range

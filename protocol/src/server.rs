@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::frame::PendingDecision;
 use crate::ids::{EmoteId, GroupCode, PlayerId};
 use crate::vocab::{
-    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind,
+    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, Recipe, SpellKind,
 };
 
 /// Public, per-player lobby/table information (never includes hand contents).
@@ -39,6 +39,17 @@ pub struct PlayerBrewer {
     pub player: PlayerId,
     /// Their chosen Brewer (public from before the first wave).
     pub brewer: Brewer,
+}
+
+/// One player's public recipe — a single (player, recipe) pair, used instead
+/// of a map for stable wire order. The recipe (buckets + reserves) is public;
+/// the realized decks never cross the wire (`boom2-apothecary`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlayerRecipe {
+    /// The player.
+    pub player: PlayerId,
+    /// Their submitted (or defaulted) recipe.
+    pub recipe: Recipe,
 }
 
 /// One member's line in a group's live standings.
@@ -188,6 +199,14 @@ pub enum ServerMessage {
     BrewersRevealed {
         /// Each seated player's chosen Brewer, in seating order.
         brewers: Vec<PlayerBrewer>,
+    },
+    /// The pre-game Apothecary draft closed: every player's public recipe,
+    /// published to the whole table before deck realization and the first
+    /// wave (`boom2-apothecary`). Only the recipes are public — the realized
+    /// cards and draw order stay hidden, owner included. (broadcast)
+    RecipesRevealed {
+        /// Each seated player's recipe, in seating order.
+        recipes: Vec<PlayerRecipe>,
     },
     /// The recipient owes a decision: the pending decision kind and its complete
     /// legal action set (see [`crate::frame`]). Sent whenever a decision opens,
@@ -355,6 +374,8 @@ pub enum ServerMessage {
         players: Vec<PlayerPublic>,
         /// Every player's public Brewer (empty before the brewer phase closes).
         brewers: Vec<PlayerBrewer>,
+        /// Every player's public recipe (empty before the draft closes).
+        recipes: Vec<PlayerRecipe>,
         /// Current cumulative scores.
         scores: Vec<PlayerScore>,
         /// Active cauldron modifiers.
