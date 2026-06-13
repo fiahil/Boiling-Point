@@ -162,6 +162,7 @@ mod tests {
             color: Color::Ruby,
             volatility: vol,
             points: 0,
+            compounding: None,
         }
     }
 

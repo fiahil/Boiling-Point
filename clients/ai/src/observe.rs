@@ -32,6 +32,19 @@ pub struct RoundObservation {
     pub folded_safe: Vec<PlayerId>,
     /// The modifier revealed at the start of this round, if any.
     pub modifier: Option<ModifierKind>,
+    /// Named combos that fired this round (`boom2-compounding`).
+    pub combo_fires: u32,
+    /// Count-thresholds that paid off this round (`boom2-compounding`).
+    pub threshold_fires: u32,
+    /// Combo-half cards present in the pot at settle — the combo-content
+    /// exposure (`boom2-compounding`).
+    pub combo_halves: u32,
+    /// Combo halves whose partner was absent for their owner — the dead-draw
+    /// signal (a lone half is a plain card, never a penalty).
+    pub lone_combo_halves: u32,
+    /// Total compounding bonus points narrated this round (combo + threshold) —
+    /// the snowball proxy against the scored pot value.
+    pub compounding_points: u32,
 }
 
 impl RoundObservation {
@@ -49,6 +62,11 @@ impl RoundObservation {
             ended_all_pass: false,
             folded_safe: Vec::new(),
             modifier: None,
+            combo_fires: 0,
+            threshold_fires: 0,
+            combo_halves: 0,
+            lone_combo_halves: 0,
+            compounding_points: 0,
         }
     }
 }

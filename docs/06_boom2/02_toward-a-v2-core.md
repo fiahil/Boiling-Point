@@ -573,6 +573,70 @@ stress).
 
 ---
 
+## Compounding as built + the third harness derivation (2026-06-13, `boom2-compounding`)
+
+O3 shipped: ingredients gained an optional `Compounding` tag (protocol v8) and
+the depile now narrates what fired. Implementation decisions worth recording
+beyond the spec:
+
+- **Two legible classes, one snowball-prone class withheld.** *Count-threshold*
+  (Honey, `+1 pt per card past the 5th`, off the **public** count) and *named
+  combo* (Bramble, Sage+Mint, `+2 when both halves are in the pot`) ship.
+  **Colour-synergy is deliberately not authored** — its cap is structural (no
+  such ingredient exists); if added later it MUST be capped or Peek-gated
+  (spec `boom-compounding`). This is the Principle-III "start with the legible
+  classes" call.
+- **Effective volatility is the seam.** Combo-added volatility (Alchemist only)
+  lands on the **completing** (latest-played) half and flows through
+  `PotIngredient::effective_volatility()`, so it feeds the *same-wave* explosion
+  check, the fatal-wave sort, and the depile climb with no parallel path — the
+  contract the combat core specified up front. Point bonuses (combo + threshold)
+  stay off `color_points` (the Double Down / Sour snapshot reads pure Votes) and
+  fold in only at scoring via `Pot::scored_color_points`.
+- **Combos are bonuses, never requirements.** A lone half is a plain card (no
+  bonus, no penalty); a pair fires **once per owner** even with extra copies
+  (anti-snowball); the bonus credits the owner's colour. The three compounding
+  Brewers are now live: Herbalist fires a combo from one half, Distiller treats
+  the pot as 2 cards larger for thresholds, Alchemist adds volatility on a fire.
+
+**Third harness derivation (1,800 games, default content `fingerprint
+87d3064e98a444d5`, seed 20260613, three cells):** a mixed baseline, one Chemist
+(Bramble+Honey+Sage, a new archetype) vs a mixed field, and a four-Chemist
+mirror. New harness metrics: combo/threshold fires per round, the lone-combo-half
+(dead-draw) rate, compounding points per round, and compounding's share of the
+scored pot — with a new `compounding_snowball` smell (flags share > 40%).
+
+- **Compounding seasons the pot; it does not become it.** The new snowball smell
+  **never fired**: compounding's share of the scored pot ran **19.2%** (baseline)
+  → 13.8% (vs-field) → **36.3%** at the four-Chemist maximum, all under the 40%
+  cap. The core is intact — the mixed baseline holds **41.5% explosion** (target
+  40–50%), 0% freeze, matching the pre-compounding economy.
+- **Thresholds carry the weight; combos rarely connect.** Honey fired 0.65–2.73
+  times/round (5–18 bonus pts/round); Bramble combos fired only **0.04–0.14
+  times/round** because both halves seldom co-occur in an owner-unknown deck —
+  the **lone-half rate is 70–96%**. This is the bonus-not-requirement design
+  working (no dead-draw feel-bad — a lone half just plays normally), but it means
+  the Bramble teeth are dull at the shipped `+2`. Headline tuning candidate for
+  human playtests: a larger combo bonus, or leaning on the Herbalist (one-half
+  fire) to make Bramble matter.
+- **The Chemist deck is low-volatility and freeze-prone in a mirror.** Four
+  Chemists explode ~0% and freeze 64% (Sage/Honey/Bramble are all low-vol);
+  vs a field the cautious Chemist over-wins (55%) on a safe deck + threshold
+  payoffs. This is a **deck-composition** read (the same freeze artifact the
+  apothecary mirror documented), not a compounding-magnitude problem — the
+  mirror cell is the maximal-pressure snowball probe, not a balance verdict.
+- The standing **runaway_pots** smell fired as it has since the combat core
+  (the fat-pot points-curve work is still pending and untouched here).
+
+**Verdict (per Principle IV):** ship the compounding magnitudes untuned — they
+are conservative and structurally snowball-free (share < 40% even at the
+four-Chemist maximum), and the core economy is unmoved. The watch item is the
+**dull Bramble combo** (fires too rarely to feel meaningful); thresholds land
+well. Numbers stay `[needs playtesting]`. Rerun:
+`cargo run --release -p boiling-point-ai-client --features harness --bin balance_tester -- --spec clients/ai/specs/compounding-sample.toml`.
+
+---
+
 ## Pointers
 
 - Rationale & alternatives: [`06_depth-and-complexity.md`](01_depth-and-complexity.md)

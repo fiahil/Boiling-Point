@@ -8,6 +8,8 @@
 //! - [`pot`]: the accumulating round pot (running total, colour adjustments),
 //! - [`modifiers`]: the cumulative modifier stack,
 //! - [`brewers`]: the per-Brewer rule bends (`boom2-brewers`),
+//! - [`compounding`]: in-pot ingredient interactions (`boom2-compounding`) —
+//!   count-threshold scoring and named-combo bonuses,
 //! - [`realizer`]: the Apothecary deck realizer (`boom2-apothecary`) — recipes
 //!   to fixed-size, capped, colour-anchored decks, re-rolled per game,
 //! - [`spells`]: Instant resolution, Active prime/fire, ward/Hex/Harvest fires,
@@ -16,6 +18,7 @@
 
 pub mod brewers;
 pub mod card;
+pub mod compounding;
 pub mod deathmatch;
 pub mod deck;
 pub mod modifiers;

@@ -2273,6 +2273,7 @@ mod tests {
             color,
             volatility: vol,
             points: pts,
+            compounding: None,
         }
     }
 

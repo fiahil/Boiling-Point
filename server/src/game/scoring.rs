@@ -67,10 +67,11 @@ pub struct ExplosionResult {
 }
 
 /// The pot's scored value: (P + Bountiful per-card bonus) × Double Stakes
-/// multiplier. Used identically for a win payout and a detonator loss.
+/// multiplier. Used identically for a win payout and a detonator loss. P folds
+/// in compounding bonuses ([`Pot::scored_value`], `boom2-compounding`).
 pub fn pot_value(pot: &Pot, ctx: &ScoringContext) -> u32 {
     let additive =
-        pot.vote_points() + ctx.modifiers.pot_bonus_per_card(ctx.registry) * pot.card_count();
+        pot.scored_value() + ctx.modifiers.pot_bonus_per_card(ctx.registry) * pot.card_count();
     additive * ctx.modifiers.pot_multiplier(ctx.registry)
 }
 
@@ -79,11 +80,12 @@ pub fn pot_value(pot: &Pot, ctx: &ScoringContext) -> u32 {
 /// strictly-highest colour — splitting on ties, rounded down — then fire any
 /// winning Harvests.
 pub fn score_safe(pot: &Pot, ctx: &ScoringContext, primed: &mut [PrimedSpell]) -> SafeScore {
-    // Per-colour totals for player colours actually present in the pot.
+    // Per-colour totals for player colours actually present in the pot —
+    // votes + spell adjust + compounding bonuses (`boom2-compounding`).
     let present: Vec<(Color, u32)> = Color::PLAYER_COLORS
         .into_iter()
         .filter(|c| pot.color_present(*c))
-        .map(|c| (c, pot.color_points(c)))
+        .map(|c| (c, pot.scored_color_points(c)))
         .collect();
 
     let value = pot_value(pot, ctx);
@@ -233,10 +235,12 @@ mod tests {
                 color,
                 volatility: 1,
                 points,
+                compounding: None,
             },
             colorless: false,
             wave_number: 1,
             exposed: false,
+            compounding: crate::game::compounding::CardCompounding::default(),
         }
     }
 
@@ -412,6 +416,30 @@ mod tests {
         assert_eq!(e.deltas[&all[2]], -4);
         assert_eq!(e.deltas[&all[1]], 0, "non-detonators lose nothing");
         assert_eq!(e.deltas[&all[3]], 0, "spectators lose nothing");
+    }
+
+    /// Compounding bonus points join a colour's scored total, lifting both the
+    /// pot value and dominance (`boom2-compounding`): a Honey payoff carries a
+    /// colour from behind to the win.
+    #[test]
+    fn compounding_points_lift_the_pot_and_dominance() {
+        use crate::game::compounding::CardCompounding;
+        let reg = registry();
+        let (all, owner, pc) = players();
+        let mods = ActiveModifiers::new();
+        // Ruby 2 vs Sapphire 3 on printed points — Sapphire leads. A +2 Honey
+        // bonus on the Ruby card flips it (Ruby 4) and grows the pot.
+        let mut pot = pot_with(&[(all[0], Color::Ruby, 2), (all[1], Color::Sapphire, 3)]);
+        pot.cards[0].compounding = CardCompounding {
+            bonus_points: 2,
+            bonus_volatility: 0,
+            fire: None,
+        };
+        let mut primed = Vec::new();
+        let s = score_safe(&pot, &ctx(&mods, &reg, &owner, &pc, &all), &mut primed);
+        assert_eq!(s.winners, vec![Color::Ruby], "the bonus flips dominance");
+        assert_eq!(s.pot_value, 7, "2 + 2 bonus + 3 = 7");
+        assert_eq!(s.awards[&all[0]], 7);
     }
 
     /// A winning Harvest cashes in on top of the take.

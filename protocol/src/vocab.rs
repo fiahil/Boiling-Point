@@ -510,6 +510,54 @@ pub struct Recipe {
     pub reserves: Vec<SpellKind>,
 }
 
+/// One of the two named halves of a combo pair (change `boom2-compounding`).
+/// A pair fires when **both** halves are in the pot — or one half for a
+/// Herbalist. Which side a card is only matters for completing the pair; the
+/// bonus is symmetric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ComboHalf {
+    /// The first half of the pair.
+    A,
+    /// The second half of the pair.
+    B,
+}
+
+/// A named combo pair (change `boom2-compounding`): the drafting names that earn
+/// mechanical teeth. Each pair has an `A` and a `B` half; both in the pot pay a
+/// bonus. A tag only — the bonus magnitude lives in the server engine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ComboPair {
+    /// Sage + Mint — the canonical first pair (the O3 example).
+    SageMint,
+}
+
+/// An ingredient's optional **compounding** tag (change `boom2-compounding`):
+/// the in-pot interaction it participates in. A tag only — the scoring (and the
+/// Alchemist's combo volatility) lives in the server engine. Knowable
+/// compounding (count thresholds keyed off the public card count) is plannable;
+/// combos are *bonuses, never requirements* (a lone half is a normal card).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum Compounding {
+    /// Honey: scores `per_card` extra points for each card in the pot **past**
+    /// the `past`-th (keyed off the public card count — plannable, legible).
+    CountThreshold {
+        /// The pot size beyond which the bonus accrues.
+        past: u8,
+        /// Extra points per card past the threshold.
+        per_card: u8,
+    },
+    /// Bramble: one half of a named pair. The pair pays a bonus when **both**
+    /// halves are in the pot (one half for a Herbalist). A lone half plays as a
+    /// normal ingredient with no penalty.
+    Combo {
+        /// Which named pair this card belongs to.
+        pair: ComboPair,
+        /// Which half of the pair this card is.
+        half: ComboHalf,
+    },
+}
+
 /// The fully-revealed attributes of an ingredient, as shown in a hand (to its
 /// owner), on an Expose, or at the depile (to everyone). Ingredients in the
 /// cauldron are NOT sent as `IngredientView` during play — they are hidden
@@ -522,6 +570,10 @@ pub struct IngredientView {
     pub volatility: u8,
     /// Point value when played as a colored Vote (0–3). Zero when played colorless.
     pub points: u8,
+    /// The ingredient's compounding tag, if any (`boom2-compounding`) — what
+    /// in-pot interaction it participates in. `None` for a plain ingredient.
+    #[serde(default)]
+    pub compounding: Option<Compounding>,
 }
 
 /// An ingredient in a player's own hand: its id (for committing) plus its

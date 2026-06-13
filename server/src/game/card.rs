@@ -7,7 +7,7 @@
 //! in the pot and carries no points or volatility of its own.
 
 use boiling_point_protocol::CardId;
-use boiling_point_protocol::vocab::{Color, IngredientView, SpellKind};
+use boiling_point_protocol::vocab::{Color, Compounding, IngredientView, SpellKind};
 
 /// A concrete ingredient instance in a pantry, a hand, or the pot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +20,9 @@ pub struct Ingredient {
     pub volatility: u8,
     /// Point value when played as a colored Vote (0–3).
     pub points: u8,
+    /// The in-pot interaction this ingredient participates in, if any
+    /// (`boom2-compounding`). `None` for a plain ingredient.
+    pub compounding: Option<Compounding>,
 }
 
 impl Ingredient {
@@ -29,6 +32,7 @@ impl Ingredient {
             color: self.color,
             volatility: self.volatility,
             points: self.points,
+            compounding: self.compounding,
         }
     }
 }

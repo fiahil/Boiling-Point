@@ -81,6 +81,28 @@ pub struct Contribution {
     pub count: u8,
 }
 
+/// Compounding that fired on a depile entry (change `boom2-compounding`): what
+/// in-pot interaction paid off on this card and by how much, so the depile can
+/// explain a combo/threshold contribution — and any effective-volatility shift
+/// that moved the detonator. Only the **completing** card of a combo carries
+/// the fire (a lone half narrates nothing — it is a plain card).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum CompoundingFire {
+    /// A named combo paid off (both halves present, or one for a Herbalist).
+    Combo {
+        /// Bonus points the combo added to this card's colour.
+        bonus_points: u8,
+        /// Bonus volatility the combo added (non-zero only for an Alchemist).
+        bonus_volatility: u8,
+    },
+    /// A count-threshold paid off in a large pot.
+    Threshold {
+        /// Bonus points the threshold added to this card's colour.
+        bonus_points: u8,
+    },
+}
+
 /// One revealed ingredient in a depile, in **ascending effective-volatility**
 /// order (the "fuse climb" — every round, boom or safe).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,11 +116,15 @@ pub struct DepileEntry {
     /// The 1-based wave it was played in (fatal-wave liability is wave-scoped).
     pub wave_number: u8,
     /// Cumulative volatility after this entry in the sorted climb (rises toward —
-    /// or past — the revealed boiling point).
+    /// or past — the revealed boiling point). Includes any combo-added volatility.
     pub running_volatility: u8,
     /// Whether this entry is liable for the explosion (a detonator card). Always
     /// `false` on a safe brew.
     pub liable: bool,
+    /// The compounding that fired on this card, if any (`boom2-compounding`):
+    /// the combo/threshold contribution narrated to the table.
+    #[serde(default)]
+    pub compounding: Option<CompoundingFire>,
 }
 
 /// A fired Active spell, narrated at resolution (wards and Hex on an explosion,

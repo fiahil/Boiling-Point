@@ -273,19 +273,26 @@ cards = [
   { volatility = 7, points = 0 },
 ]
 
+# Bramble = named-combo pairs (boom2-compounding): the Sage+Mint pair pays +2
+# points when BOTH halves are in the pot (one half for a Herbalist; an Alchemist
+# also adds volatility). A lone half is a plain card — bonus, never requirement.
+# A plain filler keeps the bucket from being pure pair-halves. [needs playtesting]
 [[pantry_bucket]]
-bucket = "Bramble" # named-combo pairs (teeth land with boom2-compounding)
+bucket = "Bramble"
 cards = [
-  { volatility = 2, points = 1 },
-  { volatility = 3, points = 1 },
+  { volatility = 2, points = 1, compounding = { kind = "Combo", pair = "SageMint", half = "A" } },
+  { volatility = 3, points = 1, compounding = { kind = "Combo", pair = "SageMint", half = "B" } },
   { volatility = 3, points = 2 },
 ]
 
+# Honey = count-threshold cards (boom2-compounding): +1 point per card in the pot
+# past the 5th, keyed off the PUBLIC card count (plannable). A Distiller treats
+# the pot as 2 cards larger. The vol-3 card is a plain filler. [needs playtesting]
 [[pantry_bucket]]
-bucket = "Honey" # count-threshold cards (teeth land with boom2-compounding)
+bucket = "Honey"
 cards = [
-  { volatility = 1, points = 1 },
-  { volatility = 2, points = 2 },
+  { volatility = 1, points = 1, compounding = { kind = "CountThreshold", past = 5, per_card = 1 } },
+  { volatility = 2, points = 2, compounding = { kind = "CountThreshold", past = 5, per_card = 1 } },
   { volatility = 3, points = 2 },
 ]
 

@@ -363,10 +363,12 @@ mod tests {
                 color: Color::Ruby,
                 volatility: 2,
                 points: points as u8,
+                compounding: None,
             },
             colorless: false,
             wave_number: 1,
             exposed: false,
+            compounding: super::super::compounding::CardCompounding::default(),
         });
         let snapshot: HashMap<Color, u32> = Color::PLAYER_COLORS
             .into_iter()

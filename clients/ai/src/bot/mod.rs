@@ -521,6 +521,7 @@ mod tests {
                     color,
                     volatility: vol,
                     points: pts,
+                    compounding: None,
                 },
             },
             colorless_allowed: true,
