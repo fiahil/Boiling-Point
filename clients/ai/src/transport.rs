@@ -18,7 +18,9 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use boiling_point_protocol::client::PROTOCOL_VERSION;
 use boiling_point_protocol::vocab::Color;
-use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage, codec};
+use boiling_point_protocol::{
+    AccountCredential, ClientMessage, GroupCode, PlayerId, ServerMessage, codec,
+};
 
 use crate::ClientError;
 
@@ -171,28 +173,36 @@ pub struct Joined {
 /// Perform the entry handshake: the FIRST frame on the connection is the entry
 /// message (never a heartbeat), then await `GroupJoined`. Any pre-join `Error`
 /// fails the entry.
+///
+/// `account` is an optional sign-in credential (`boom2-identity`): present it to
+/// adopt an account's durable identity (a rated seat), or pass `None` to play
+/// anonymously — the default one-tap path.
 pub async fn enter<C: Connection>(
     conn: &mut C,
     mode: &EntryMode,
     display_name: &str,
     session_token: Option<String>,
+    account: Option<AccountCredential>,
 ) -> Result<Joined, ClientError> {
     let entry = match mode {
         EntryMode::Join(code) => ClientMessage::JoinGroup {
             protocol_version: PROTOCOL_VERSION,
             display_name: display_name.to_string(),
             session_token,
+            account_credential: account,
             group_code: code.clone(),
         },
         EntryMode::Create => ClientMessage::CreateGroup {
             protocol_version: PROTOCOL_VERSION,
             display_name: display_name.to_string(),
             session_token,
+            account_credential: account,
         },
         EntryMode::Enqueue => ClientMessage::EnqueueMatch {
             protocol_version: PROTOCOL_VERSION,
             display_name: display_name.to_string(),
             session_token,
+            account_credential: account,
         },
     };
     conn.send(&entry).await?;

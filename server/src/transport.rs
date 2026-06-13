@@ -24,8 +24,10 @@ use boiling_point_protocol::client::PROTOCOL_VERSION;
 use boiling_point_protocol::server::ErrorCode;
 use boiling_point_protocol::{ClientMessage, PlayerId, ServerMessage, codec};
 
+use crate::lobby::accounts::{Account, AccountError, SignInCredential};
 use crate::lobby::group::GroupCommand;
-use crate::lobby::{GroupRegistry, MatchQueue, SessionStore};
+use crate::lobby::{AccountStore, GroupRegistry, MatchQueue, SessionStore};
+use crate::rating::RatingStore;
 
 /// Minimum spacing between accepted actions on one connection.
 const RATE_LIMIT: Duration = Duration::from_millis(100);
@@ -46,6 +48,11 @@ pub struct AppState {
     /// plays games normally and skips the post-game write). The groups receive
     /// it via [`GroupRegistry::with_pool`].
     pub pool: Option<PgPool>,
+    /// The shared account store (capability `player-accounts`). The same `Arc`
+    /// the registry and queue hold, so identity is consistent everywhere.
+    pub accounts: Arc<AccountStore>,
+    /// The shared rating store (capability `player-rating`).
+    pub ratings: Arc<RatingStore>,
 }
 
 /// Build the Axum router for the WebSocket endpoint.
@@ -182,6 +189,11 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
             ClientMessage::Heartbeat => {
                 let _ = out_tx.send(ServerMessage::Heartbeat).await;
             }
+            // Account upgrades are serviced in any state and never forwarded to a
+            // group: they bind the current player id without disrupting the session.
+            _ if is_account_op(&msg) => {
+                handle_account_op(&state, session.player, &msg, &out_tx).await;
+            }
             // Re-entry: bind to a (different) group on the same socket. Rejected
             // while already bound — the client must `LeaveGroup` first.
             _ if is_entry(&msg) => {
@@ -280,7 +292,52 @@ async fn handle_first_entry(
         | ClientMessage::EnqueueMatch { session_token, .. } => session_token.as_deref(),
         _ => None,
     };
-    let (player, token) = state.sessions.authenticate(session_token);
+    let credential = match &entry {
+        ClientMessage::CreateGroup {
+            account_credential, ..
+        }
+        | ClientMessage::JoinGroup {
+            account_credential, ..
+        }
+        | ClientMessage::EnqueueMatch {
+            account_credential, ..
+        } => account_credential.clone(),
+        _ => None,
+    };
+
+    // Resolve the identity: a presented account credential **signs in** (adopting
+    // the account's durable player id); otherwise authenticate anonymously (the
+    // default). An anonymous player who already owns an account is recognised too.
+    let (player, token, account) = match credential {
+        Some(cred) => match state.accounts.sign_in(&SignInCredential::from(cred)).await {
+            Ok(account) => {
+                // Bind a session token to the account's durable player so a later
+                // token-only reconnect still resolves to the same identity.
+                let token = state.sessions.issue(account.player_id);
+                (account.player_id, token, Some(account))
+            }
+            Err(AccountError::AuthFailed(msg)) => {
+                send_error(out, ErrorCode::AuthFailed, &msg).await;
+                return None;
+            }
+            Err(AccountError::Conflict) => {
+                send_error(out, ErrorCode::AccountConflict, "account conflict").await;
+                return None;
+            }
+        },
+        None => {
+            let (player, token) = state.sessions.authenticate(session_token);
+            (player, token, state.accounts.account_for_player(player))
+        }
+    };
+
+    // If this connection has an account, confirm it (no token to re-reveal on a
+    // sign-in/resume) and send the rating readout — before binding, so a queued
+    // (enqueue) connection gets it without waiting for a table to fill.
+    if let Some(account) = account {
+        send_account_intro(out, account, &state.ratings, None).await;
+    }
+
     let session = Session {
         player,
         token,
@@ -291,6 +348,94 @@ async fn handle_first_entry(
         binding: Some(group_tx),
         ..session
     })
+}
+
+/// Send the account confirmation and the rating readout to a connection. The
+/// `account_token` is `Some` only for a freshly minted device account.
+async fn send_account_intro(
+    out: &mpsc::Sender<ServerMessage>,
+    account: Account,
+    ratings: &RatingStore,
+    account_token: Option<String>,
+) {
+    let _ = out
+        .send(ServerMessage::AccountEstablished {
+            account_id: account.id,
+            account_type: account.kind,
+            player_id: account.player_id,
+            account_token,
+        })
+        .await;
+    let _ = out
+        .send(ServerMessage::RatingUpdate {
+            rating: ratings.view(account.id),
+        })
+        .await;
+}
+
+/// Handle an in-session account upgrade (`CreateDeviceAccount` / `LinkOAuth`):
+/// bind the connection's **current** player id to a durable account (never
+/// changing the identity), then confirm + send the rating readout. Errors are
+/// reported and the connection continues anonymously.
+async fn handle_account_op(
+    state: &AppState,
+    player: PlayerId,
+    msg: &ClientMessage,
+    out: &mpsc::Sender<ServerMessage>,
+) {
+    match msg {
+        ClientMessage::CreateDeviceAccount => {
+            match state.accounts.create_device_account(player).await {
+                Ok((account, token)) => {
+                    send_account_intro(out, account, &state.ratings, Some(token)).await;
+                }
+                Err(AccountError::Conflict) => {
+                    send_error(
+                        out,
+                        ErrorCode::AccountConflict,
+                        "this player already has an account",
+                    )
+                    .await;
+                }
+                Err(AccountError::AuthFailed(msg)) => {
+                    send_error(out, ErrorCode::AuthFailed, &msg).await;
+                }
+            }
+        }
+        ClientMessage::LinkOAuth {
+            provider,
+            access_token,
+        } => match state
+            .accounts
+            .link_oauth(player, *provider, access_token)
+            .await
+        {
+            Ok(account) => {
+                send_account_intro(out, account, &state.ratings, None).await;
+            }
+            Err(AccountError::AuthFailed(msg)) => {
+                send_error(out, ErrorCode::AuthFailed, &msg).await;
+            }
+            Err(AccountError::Conflict) => {
+                send_error(
+                    out,
+                    ErrorCode::AccountConflict,
+                    "that account is already linked elsewhere — sign in instead",
+                )
+                .await;
+            }
+        },
+        _ => {}
+    }
+}
+
+/// Whether a message is an in-session account upgrade (handled regardless of
+/// group binding, never forwarded to a group).
+fn is_account_op(msg: &ClientMessage) -> bool {
+    matches!(
+        msg,
+        ClientMessage::CreateDeviceAccount | ClientMessage::LinkOAuth { .. }
+    )
 }
 
 /// Bind an established session to a group via an entry message (no version
@@ -397,6 +542,8 @@ fn message_kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::FillGroup => "FillGroup",
         ClientMessage::CancelFill => "CancelFill",
         ClientMessage::LeaveGroup => "LeaveGroup",
+        ClientMessage::CreateDeviceAccount => "CreateDeviceAccount",
+        ClientMessage::LinkOAuth { .. } => "LinkOAuth",
         ClientMessage::Heartbeat => "Heartbeat",
     }
 }
@@ -437,7 +584,13 @@ mod tests {
         config.timing.draft_ms = 250;
         let registry = Arc::new(config.build_registry().unwrap());
         let config = Arc::new(config);
-        let groups = Arc::new(GroupRegistry::new(registry, config));
+        // Shared identity stores (the same `Arc`s reach the registry, queue, and
+        // transport) — so a sign-in resolves, and a rated game's update flows back.
+        let accounts = Arc::new(AccountStore::new());
+        let ratings = Arc::new(RatingStore::default());
+        let groups = Arc::new(
+            GroupRegistry::new(registry, config).with_identity(accounts.clone(), ratings.clone()),
+        );
         let queue = Arc::new(MatchQueue::new(groups.clone()));
         groups.set_queue(&queue);
         let state = AppState {
@@ -446,6 +599,8 @@ mod tests {
             queue,
             conn_timeout,
             pool: None,
+            accounts,
+            ratings,
         };
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -460,6 +615,7 @@ mod tests {
             protocol_version: version,
             display_name: name.into(),
             session_token: None,
+            account_credential: None,
         }
     }
 
@@ -499,6 +655,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             display_name: name.into(),
             session_token: None,
+            account_credential: None,
             group_code: code,
         }
     }
@@ -508,6 +665,7 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             display_name: name.into(),
             session_token: None,
+            account_credential: None,
         }
     }
 
@@ -1168,6 +1326,187 @@ mod tests {
         ));
         send(&mut ws, &ClientMessage::Heartbeat).await;
         assert!(matches!(recv(&mut ws).await, ServerMessage::Heartbeat));
+    }
+
+    /// Create-group entry presenting a device account credential (sign-in).
+    fn create_with_device(token: &str) -> ClientMessage {
+        ClientMessage::CreateGroup {
+            protocol_version: PROTOCOL_VERSION,
+            display_name: "resumed".into(),
+            session_token: None,
+            account_credential: Some(boiling_point_protocol::AccountCredential::Device {
+                account_token: token.into(),
+            }),
+        }
+    }
+
+    /// `boom2-identity` (capability `player-accounts`): a device-bound account
+    /// upgrade binds the current player id, and presenting its token on a fresh
+    /// connection resumes the same durable identity (the scenario "device-bound
+    /// account survives a session"). Verified end-to-end over the wire.
+    #[tokio::test]
+    async fn device_account_resumes_identity_across_connections() {
+        let url = start_server().await;
+        // Connect anonymously, create a group, then upgrade to a device account.
+        let (mut ws, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws, &create("solo", PROTOCOL_VERSION)).await;
+        let player1 = loop {
+            if let ServerMessage::GroupJoined { your_player_id, .. } = recv(&mut ws).await {
+                break your_player_id;
+            }
+        };
+        send(&mut ws, &ClientMessage::CreateDeviceAccount).await;
+        let (token, est_player) = loop {
+            match recv(&mut ws).await {
+                ServerMessage::AccountEstablished {
+                    account_token,
+                    player_id,
+                    ..
+                } => break (account_token, player_id),
+                _ => continue,
+            }
+        };
+        assert_eq!(
+            est_player, player1,
+            "the account binds the current player id"
+        );
+        let token = token.expect("a device account returns a durable token");
+        drop(ws);
+
+        // Reconnect on a fresh socket presenting the device credential → same id.
+        let (mut ws2, _) = connect_async(url).await.unwrap();
+        send(&mut ws2, &create_with_device(&token)).await;
+        // The account intro arrives, and the join confirms the SAME player id.
+        let mut saw_account = false;
+        let player2 = loop {
+            match recv(&mut ws2).await {
+                ServerMessage::AccountEstablished { player_id, .. } => {
+                    assert_eq!(player_id, player1);
+                    saw_account = true;
+                }
+                ServerMessage::GroupJoined { your_player_id, .. } => break your_player_id,
+                _ => continue,
+            }
+        };
+        assert!(saw_account, "a resumed account is confirmed on sign-in");
+        assert_eq!(
+            player2, player1,
+            "the device account resumed the durable identity on a new connection"
+        );
+    }
+
+    /// Like [`play_loop`], but after `GameOver` it waits briefly for the private
+    /// `RatingUpdate` the server sends to a rated seat. Returns the games_played
+    /// of that update, or `None` if the seat was unrated (no update arrived).
+    async fn play_then_rating(ws: &mut Ws) -> Option<u32> {
+        let mut hand: Vec<boiling_point_protocol::CardId> = Vec::new();
+        let mut over = false;
+        loop {
+            let next = if over {
+                // After GameOver, the rating readout follows almost immediately.
+                tokio::time::timeout(std::time::Duration::from_secs(2), recv_opt(ws))
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                recv_opt(ws).await
+            };
+            let msg = next?;
+            match msg {
+                ServerMessage::YourHand { ingredients, .. } => {
+                    hand = ingredients.iter().map(|c| c.id).collect();
+                }
+                ServerMessage::WaveOpened { .. } => {
+                    if let Some(&card) = hand.first() {
+                        hand.remove(0);
+                        send(
+                            ws,
+                            &ClientMessage::CommitIngredient {
+                                card,
+                                colorless: false,
+                            },
+                        )
+                        .await;
+                    } else {
+                        send(ws, &ClientMessage::CommitPass).await;
+                    }
+                }
+                ServerMessage::GameOver { .. } => over = true,
+                // The post-game readout (only after GameOver); the establishment
+                // readout sent on account creation (games_played 0) is ignored.
+                ServerMessage::RatingUpdate { rating } if over => {
+                    return Some(rating.games_played);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `boom2-identity` (capability `player-rating`): a full four-player game in
+    /// which every seat holds an account updates all four ratings and sends each
+    /// seat its fresh readout (games_played == 1). Verified end-to-end over the
+    /// wire — the rating update is server-authoritative and rides only the
+    /// finished result.
+    #[tokio::test]
+    async fn rated_game_emits_rating_updates_to_every_account() {
+        let url = start_server().await;
+
+        // Upgrade the current (entered) connection to a device account, draining
+        // up to the AccountEstablished confirmation.
+        async fn upgrade(ws: &mut Ws) {
+            send(ws, &ClientMessage::CreateDeviceAccount).await;
+            loop {
+                match recv(ws).await {
+                    ServerMessage::AccountEstablished { .. } => break,
+                    _ => continue,
+                }
+            }
+        }
+
+        // Set up all four sockets sequentially BEFORE any play task: p1 creates,
+        // p2–p4 join, and each upgrades to an account. The fourth join auto-starts
+        // the game, but every account is registered during setup, so all four are
+        // rated by GameOver regardless of timing.
+        let (mut ws1, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws1, &create("p1", PROTOCOL_VERSION)).await;
+        let code = loop {
+            if let ServerMessage::GroupJoined { group_code, .. } = recv(&mut ws1).await {
+                break group_code;
+            }
+        };
+        upgrade(&mut ws1).await;
+
+        let mut sockets = vec![ws1];
+        for i in 2..=4 {
+            let (mut ws, _) = connect_async(url.clone()).await.unwrap();
+            send(&mut ws, &join(&format!("p{i}"), code.clone())).await;
+            while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
+            upgrade(&mut ws).await;
+            sockets.push(ws);
+        }
+
+        // Now play all four to GameOver and collect each seat's rating readout.
+        let mut tasks = Vec::new();
+        for mut ws in sockets {
+            tasks.push(tokio::spawn(async move { play_then_rating(&mut ws).await }));
+        }
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            let mut all = Vec::new();
+            for t in tasks {
+                all.push(t.await.unwrap());
+            }
+            all
+        })
+        .await
+        .expect("the rated game completed before timeout");
+        assert_eq!(outcome.len(), 4);
+        for rated in &outcome {
+            assert_eq!(
+                *rated,
+                Some(1),
+                "every account seat received a rating readout for its first rated game"
+            );
+        }
     }
 
     use crate::observability::lifecycle::{SpanConsumer, SpanEvent, SpanEventKind};

@@ -169,6 +169,10 @@ pub fn boot_headless_game(
     }
     drop(cmd_tx); // the decoder tasks hold the only senders now
 
+    // The headless seam never signs in, so empty identity stores suffice (every
+    // seat is anonymous → no rating update); they are owned by the game task.
+    let accounts = crate::lobby::accounts::AccountStore::new();
+    let ratings = crate::rating::RatingStore::default();
     let game = tokio::spawn(async move {
         run_game(
             &registry,
@@ -179,6 +183,8 @@ pub fn boot_headless_game(
             &palette,
             seed,
             None,
+            &accounts,
+            &ratings,
         )
         .await
     });

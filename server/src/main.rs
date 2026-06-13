@@ -8,10 +8,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use boiling_point_protocol::AccountId;
 use boiling_point_server::admin::{self, AdminProjection, AdminState, OperatorAuth};
 use boiling_point_server::config::ContentConfig;
-use boiling_point_server::lobby::{GroupRegistry, MatchQueue, SessionStore};
+use boiling_point_server::lobby::accounts::{
+    AccountRecord, AccountStore, DisabledOAuthVerifier, HttpOAuthVerifier, OAuthVerifier,
+};
+use boiling_point_server::lobby::{GroupRegistry, MatchQueue, SessionStore, SkillBased};
 use boiling_point_server::observability;
+use boiling_point_server::persistence;
+use boiling_point_server::rating::{RatingStore, Skill};
 use boiling_point_server::transport::{AppState, app};
 use clap::Parser;
 
@@ -135,8 +141,73 @@ async fn main() {
         }
     };
 
-    let groups = Arc::new(GroupRegistry::new(registry, config).with_pool(pool.clone()));
-    let queue = Arc::new(MatchQueue::new(groups.clone()));
+    // The identity stack (`boom2-identity`). OAuth is the heaviest dependency and
+    // opt-in: with `BP_OAUTH_ENABLED` unset, OAuth sign-in is disabled (the HTTP
+    // verifier is never constructed) while device-bound and anonymous play work
+    // unchanged. The account and rating stores are shared (one `Arc` each) across
+    // the registry, queue, and transport so identity is consistent everywhere.
+    let oauth_enabled = std::env::var("BP_OAUTH_ENABLED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let verifier: Arc<dyn OAuthVerifier> = if oauth_enabled {
+        tracing::info!("OAuth sign-in enabled (Google/Discord)");
+        Arc::new(HttpOAuthVerifier::new())
+    } else {
+        tracing::info!("OAuth sign-in disabled (set BP_OAUTH_ENABLED=1 to enable)");
+        Arc::new(DisabledOAuthVerifier)
+    };
+    let accounts = Arc::new(AccountStore::with_verifier(verifier).with_pool(pool.clone()));
+    let ratings = Arc::new(RatingStore::default());
+
+    // Hydrate accounts + ratings from durable storage so identities and skill
+    // survive a restart. Best effort: a load failure logs and leaves the stores
+    // empty (anonymous play is unaffected).
+    if let Some(p) = &pool {
+        match persistence::load_accounts(p).await {
+            Ok(rows) => {
+                for (id, player_id, kind, device_token, oauth_provider, oauth_subject) in rows {
+                    accounts.hydrate(AccountRecord {
+                        id,
+                        player_id,
+                        kind,
+                        device_token,
+                        oauth_provider,
+                        oauth_subject,
+                    });
+                }
+                tracing::info!(accounts = accounts.len(), "hydrated accounts");
+            }
+            Err(e) => tracing::error!(error = %e, "failed to load accounts"),
+        }
+        match persistence::load_ratings(p).await {
+            Ok(rows) => {
+                for (account_id, mu, sigma, games) in rows {
+                    ratings.seed(
+                        AccountId(account_id),
+                        Skill { mu, sigma },
+                        games.max(0) as u32,
+                    );
+                }
+                tracing::info!(rated = ratings.len(), "hydrated ratings");
+            }
+            Err(e) => tracing::error!(error = %e, "failed to load ratings"),
+        }
+    }
+
+    let groups = Arc::new(
+        GroupRegistry::new(registry, config)
+            .with_pool(pool.clone())
+            .with_identity(accounts.clone(), ratings.clone()),
+    );
+    // Skill-based matchmaking (capability `lobby-and-matchmaking`): the queue uses
+    // the skill policy, which groups rated players by skill and falls back to
+    // first-come for unrated play (so anonymous matchmaking is unchanged).
+    let queue = Arc::new(MatchQueue::with_identity(
+        groups.clone(),
+        Arc::new(SkillBased),
+        accounts.clone(),
+        ratings.clone(),
+    ));
     // Wire the queue back into the registry so groups can request matchmaking fill.
     groups.set_queue(&queue);
 
@@ -177,6 +248,8 @@ async fn main() {
         queue,
         conn_timeout: Duration::from_secs(cli.conn_timeout_secs),
         pool,
+        accounts,
+        ratings,
     };
 
     let addr = cli.ws_addr;

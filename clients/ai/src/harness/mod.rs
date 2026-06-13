@@ -11,11 +11,13 @@
 //! construction; agent seats require the explicit flag and void the
 //! reproducibility guarantee.
 
+pub mod rating_sim;
 pub mod report;
 pub mod runner;
 pub mod spec;
 pub mod stats;
 
+pub use rating_sim::{Matching, SimConfig, SimReport, run_simulation, run_with_params};
 pub use report::{Report, Thresholds, fingerprint};
 pub use runner::{OutcomeSummary, RunOptions, SampleRun, TransportKind, run_sample};
 pub use spec::{BrainSpec, CellSpec, SampleSpec, SeatSpec};

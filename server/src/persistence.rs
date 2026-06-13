@@ -121,10 +121,94 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
         .bind(MIGRATION_LOCK_KEY)
         .execute(&mut *tx)
         .await?;
-    for migration in [include_str!("../migrations/0001_init.sql")] {
+    for migration in [
+        include_str!("../migrations/0001_init.sql"),
+        include_str!("../migrations/0002_accounts_and_ratings.sql"),
+    ] {
         sqlx::raw_sql(migration).execute(&mut *tx).await?;
     }
     tx.commit().await
+}
+
+/// Write-through an account on creation/link (idempotent on the id). Plain
+/// arguments so this layer stays decoupled from the lobby's account types.
+pub async fn upsert_account(
+    pool: &PgPool,
+    id: Uuid,
+    player_id: Uuid,
+    kind: &str,
+    device_token: Option<&str>,
+    oauth_provider: Option<&str>,
+    oauth_subject: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO accounts (id, player_id, kind, device_token, oauth_provider, oauth_subject) \
+         VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(id)
+    .bind(player_id)
+    .bind(kind)
+    .bind(device_token)
+    .bind(oauth_provider)
+    .bind(oauth_subject)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// Load every persisted account (boot-time hydrate). Returns rows as
+/// `(id, player_id, kind, device_token, oauth_provider, oauth_subject)`.
+#[allow(clippy::type_complexity)]
+pub async fn load_accounts(
+    pool: &PgPool,
+) -> Result<
+    Vec<(
+        Uuid,
+        Uuid,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )>,
+    sqlx::Error,
+> {
+    sqlx::query_as(
+        "SELECT id, player_id, kind, device_token, oauth_provider, oauth_subject FROM accounts",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Write-through an account's rating after a finished game (upsert).
+pub async fn persist_rating(
+    pool: &PgPool,
+    account_id: Uuid,
+    mu: f64,
+    sigma: f64,
+    games_played: u32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO account_ratings (account_id, mu, sigma, games_played, updated_at) \
+         VALUES ($1, $2, $3, $4, now()) \
+         ON CONFLICT (account_id) DO UPDATE \
+         SET mu = EXCLUDED.mu, sigma = EXCLUDED.sigma, \
+             games_played = EXCLUDED.games_played, updated_at = now()",
+    )
+    .bind(account_id)
+    .bind(mu)
+    .bind(sigma)
+    .bind(games_played as i32)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// Load every persisted rating (boot-time hydrate). Returns rows as
+/// `(account_id, mu, sigma, games_played)`.
+pub async fn load_ratings(pool: &PgPool) -> Result<Vec<(Uuid, f64, f64, i32)>, sqlx::Error> {
+    sqlx::query_as("SELECT account_id, mu, sigma, games_played FROM account_ratings")
+        .fetch_all(pool)
+        .await
 }
 
 /// Persist a completed game — the anonymous player records and the consolidated

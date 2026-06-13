@@ -33,6 +33,17 @@ impl SessionStore {
         self.tokens.insert(token.clone(), player);
         (player, token)
     }
+
+    /// Mint a fresh session token bound to a **specific** player id. Used after
+    /// an account sign-in (`boom2-identity`): the connection adopts the account's
+    /// durable player id, and this issues a session token that resolves to it, so
+    /// a later reconnect with just the session token still lands on the same
+    /// durable identity.
+    pub fn issue(&self, player: PlayerId) -> String {
+        let token = Uuid::new_v4().to_string();
+        self.tokens.insert(token.clone(), player);
+        token
+    }
 }
 
 #[cfg(test)]

@@ -25,7 +25,9 @@ use boiling_point_protocol::vocab::{ModifierKind, SpellKind};
 
 use crate::config::{ConfigError, ContentConfig};
 use crate::content::ContentRegistry;
+use crate::rating::RatingStore;
 
+use super::accounts::AccountStore;
 use super::codes::generate_code;
 use super::group::{GroupCommand, spawn};
 use super::matchmaking::MatchQueue;
@@ -140,6 +142,13 @@ pub struct GroupRegistry {
     /// Optional deterministic per-game seed source (tests/parity harnesses only);
     /// `None` ⇒ every game draws a fresh random seed.
     seeds: Option<Arc<dyn GameSeedSource>>,
+    /// The shared account store, threaded into every group for the post-game
+    /// rating update and the fill anchor-rating lookup. Defaults to an empty
+    /// store (no accounts ⇒ everyone unrated).
+    accounts: Arc<AccountStore>,
+    /// The shared rating store, threaded into every group for the post-game
+    /// rating update. Defaults to an empty store.
+    ratings: Arc<RatingStore>,
     /// The auto-match queue, for group fill. A `Weak` to avoid a reference cycle
     /// (the queue holds an `Arc<GroupRegistry>`); set once after both are built via
     /// [`set_queue`](GroupRegistry::set_queue). Unset in tests that don't matchmake,
@@ -169,6 +178,8 @@ impl GroupRegistry {
             }),
             pool: None,
             seeds: None,
+            accounts: Arc::new(AccountStore::new()),
+            ratings: Arc::new(RatingStore::default()),
             queue: OnceLock::new(),
         }
     }
@@ -178,6 +189,26 @@ impl GroupRegistry {
     pub fn with_pool(mut self, pool: Option<PgPool>) -> Self {
         self.pool = pool;
         self
+    }
+
+    /// Share the account + rating stores threaded into every group this registry
+    /// spawns (for the post-game rating update and fill anchor-rating lookup).
+    /// These MUST be the same `Arc`s the rest of the server holds (the queue's
+    /// skill policy and the transport's auth) so identity is consistent.
+    pub fn with_identity(mut self, accounts: Arc<AccountStore>, ratings: Arc<RatingStore>) -> Self {
+        self.accounts = accounts;
+        self.ratings = ratings;
+        self
+    }
+
+    /// The shared account store.
+    pub fn accounts(&self) -> &Arc<AccountStore> {
+        &self.accounts
+    }
+
+    /// The shared rating store.
+    pub fn ratings(&self) -> &Arc<RatingStore> {
+        &self.ratings
     }
 
     /// Attach a deterministic per-game seed source (tests/parity harnesses only).
@@ -201,11 +232,19 @@ impl GroupRegistry {
         let _ = self.queue.set(Arc::downgrade(queue));
     }
 
-    /// Open `code` for matchmaking fill, needing `needed` more players. A no-op if
-    /// no queue is wired (e.g. in unit tests).
-    pub async fn open_fill(&self, code: GroupCode, tx: mpsc::Sender<GroupCommand>, needed: usize) {
+    /// Open `code` for matchmaking fill, needing `needed` more players, with the
+    /// searching group's mean `anchor_rating` (or `None` if unrated) so the skill
+    /// policy can pull similarly-rated guests. A no-op if no queue is wired (e.g.
+    /// in unit tests).
+    pub async fn open_fill(
+        &self,
+        code: GroupCode,
+        tx: mpsc::Sender<GroupCommand>,
+        needed: usize,
+        anchor_rating: Option<i32>,
+    ) {
         if let Some(queue) = self.queue.get().and_then(Weak::upgrade) {
-            queue.open_fill(code, tx, needed).await;
+            queue.open_fill(code, tx, needed, anchor_rating).await;
         }
     }
 
@@ -232,6 +271,8 @@ impl GroupRegistry {
                     content.config.clone(),
                     content.palette.clone(),
                     self.pool.clone(),
+                    self.accounts.clone(),
+                    self.ratings.clone(),
                 );
                 self.groups.insert(code.clone(), handle.tx.clone());
                 crate::observability::metric::group_created();

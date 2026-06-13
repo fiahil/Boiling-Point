@@ -29,6 +29,15 @@ Moved to v2:
 **Ordering:** persistent accounts first (the unlock), then rating, then
 skill-based matchmaking on top of rating.
 
+**Status — landed** (change [`boom2-identity`](../openspec/changes/boom2-identity/)):
+all three layers ship additively over the v1 seams. Persistent accounts
+(device-bound anonymous + OAuth) bind the existing player UUID; an FFA Weng-Lin
+rating attaches to accounts and updates from finished games; the auto-match queue
+gains a pluggable skill policy that falls back to first-come for unrated play.
+Anonymous, one-tap play stays the default throughout. Design rationale and the
+Principle-IV rating-simulation tuning record:
+[03_architecture/05_identity-and-rating.md](03_architecture/05_identity-and-rating.md).
+
 ---
 
 ## Deployment, Delivery & CI/CD

@@ -269,6 +269,7 @@ name = "boiling-point-server"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "async-trait",
  "axum",
  "boiling-point-protocol",
  "chrono",
@@ -281,6 +282,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "rand 0.8.6",
+ "reqwest",
  "rmp-serde",
  "serde",
  "serde_json",

@@ -240,6 +240,8 @@ async fn run_frame_driven_game(seed: u64) -> Vec<FrameBotReport> {
         it.next().unwrap(),
     );
     let palette: HashSet<u16> = HashSet::new();
+    let accounts = boiling_point_server::lobby::accounts::AccountStore::new();
+    let ratings = boiling_point_server::rating::RatingStore::default();
     let game = run_game(
         &registry,
         &cfg,
@@ -249,6 +251,8 @@ async fn run_frame_driven_game(seed: u64) -> Vec<FrameBotReport> {
         &palette,
         seed,
         None,
+        &accounts,
+        &ratings,
     );
     let (_end, r0, r1, r2, r3) = tokio::time::timeout(std::time::Duration::from_secs(60), async {
         tokio::join!(game, b0, b1, b2, b3)
@@ -334,6 +338,8 @@ async fn non_enumerated_spell_probes_are_rejected() {
     let me = PlayerId(Uuid::from_u128(1));
 
     let palette: HashSet<u16> = HashSet::new();
+    let accounts = boiling_point_server::lobby::accounts::AccountStore::new();
+    let ratings = boiling_point_server::rating::RatingStore::default();
     let game = run_game(
         &registry,
         &cfg,
@@ -343,6 +349,8 @@ async fn non_enumerated_spell_probes_are_rejected() {
         &palette,
         99,
         None,
+        &accounts,
+        &ratings,
     );
 
     // Seats 1–3 pass every frame; seat 0 probes each frame with an unheld

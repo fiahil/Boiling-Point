@@ -29,6 +29,14 @@ name = "balance_tester"
 path = "src/bin/balance_tester.rs"
 required-features = ["harness"]
 
+# The rated-population simulation (boom2-identity §IV): validates the rating
+# model + skill matching against synthetic finishing orders. Harness-only (it
+# links the server's `rating`/`policy` modules).
+[[bin]]
+name = "rating_sim"
+path = "src/bin/rating_sim.rs"
+required-features = ["harness"]
+
 [features]
 # The firewall default: the client proper depends on `protocol/` alone — no
 # server crate, no server types (Constitution I / design D2). CI proves it by

@@ -196,7 +196,17 @@ pub async fn run_filler_seat(
             return report;
         }
     };
-    let joined = match enter(&mut conn, &settings.entry, &settings.display_name, None).await {
+    // The seat-filler plays anonymously (the one-tap default); accounts/rating
+    // are for human players (`boom2-identity`), surfaced by the web client.
+    let joined = match enter(
+        &mut conn,
+        &settings.entry,
+        &settings.display_name,
+        None,
+        None,
+    )
+    .await
+    {
         Ok(joined) => joined,
         Err(e) => {
             report.exit = SeatExit::ConnectionLost(e.to_string());
@@ -273,6 +283,7 @@ pub async fn run_filler_seat(
                         &EntryMode::Join(joined.group_code.clone()),
                         &settings.display_name,
                         Some(joined.session_token.clone()),
+                        None,
                     )
                     .await
                     {

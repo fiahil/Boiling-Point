@@ -9,6 +9,7 @@
 //! [`server::ServerMessage::Depile`] (which reveals it **every** round, boom and
 //! safe, per the boom2 combat core).
 
+pub mod account;
 pub mod client;
 pub mod codec;
 pub mod frame;
@@ -16,6 +17,7 @@ pub mod ids;
 pub mod server;
 pub mod vocab;
 
+pub use account::{AccountCredential, AccountId, AccountType, OAuthProvider, RatingView};
 pub use client::{ClientMessage, PROTOCOL_VERSION, ProtocolVersion};
 pub use codec::{CodecError, decode, decode_json, encode, encode_json};
 pub use frame::{CastableSpell, PendingDecision, PlayableIngredient, TargetOptions};
@@ -64,17 +66,30 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "alice".into(),
                 session_token: None,
+                account_credential: None,
                 group_code: GroupCode("BREW-7K3F".into()),
             },
             ClientMessage::CreateGroup {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "bob".into(),
                 session_token: Some("tok".into()),
+                account_credential: Some(crate::account::AccountCredential::Device {
+                    account_token: "dev-tok".into(),
+                }),
             },
             ClientMessage::EnqueueMatch {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "cara".into(),
                 session_token: None,
+                account_credential: Some(crate::account::AccountCredential::OAuth {
+                    provider: crate::account::OAuthProvider::Google,
+                    access_token: "ya29.fake".into(),
+                }),
+            },
+            ClientMessage::CreateDeviceAccount,
+            ClientMessage::LinkOAuth {
+                provider: crate::account::OAuthProvider::Discord,
+                access_token: "disc.fake".into(),
             },
             ClientMessage::CommitIngredient {
                 card: CardId(7),
@@ -142,6 +157,25 @@ mod tests {
                 }],
             },
             ServerMessage::LeftGroup,
+            ServerMessage::AccountEstablished {
+                account_id: crate::account::AccountId(uuid::Uuid::from_u128(7)),
+                account_type: crate::account::AccountType::DeviceBound,
+                player_id: p,
+                account_token: Some("dev-tok-abc".into()),
+            },
+            ServerMessage::AccountEstablished {
+                account_id: crate::account::AccountId(uuid::Uuid::from_u128(8)),
+                account_type: crate::account::AccountType::OAuth,
+                player_id: p,
+                account_token: None,
+            },
+            ServerMessage::RatingUpdate {
+                rating: crate::account::RatingView {
+                    display: 18,
+                    games_played: 3,
+                    provisional: true,
+                },
+            },
             ServerMessage::GroupSearching { needed: 1 },
             ServerMessage::StandingsUpdate {
                 members: vec![MemberStanding {

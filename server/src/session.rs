@@ -860,6 +860,9 @@ async fn collect_late_commit(
 /// Run one full game to completion for the given seats. Owns the group's command
 /// receiver for the duration so it can collect commits within wave timers. When
 /// `pool` is `Some`, the completed game and its replay are persisted at `GameOver`.
+/// `accounts`/`ratings` are the shared identity stores: at `GameOver` the FFA
+/// rating update is applied to the seats that have accounts (anonymous seats are
+/// left unrated) and each rated seat is sent its fresh [`RatingView`].
 #[allow(clippy::too_many_arguments)]
 pub async fn run_game(
     registry: &ContentRegistry,
@@ -870,6 +873,8 @@ pub async fn run_game(
     palette: &HashSet<u16>,
     seed: u64,
     pool: Option<&PgPool>,
+    accounts: &crate::lobby::accounts::AccountStore,
+    ratings: &crate::rating::RatingStore,
 ) -> GameEnd {
     let ids: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
     let mut gone: HashSet<PlayerId> = HashSet::new();
@@ -1571,6 +1576,17 @@ pub async fn run_game(
     )
     .await;
 
+    // Post-game FFA rating update (capability `player-rating`). Server-
+    // authoritative and derived only from the authoritative finishing order
+    // (Principle I). Two rules from the spec:
+    //   * task 2.3 — only seats with **accounts** are rated; anonymous seats are
+    //     left untouched and do not affect anyone's durable rating.
+    //   * task 2.2 — the **incomplete-game rule**: a game that declared no winner
+    //     (mass abandon / abort) does not move ratings at all.
+    if !winners.is_empty() {
+        update_ratings(&players, game.scores(), accounts, ratings, pool).await;
+    }
+
     // Hand the final seats (with reconnections' refreshed channels), the
     // still-absent players, and the winners back to the persistent group, which
     // returns the survivors to its lobby and folds the result into standings.
@@ -1578,6 +1594,75 @@ pub async fn run_game(
         players,
         gone,
         winners,
+    }
+}
+
+/// Tie-aware finishing ranks from final scores (standard competition ranking:
+/// rank = 1 + the number of players who scored strictly higher, so ties share a
+/// rank). This is the FFA rating's finishing order.
+fn finishing_ranks(scores: &HashMap<PlayerId, i32>) -> HashMap<PlayerId, u32> {
+    scores
+        .iter()
+        .map(|(p, s)| {
+            let ahead = scores.values().filter(|other| **other > *s).count() as u32;
+            (*p, 1 + ahead)
+        })
+        .collect()
+}
+
+/// Apply the finished game's finishing order to the rated participants, persist
+/// the new ratings when a database is configured, and send each rated seat its
+/// fresh [`boiling_point_protocol::RatingView`]. Seats without an account take no
+/// part (task 2.3); a table with fewer than two rated accounts is a no-op (there
+/// is nothing to compare).
+async fn update_ratings(
+    players: &[SeatInfo],
+    scores: &HashMap<PlayerId, i32>,
+    accounts: &crate::lobby::accounts::AccountStore,
+    ratings: &crate::rating::RatingStore,
+    pool: Option<&PgPool>,
+) {
+    let ranks = finishing_ranks(scores);
+    // The rated seats, in seating order: (seat index, account id, finish rank).
+    let rated: Vec<(usize, boiling_point_protocol::AccountId, u32)> = players
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            accounts
+                .account_for_player(p.id)
+                .map(|a| (i, a.id, *ranks.get(&p.id).unwrap_or(&1)))
+        })
+        .collect();
+    let ordered: Vec<(boiling_point_protocol::AccountId, u32)> =
+        rated.iter().map(|(_, a, r)| (*a, *r)).collect();
+    let updated = ratings.apply_finished_game(&ordered);
+    if updated.is_empty() {
+        return; // fewer than two rated accounts — nothing to rate
+    }
+    // Durable write-through when a database is configured (best-effort: a failed
+    // write logs but never disrupts play — the in-memory rating already updated).
+    if let Some(pool) = pool {
+        for (account, stored) in &updated {
+            if let Err(e) = crate::persistence::persist_rating(
+                pool,
+                account.0,
+                stored.skill.mu,
+                stored.skill.sigma,
+                stored.games,
+            )
+            .await
+            {
+                tracing::error!(account.id = %account.0, error = %e, "failed to persist rating");
+            }
+        }
+    }
+    // The private rating readout to each rated seat.
+    for (i, account, _) in rated {
+        let view = ratings.view(account);
+        let _ = players[i]
+            .out
+            .send(ServerMessage::RatingUpdate { rating: view })
+            .await;
     }
 }
 
@@ -2161,7 +2246,12 @@ async fn collect_wave(
                             | ClientMessage::PlayAgain
                             | ClientMessage::FillGroup
                             | ClientMessage::CancelFill
-                            | ClientMessage::LeaveGroup => {
+                            | ClientMessage::LeaveGroup
+                            // Account upgrades are handled at the transport layer and
+                            // never reach the group as an Action; covered for
+                            // exhaustiveness (they are not valid wave actions either).
+                            | ClientMessage::CreateDeviceAccount
+                            | ClientMessage::LinkOAuth { .. } => {
                                 send_to(
                                     players,
                                     player,
@@ -2961,6 +3051,8 @@ mod tests {
         drop(cmd_tx);
 
         let palette: HashSet<u16> = HashSet::new();
+        let acct_store = crate::lobby::accounts::AccountStore::new();
+        let rating_store = crate::rating::RatingStore::default();
         let game = run_game(
             &registry,
             &cfg,
@@ -2970,6 +3062,8 @@ mod tests {
             &palette,
             seed,
             None,
+            &acct_store,
+            &rating_store,
         );
         let mut it = others.into_iter();
         let (o1, o2, o3) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
@@ -3418,6 +3512,8 @@ mod tests {
             it.next().unwrap(),
             it.next().unwrap(),
         );
+        let acct_store = crate::lobby::accounts::AccountStore::new();
+        let rating_store = crate::rating::RatingStore::default();
         let game = run_game(
             &registry,
             &cfg,
@@ -3427,6 +3523,8 @@ mod tests {
             &palette,
             seed,
             None,
+            &acct_store,
+            &rating_store,
         );
         let (_g, r0, r1, r2, r3) = tokio::join!(game, c0, c1, c2, c3);
 
