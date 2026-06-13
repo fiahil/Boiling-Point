@@ -22,8 +22,8 @@ pub use frame::{CastableSpell, PendingDecision, PlayableIngredient, TargetOption
 pub use ids::{CardId, EmoteId, GroupCode, PlayerId};
 pub use server::{Audience, Outbound, ServerMessage};
 pub use vocab::{
-    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellMode,
-    SpellTarget, TargetKind,
+    Brewer, Color, GrimoireBucket, HandIngredient, HandSpell, IngredientView, ModifierKind,
+    PantryBucket, Recipe, SpellKind, SpellMode, SpellTarget, TargetKind,
 };
 
 #[cfg(test)]
@@ -41,6 +41,18 @@ mod tests {
             color: Color::Ruby,
             volatility: 5,
             points: 3,
+        }
+    }
+
+    fn sample_recipe() -> Recipe {
+        Recipe {
+            pantry: vec![
+                PantryBucket::Nightshade,
+                PantryBucket::Saffron,
+                PantryBucket::Bilberry,
+            ],
+            grimoire: vec![GrimoireBucket::Ironbark, GrimoireBucket::Brimstone],
+            reserves: vec![SpellKind::Redirect],
         }
     }
 
@@ -92,6 +104,9 @@ mod tests {
             ClientMessage::CommitDefer,
             ClientMessage::PickBrewer {
                 brewer: Brewer::Cinderwright,
+            },
+            ClientMessage::SubmitRecipe {
+                recipe: sample_recipe(),
             },
             ClientMessage::LockIn,
             ClientMessage::Emote { emote: EmoteId(3) },
@@ -202,6 +217,26 @@ mod tests {
                     brewer: Brewer::Broker,
                 }],
             },
+            ServerMessage::DecisionFrame {
+                round_number: 0,
+                wave_number: 0,
+                timer_ms: Some(30_000),
+                decision: PendingDecision::ApothecaryDraft {
+                    pantry_options: PantryBucket::ALL.to_vec(),
+                    grimoire_options: GrimoireBucket::ALL.to_vec(),
+                    picks_min: 2,
+                    picks_max: 3,
+                    bonus_buckets: 1,
+                    reserves_max: 2,
+                    suggested: sample_recipe(),
+                },
+            },
+            ServerMessage::RecipesRevealed {
+                recipes: vec![server::PlayerRecipe {
+                    player: p,
+                    recipe: sample_recipe(),
+                }],
+            },
             ServerMessage::SpellCast {
                 player: p,
                 spell: SpellKind::Surge,
@@ -310,6 +345,10 @@ mod tests {
                     player: p,
                     brewer: Brewer::Forager,
                 }],
+                recipes: vec![server::PlayerRecipe {
+                    player: p,
+                    recipe: sample_recipe(),
+                }],
                 scores: vec![PlayerScore {
                     player: p,
                     score: 5,
@@ -372,6 +411,7 @@ mod tests {
                 round_number: 2,
                 players: vec![],
                 brewers: vec![],
+                recipes: vec![],
                 scores: vec![],
                 active_modifiers: vec![],
                 contributions: vec![],
@@ -554,6 +594,133 @@ mod tests {
         assert!(!decision.permits_play(CardId(1), false));
         assert!(!decision.permits_cast(CardId(1), None));
         assert!(!decision.permits_defer());
+    }
+
+    /// Bucket metadata is total: 12 pantry + 8 grimoire buckets, unique names
+    /// that round-trip through `by_name`, non-empty blurbs, every grimoire
+    /// role-group non-empty and inside the 15 kinds, the union covering all 15,
+    /// and god-tier exactly the Eyebright + Ironbark families.
+    #[test]
+    fn bucket_metadata_is_total() {
+        assert_eq!(PantryBucket::ALL.len(), 12);
+        assert_eq!(GrimoireBucket::ALL.len(), 8);
+        let mut names: Vec<&str> = PantryBucket::ALL.iter().map(|b| b.name()).collect();
+        names.extend(GrimoireBucket::ALL.iter().map(|b| b.name()));
+        let total = names.len();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), total, "bucket names must be unique");
+        for bucket in PantryBucket::ALL {
+            assert_eq!(PantryBucket::by_name(bucket.name()), Some(bucket));
+            assert!(!bucket.blurb().is_empty());
+        }
+        assert_eq!(
+            PantryBucket::ALL.iter().filter(|b| b.is_toolkit()).count(),
+            2,
+            "exactly Ochre and Wisp are toolkit"
+        );
+        let mut covered: Vec<SpellKind> = Vec::new();
+        for bucket in GrimoireBucket::ALL {
+            assert_eq!(GrimoireBucket::by_name(bucket.name()), Some(bucket));
+            assert!(!bucket.blurb().is_empty());
+            assert!(!bucket.spells().is_empty());
+            covered.extend_from_slice(bucket.spells());
+        }
+        covered.sort_by_key(|k| format!("{k:?}"));
+        covered.dedup();
+        assert_eq!(covered.len(), 15, "the role-groups cover all 15 spells");
+        for kind in GrimoireBucket::GOD_TIER_SPELLS {
+            assert!(
+                GrimoireBucket::ALL
+                    .iter()
+                    .filter(|b| b.is_god_tier())
+                    .any(|b| b.spells().contains(&kind)),
+                "{kind:?} must come from a god-tier bucket"
+            );
+        }
+    }
+
+    /// An Apothecary-draft frame permits exactly the legal recipes: distinct
+    /// offered buckets, ledger counts within the allowance (the bonus bucket
+    /// in one ledger only), reserves within the allowance and inside taken
+    /// role-groups — and none of the other decision kinds' actions.
+    #[test]
+    fn draft_frame_permits_exactly_the_legal_recipes() {
+        let frame = |bonus: u8, reserves_max: u8| PendingDecision::ApothecaryDraft {
+            pantry_options: PantryBucket::ALL.to_vec(),
+            grimoire_options: GrimoireBucket::ALL.to_vec(),
+            picks_min: 2,
+            picks_max: 3,
+            bonus_buckets: bonus,
+            reserves_max,
+            suggested: sample_recipe(),
+        };
+        let plain = frame(0, 1);
+        let base = sample_recipe();
+        assert!(plain.permits_recipe(&base));
+        // No other decision kind's submissions are legal on a draft frame.
+        assert!(!plain.permits_pass());
+        assert!(!plain.permits_play(CardId(1), false));
+        assert!(!plain.permits_cast(CardId(1), None));
+        assert!(!plain.permits_pick(Brewer::Lurker));
+        assert!(!PendingDecision::BrewerPick { options: vec![] }.permits_recipe(&base));
+
+        // Too few / too many buckets.
+        let mut thin = base.clone();
+        thin.pantry.truncate(1);
+        assert!(!plain.permits_recipe(&thin));
+        let mut fat = base.clone();
+        fat.pantry.push(PantryBucket::Sage);
+        assert!(!plain.permits_recipe(&fat), "a 4th bucket needs the bonus");
+        assert!(
+            frame(1, 1).permits_recipe(&fat),
+            "the Connoisseur takes a 4th in one ledger"
+        );
+        let mut both_fat = fat.clone();
+        both_fat.grimoire.push(GrimoireBucket::Farsight);
+        both_fat.grimoire.push(GrimoireBucket::Mandrake);
+        assert!(
+            !frame(1, 1).permits_recipe(&both_fat),
+            "the bonus bucket lands in ONE ledger, never both"
+        );
+
+        // Duplicates are never legal.
+        let mut duped = base.clone();
+        duped.pantry[1] = duped.pantry[0];
+        assert!(!plain.permits_recipe(&duped));
+
+        // Reserves: within the allowance, inside a taken role-group.
+        let mut two_reserves = base.clone();
+        two_reserves.reserves = vec![SpellKind::Redirect, SpellKind::Hex];
+        assert!(!plain.permits_recipe(&two_reserves), "one reserve only");
+        assert!(
+            frame(0, 2).permits_recipe(&two_reserves),
+            "the Reservist locks two"
+        );
+        let mut foreign_reserve = base.clone();
+        foreign_reserve.reserves = vec![SpellKind::Peek];
+        assert!(
+            !plain.permits_recipe(&foreign_reserve),
+            "a reserve must come from a taken bucket"
+        );
+        let mut no_reserve = base.clone();
+        no_reserve.reserves.clear();
+        assert!(plain.permits_recipe(&no_reserve), "the reserve is optional");
+
+        // An unoffered bucket (a filtered Ironbark) is rejected.
+        let no_ironbark = PendingDecision::ApothecaryDraft {
+            pantry_options: PantryBucket::ALL.to_vec(),
+            grimoire_options: GrimoireBucket::ALL
+                .into_iter()
+                .filter(|b| *b != GrimoireBucket::Ironbark)
+                .collect(),
+            picks_min: 2,
+            picks_max: 3,
+            bonus_buckets: 0,
+            reserves_max: 1,
+            suggested: sample_recipe(),
+        };
+        assert!(!no_ironbark.permits_recipe(&base));
     }
 
     /// Building an `Outbound` must classify audiences correctly.

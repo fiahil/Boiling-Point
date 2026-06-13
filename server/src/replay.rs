@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use boiling_point_protocol::vocab::{Brewer, Color, SpellTarget};
+use boiling_point_protocol::vocab::{Brewer, Color, Recipe, SpellTarget};
 use boiling_point_protocol::{CardId, EmoteId, PlayerId};
 
 use crate::config::ContentConfig;
@@ -50,7 +50,10 @@ use crate::persistence::StoredReplay;
 /// assignments (a reconstruction input: decks and bends key off them),
 /// `WaveChoice` gained the Channeler's `second_spell`, and the recorded inputs
 /// gained `PickBrewer`/`CommitDefer`.
-pub const REPLAY_FORMAT_VERSION: u16 = 4;
+/// v5: the Apothecary (`boom2-apothecary`) — the body gained the table's
+/// recipes (a reconstruction input: deck realization keys off them) and the
+/// recorded inputs gained `SubmitRecipe`.
+pub const REPLAY_FORMAT_VERSION: u16 = 5;
 
 /// Engine version the payload was recorded under. Bump when an engine change
 /// alters deterministic reconstruction; stored payloads then select a migration
@@ -59,7 +62,10 @@ pub const REPLAY_FORMAT_VERSION: u16 = 4;
 /// v2: the boom2 combat-core engine (pantries/grimoire, detonator-only explosion).
 /// v3: the Brewer bends (`boom2-brewers`) — per-Brewer rule hooks alter dealing,
 /// liability, and scoring.
-pub const ENGINE_VERSION: u16 = 3;
+/// v4: the Apothecary realizer (`boom2-apothecary`) — decks are realized from
+/// recipes (recipeless seats keep the fixed deal, so pre-draft action logs
+/// still reconstruct under this engine given an empty recipe set).
+pub const ENGINE_VERSION: u16 = 4;
 
 /// A seated player as the replay must remember them to rebuild the roster.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -100,6 +106,11 @@ pub enum RecordedInput {
         /// The Brewer picked.
         brewer: Brewer,
     },
+    /// The player submitted their Apothecary recipe.
+    SubmitRecipe {
+        /// The recipe submitted.
+        recipe: Recipe,
+    },
     /// The player locked in their current selection.
     LockIn,
     /// The player sent a table-talk emote.
@@ -138,6 +149,11 @@ struct ReplayBody {
     /// hence empty, in pre-v4 payloads).
     #[serde(default)]
     brewers: Vec<(PlayerId, Brewer)>,
+    /// Each player's drafted recipe — a reconstruction input (deck realization
+    /// keys off it; `boom2-apothecary`). Empty for fixed-deck games (and
+    /// absent, hence empty, in pre-v5 payloads).
+    #[serde(default)]
+    recipes: Vec<(PlayerId, Recipe)>,
     /// Ordered per-wave player actions in engine decision order — the
     /// deterministic input the reconstruction re-runs.
     action_log: Vec<WaveChoice>,
@@ -200,14 +216,17 @@ pub fn config_fingerprint(config: &ContentConfig) -> String {
 /// Assemble and encode a completed game's replay into its storable row. The
 /// `seed` and `action_log` come from the played game (e.g. [`GameOutcome`]);
 /// `players` is the seated roster in seating order; `brewers` is the table's
-/// picked identities (empty for a brewerless game); `input_log` is the
+/// picked identities (empty for a brewerless game); `recipes` is the table's
+/// drafted recipes (empty for a fixed-deck game); `input_log` is the
 /// session-recorded raw inputs (commit/pass/lock-in/emote) with timestamps.
+#[allow(clippy::too_many_arguments)]
 pub fn encode_replay(
     game_id: Uuid,
     seed: u64,
     config: &ContentConfig,
     players: impl IntoIterator<Item = (PlayerId, Color, String)>,
     brewers: impl IntoIterator<Item = (PlayerId, Brewer)>,
+    recipes: impl IntoIterator<Item = (PlayerId, Recipe)>,
     action_log: &[WaveChoice],
     input_log: &[TimedInput],
 ) -> Result<StoredReplay, ReplayError> {
@@ -225,6 +244,7 @@ pub fn encode_replay(
             })
             .collect(),
         brewers: brewers.into_iter().collect(),
+        recipes: recipes.into_iter().collect(),
         action_log: action_log.to_vec(),
         input_log: input_log.to_vec(),
     };
@@ -273,11 +293,12 @@ pub fn reconstruct(
             display_name: p.display_name.clone(),
         })
         .collect();
-    let mut game = Game::with_brewers(
+    let mut game = Game::with_recipes(
         registry,
         config,
         players,
         body.brewers.iter().copied().collect(),
+        body.recipes.iter().cloned().collect(),
         body.seed,
     );
     let mut decider = ReplayDecider::new(body.action_log);
@@ -371,6 +392,7 @@ mod tests {
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
             std::iter::empty(),
+            std::iter::empty(),
             &outcome.action_log,
             &[],
         )
@@ -428,6 +450,7 @@ mod tests {
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
             std::iter::empty(),
+            std::iter::empty(),
             &outcome.action_log,
             &inputs,
         )
@@ -468,6 +491,7 @@ mod tests {
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
             brewers.iter().map(|(p, b)| (*p, *b)),
+            std::iter::empty(),
             &outcome.action_log,
             &[],
         )
@@ -486,6 +510,7 @@ mod tests {
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
             std::iter::empty(),
+            std::iter::empty(),
             &outcome.action_log,
             &[],
         )
@@ -494,6 +519,103 @@ mod tests {
         assert_ne!(
             recon.events, events,
             "brewer bends must be part of deterministic reconstruction"
+        );
+    }
+
+    /// Recipes are a reconstruction input (`boom2-apothecary`): a game whose
+    /// decks were realized from recipes re-runs to the identical stream only
+    /// because the payload carries them — dropping them yields a different
+    /// (fixed-deck) game.
+    #[test]
+    fn replay_with_recipes_round_trips() {
+        use boiling_point_protocol::vocab::{GrimoireBucket, PantryBucket, SpellKind};
+        let (reg, cfg) = registry_and_config();
+        let roster = four_players();
+        let recipe = |pantry: &[PantryBucket], grimoire: &[GrimoireBucket]| Recipe {
+            pantry: pantry.to_vec(),
+            grimoire: grimoire.to_vec(),
+            reserves: vec![],
+        };
+        let recipes: std::collections::HashMap<PlayerId, Recipe> = [
+            (
+                roster[0].id,
+                recipe(
+                    &[PantryBucket::Nightshade, PantryBucket::Saffron],
+                    &[GrimoireBucket::Ironbark, GrimoireBucket::Brimstone],
+                ),
+            ),
+            (
+                roster[1].id,
+                Recipe {
+                    pantry: vec![PantryBucket::Sage, PantryBucket::Hellebore],
+                    grimoire: vec![GrimoireBucket::Eyebright, GrimoireBucket::Hoarfrost],
+                    reserves: vec![SpellKind::Peek],
+                },
+            ),
+            (
+                roster[2].id,
+                recipe(
+                    &[PantryBucket::Ochre, PantryBucket::Wisp, PantryBucket::Mint],
+                    &[GrimoireBucket::Farsight, GrimoireBucket::Wormwood],
+                ),
+            ),
+            (
+                roster[3].id,
+                recipe(
+                    &[PantryBucket::Honey, PantryBucket::Bramble],
+                    &[GrimoireBucket::Goldenseal, GrimoireBucket::Mandrake],
+                ),
+            ),
+        ]
+        .into();
+
+        let mut original = Game::with_recipes(
+            &reg,
+            &cfg,
+            roster.clone(),
+            std::collections::HashMap::new(),
+            recipes.clone(),
+            0xA90C,
+        );
+        let mut decider = eager();
+        let (outcome, events) = original.play_out_with_events(&mut decider);
+
+        let stored = encode_replay(
+            Uuid::new_v4(),
+            outcome.seed,
+            &cfg,
+            roster
+                .iter()
+                .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
+            recipes.iter().map(|(p, r)| (*p, r.clone())),
+            &outcome.action_log,
+            &[],
+        )
+        .expect("encode");
+        let recon = reconstruct(&stored, &reg, &cfg).expect("reconstruct");
+        assert_eq!(recon.events, events, "reconstructed event stream differs");
+        assert_eq!(recon.outcome.scores, outcome.scores);
+
+        // Dropping the recipes yields a DIFFERENT (fixed-deck) game — guarding
+        // against a silent omission of the realization input.
+        let recipeless = encode_replay(
+            Uuid::new_v4(),
+            outcome.seed,
+            &cfg,
+            roster
+                .iter()
+                .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
+            std::iter::empty(),
+            &outcome.action_log,
+            &[],
+        )
+        .expect("encode");
+        let recon = reconstruct(&recipeless, &reg, &cfg).expect("reconstruct");
+        assert_ne!(
+            recon.events, events,
+            "deck realization must be part of deterministic reconstruction"
         );
     }
 
@@ -514,6 +636,7 @@ mod tests {
             roster
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
             std::iter::empty(),
             &outcome.action_log,
             &[],

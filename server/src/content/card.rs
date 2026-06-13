@@ -33,3 +33,16 @@ pub struct IngredientDef {
     /// Number of physical copies of this archetype in the pantry.
     pub copies: u16,
 }
+
+/// One rollable archetype within an Apothecary bucket family
+/// (`boom2-apothecary`). No copy count: a bucket feeds *availability*, and the
+/// realizer decides amounts to the fixed deck size under its caps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BucketCard {
+    /// How the colour is assigned per seat (derived from the bucket).
+    pub slot: PantrySlot,
+    /// Explosion risk contributed (0–7).
+    pub volatility: u8,
+    /// Point value when played as a colored Vote (0–3).
+    pub points: u8,
+}

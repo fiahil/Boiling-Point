@@ -118,9 +118,9 @@ pub fn user_prompt(
 
     let spells = match &frame.decision {
         PendingDecision::WaveCommit { spells, .. } => spells.as_slice(),
-        // The Brewer pick never reaches the prompt: the agent brain answers it
-        // deterministically without an API call.
-        PendingDecision::BrewerPick { .. } => &[],
+        // The pre-game kinds never reach the prompt: the agent brain answers
+        // them deterministically without an API call.
+        _ => &[],
     };
     out.push_str("\nDecide now: play one of your hand ingredients (listed in the tool) or pass");
     if spells.is_empty() {

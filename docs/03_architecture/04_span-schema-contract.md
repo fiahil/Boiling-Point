@@ -33,6 +33,7 @@ lobby.wait           {player.id}                         — root; one per queue
 ├─ game              {game.id, players.count,
 │  │                  schema.version, deck_seed°}         — child of group.lifetime
 │  ├─ brewer.pick    {brewer.offers, brewer.picks}        — child of game (pre-game; public)
+│  ├─ draft          {draft.recipes}                      — child of game (pre-game; public)
 │  ├─ round          {round.number, boiling_point°,
 │  │  │               volatility_total°, effects.active°,
 │  │  │               modifiers, round.boomed,
@@ -70,11 +71,10 @@ Documented up front so the whole intended tree is visible once; they land
 **additively, without a schema bump**, gated on their content changes. Until
 then the server does not emit them and the projection's ignore-unknown tolerance
 covers any skew (`span_schema::PLANNED_SPANS`). `brewer.pick` landed exactly
-this way with `boom2-brewers` — no schema bump — and now lives in the tree above.
-
-| Span | Parent | Lands with | Notes |
-|---|---|---|---|
-| `draft` | `game` | `boom2-apothecary` | The Apothecary draft; buckets taken are public, realized decks stay sensitive. |
+this way with `boom2-brewers`, and `draft` with `boom2-apothecary` (the
+Apothecary draft: the table's recipes are public; the realized decks never ride
+the span — they stay in the engine and the `hand` spans) — no schema bumps;
+both now live in the tree above. The planned list is currently empty.
 
 `boom2-compounding` adds no span: compounding triggers ride as additive
 attributes on `resolve`/`depile`.
@@ -86,8 +86,9 @@ context (`group.code`, `game.id`, `round.number`, `wave.number`, `wave.timer_ms`
 `wave.timed_out`, `wave.commits`, `wave.passes`, `players.count`, `round.boomed`,
 `round.frozen`, `pot.card_count`, `pot.value`, `detonators`, `reveals`,
 `crossing_index`, `spell.kind`, `spell.target`, `modifiers`, `player.id`,
-`brewer.offers`, `brewer.picks`, `ws.message_kind`, `db.rows`, `schema.version`,
-plus the `admin.command` audit fields `operator`/`action`/`target`/`outcome`).
+`brewer.offers`, `brewer.picks`, `draft.recipes`, `ws.message_kind`, `db.rows`,
+`schema.version`, plus the `admin.command` audit fields
+`operator`/`action`/`target`/`outcome`).
 
 The v2 outcome attributes worth naming:
 

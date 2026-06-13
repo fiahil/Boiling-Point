@@ -39,9 +39,11 @@ fn fast_registry() -> Arc<GroupRegistry> {
     let mut config = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
     config.timing.wave1_ms = 250;
     config.timing.wave_ms = 200;
-    // These bots never answer the brewer pick; a short timer lets the server's
-    // deterministic auto-pick close the pre-game phase.
+    // These bots never answer the brewer pick or the draft; short timers let
+    // the server's deterministic auto-pick / suggested quick-pick close the
+    // pre-game phases.
     config.timing.brewer_pick_ms = 250;
+    config.timing.draft_ms = 250;
     let registry = Arc::new(config.build_registry().unwrap());
     Arc::new(GroupRegistry::new(registry, Arc::new(config)))
 }

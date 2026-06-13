@@ -1132,13 +1132,13 @@ mod tests {
         assert_eq!(p.groups().len(), 1);
     }
 
-    /// The planned-but-unimplemented pre-game span (`draft`; `brewer.pick` has
-    /// since landed with `boom2-brewers`) rides the same ignore-unknown
-    /// tolerance: a projection at schema v2 ignores it without error until its
-    /// content change lands (no schema bump).
+    /// A documented-as-planned pre-game span rides the same ignore-unknown
+    /// tolerance until its content change lands — `brewer.pick`
+    /// (`boom2-brewers`) and `draft` (`boom2-apothecary`) both did. With every
+    /// planned span now landed, a synthetic future pre-game span stands in to
+    /// keep the tolerance pinned.
     #[test]
     fn planned_spans_are_tolerated_until_their_changes_land() {
-        use crate::observability::span_schema::planned;
         let p = AdminProjection::new();
         start(
             &p,
@@ -1148,9 +1148,9 @@ mod tests {
             &[(attr::GROUP_CODE, "PLAN")],
         );
         start(&p, 2, span::GAME, Some(1), &[(attr::GAME_ID, "g")]);
-        start(&p, 3, planned::DRAFT, Some(2), &[(attr::PLAYER_ID, "p1")]);
-        end(&p, 3, planned::DRAFT, Some(2), &[(attr::PLAYER_ID, "p1")]);
-        // The planned span was ignored; the known tree is unaffected.
+        start(&p, 3, "pregame.future", Some(2), &[(attr::PLAYER_ID, "p1")]);
+        end(&p, 3, "pregame.future", Some(2), &[(attr::PLAYER_ID, "p1")]);
+        // The unknown span was ignored; the known tree is unaffected.
         assert_eq!(p.groups().len(), 1);
         assert_eq!(p.groups()[0].phase, "game");
         let b = p.balance();

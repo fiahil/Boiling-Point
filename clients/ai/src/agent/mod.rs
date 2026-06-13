@@ -220,10 +220,15 @@ impl Brain for AgentBrain {
     }
 
     async fn decide(&mut self, view: &SeatView, frame: &FrameContext) -> Answer {
-        // The pre-game Brewer pick is answered deterministically (first
-        // offered option) without an API call: a persona-shaped pick is a
-        // possible later refinement, not worth a model round-trip today.
-        if let boiling_point_protocol::frame::PendingDecision::BrewerPick { .. } = &frame.decision {
+        // The pre-game decisions are answered deterministically (the first
+        // offered Brewer; the draft's suggested quick-pick) without an API
+        // call: persona-shaped pre-game choices are a possible later
+        // refinement, not worth a model round-trip today.
+        if matches!(
+            &frame.decision,
+            boiling_point_protocol::frame::PendingDecision::BrewerPick { .. }
+                | boiling_point_protocol::frame::PendingDecision::ApothecaryDraft { .. }
+        ) {
             return Answer::failsafe(&frame.decision);
         }
         if self.cap_reached() {

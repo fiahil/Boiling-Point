@@ -1,0 +1,59 @@
+# boom2-apothecary task 6: the deck-archetype balance sweep.
+#
+# Confirms (a) no archetype dominates and (b) the Peek economy holds under
+# player-shaped supply (the realizer's absolute god-tier cap is the structural
+# protection). The persona axis is held fixed within a cell so each cell reads
+# the deck-archetype axis cleanly; the matrix keys on the configured plan.
+#
+# Run: cargo run --release -p boiling-point-ai-client --features harness \
+#        --bin balance_tester -- --spec clients/ai/specs/deck-archetype-sweep.toml \
+#        --report target/deck-archetype-sweep
+
+root_seed = 42
+
+# Four archetypes head-to-head under one persona — the clean read of the axis.
+[[cells]]
+name = "archetype-mirror-cautious"
+games = 2000
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "warlord" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "fortress" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "kingmaker" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "loyalist" },
+]
+
+# The same axis under the known-strong political persona (interaction check).
+[[cells]]
+name = "archetype-mirror-political"
+games = 2000
+seats = [
+    { brain = "bot", archetype = "political", deck_archetype = "warlord" },
+    { brain = "bot", archetype = "political", deck_archetype = "fortress" },
+    { brain = "bot", archetype = "political", deck_archetype = "kingmaker" },
+    { brain = "bot", archetype = "political", deck_archetype = "loyalist" },
+]
+
+# Aggressive Warlord mirror — the hottest deck self-mirrored: an explosion-rate
+# and self-degeneracy stress (does an all-Warlord table runaway or freeze?).
+[[cells]]
+name = "warlord-concentration"
+games = 2000
+seats = [
+    { brain = "bot", archetype = "aggressive", deck_archetype = "warlord" },
+    { brain = "bot", archetype = "aggressive", deck_archetype = "warlord" },
+    { brain = "bot", archetype = "aggressive", deck_archetype = "warlord" },
+    { brain = "bot", archetype = "aggressive", deck_archetype = "warlord" },
+]
+
+# Loyalist mirror — every seat reserves Peek and drafts Eyebright: the maximal
+# god-tier demand. The realizer's absolute cap (≤2 per 20-spell grimoire) must
+# hold the Peek economy even here (peek casts/game stays bounded).
+[[cells]]
+name = "loyalist-peek-economy"
+games = 2000
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "loyalist" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "loyalist" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "loyalist" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "loyalist" },
+]

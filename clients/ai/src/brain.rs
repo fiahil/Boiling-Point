@@ -14,7 +14,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use boiling_point_protocol::frame::PendingDecision;
-use boiling_point_protocol::vocab::{Brewer, SpellTarget};
+use boiling_point_protocol::vocab::{Brewer, Recipe, SpellTarget};
 use boiling_point_protocol::{CardId, ClientMessage, EmoteId};
 
 use crate::view::{FrameContext, SeatView};
@@ -43,8 +43,8 @@ pub struct SpellCast {
 }
 
 /// A brain's complete answer to one decision frame. Grows a variant per
-/// decision kind as the v2 surface lands (the Apothecary draft is next).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// decision kind as the v2 surface lands.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     /// The per-wave commit: ingredient-or-pass plus the optional spell.
     WaveCommit {
@@ -57,6 +57,12 @@ pub enum Answer {
     BrewerPick {
         /// The chosen Brewer.
         brewer: Brewer,
+    },
+    /// The pre-game Apothecary draft: the whole recipe in one submission
+    /// (`boom2-apothecary`).
+    ApothecaryDraft {
+        /// The recipe to submit.
+        recipe: Recipe,
     },
 }
 
@@ -71,7 +77,8 @@ impl Answer {
     }
 
     /// The always-legal answer of last resort for a frame: the bare pass for a
-    /// wave commit, the first offered option for a Brewer pick.
+    /// wave commit, the first offered option for a Brewer pick, the suggested
+    /// quick-pick for the Apothecary draft.
     pub fn failsafe(decision: &PendingDecision) -> Self {
         match decision {
             PendingDecision::WaveCommit { .. } => Answer::pass(),
@@ -80,6 +87,9 @@ impl Answer {
                     .first()
                     .copied()
                     .unwrap_or(boiling_point_protocol::Brewer::ALL[0]),
+            },
+            PendingDecision::ApothecaryDraft { suggested, .. } => Answer::ApothecaryDraft {
+                recipe: suggested.clone(),
             },
         }
     }
@@ -102,12 +112,13 @@ impl Answer {
                 action_ok && spell_ok
             }
             Answer::BrewerPick { brewer } => decision.permits_pick(*brewer),
+            Answer::ApothecaryDraft { recipe } => decision.permits_recipe(recipe),
         }
     }
 
     /// The wire messages that submit this answer, in send order (the action,
     /// then the optional cast, then the lock-in that closes the wave early; a
-    /// brewer pick is a single message, final on receipt).
+    /// brewer pick or recipe submission is a single message, final on receipt).
     pub fn to_messages(&self) -> Vec<ClientMessage> {
         match self {
             Answer::WaveCommit { action, spell } => {
@@ -130,6 +141,11 @@ impl Answer {
             }
             Answer::BrewerPick { brewer } => {
                 vec![ClientMessage::PickBrewer { brewer: *brewer }]
+            }
+            Answer::ApothecaryDraft { recipe } => {
+                vec![ClientMessage::SubmitRecipe {
+                    recipe: recipe.clone(),
+                }]
             }
         }
     }
@@ -281,7 +297,7 @@ mod tests {
             "fixed".into()
         }
         async fn decide(&mut self, _v: &SeatView, _f: &FrameContext) -> Answer {
-            self.0
+            self.0.clone()
         }
     }
 

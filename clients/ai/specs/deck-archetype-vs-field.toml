@@ -1,0 +1,51 @@
+# boom2-apothecary task 6: each archetype against a realistic mixed field.
+#
+# The same-persona mirror (deck-archetype-sweep.toml) reads the axis cleanly but
+# in a freeze regime (an all-one-persona table never pushes, so most pots settle
+# on raw own-colour point density). This spec gives the truer read: seat 0 holds
+# a fixed persona (cautious) and varies ONLY its archetype across the four cells,
+# against an identical aggressive/political/random field that drafts the
+# quick-pick default — a varied, pushing table. Seat 0's win rate across the four
+# cells is the clean per-archetype-vs-field comparison.
+
+root_seed = 1234
+
+[[cells]]
+name = "warlord-vs-field"
+games = 3000
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "warlord" },
+    { brain = "bot", archetype = "aggressive" },
+    { brain = "bot", archetype = "political" },
+    { brain = "bot", archetype = "random" },
+]
+
+[[cells]]
+name = "fortress-vs-field"
+games = 3000
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "fortress" },
+    { brain = "bot", archetype = "aggressive" },
+    { brain = "bot", archetype = "political" },
+    { brain = "bot", archetype = "random" },
+]
+
+[[cells]]
+name = "kingmaker-vs-field"
+games = 3000
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "kingmaker" },
+    { brain = "bot", archetype = "aggressive" },
+    { brain = "bot", archetype = "political" },
+    { brain = "bot", archetype = "random" },
+]
+
+[[cells]]
+name = "loyalist-vs-field"
+games = 3000
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "loyalist" },
+    { brain = "bot", archetype = "aggressive" },
+    { brain = "bot", archetype = "political" },
+    { brain = "bot", archetype = "random" },
+]

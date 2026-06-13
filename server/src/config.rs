@@ -9,9 +9,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use boiling_point_protocol::vocab::{ModifierKind, SpellKind};
+use boiling_point_protocol::vocab::{ModifierKind, PantryBucket, SpellKind};
 
-use crate::content::card::{IngredientDef, PantrySlot};
+use crate::content::card::{BucketCard, IngredientDef, PantrySlot};
 use crate::content::registry::ContentRegistry;
 use crate::content::spell::{SpellDef, SpellValues};
 
@@ -53,6 +53,76 @@ pub struct ContentConfig {
     pub timing: TimingConfig,
     /// Boiling-point range.
     pub boiling_point: BoilingPointConfig,
+    /// The Apothecary realizer caps (`boom2-apothecary`).
+    #[serde(default)]
+    pub apothecary: ApothecaryConfig,
+    /// Per-bucket pantry card families (`[[pantry_bucket]]` tables) — the
+    /// eligible pools the realizer rolls from. All 12 buckets must be present.
+    /// (Grimoire role-groups are static protocol metadata, not config.)
+    #[serde(default)]
+    pub pantry_bucket: Vec<PantryBucketConfig>,
+}
+
+/// The Apothecary realizer caps — enforced at deck realization, so any legal
+/// pick-set yields a legal deck. Premium caps are **absolute** (independent of
+/// deck size). All `[needs playtesting]` (Principle IV: a primary tuning
+/// target; god-tier is the structural Peek-economy protection).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct ApothecaryConfig {
+    /// Most toolkit (off-colour + wild) cards in a realized pantry — the
+    /// complement of the ~75% colour anchor.
+    #[serde(default = "default_toolkit_cap")]
+    pub toolkit_cap: u16,
+    /// Most Treasure (maximum-point) ingredients in a realized pantry.
+    #[serde(default = "default_treasure_cap")]
+    pub treasure_cap: u16,
+    /// Most god-tier spells (Peek / the Wards) in a realized grimoire.
+    #[serde(default = "default_god_tier_cap")]
+    pub god_tier_cap: u16,
+}
+
+impl Default for ApothecaryConfig {
+    fn default() -> Self {
+        ApothecaryConfig {
+            toolkit_cap: default_toolkit_cap(),
+            treasure_cap: default_treasure_cap(),
+            god_tier_cap: default_god_tier_cap(),
+        }
+    }
+}
+
+/// Default toolkit cap: ≤25% of the 30-card pantry. `[needs playtesting]`.
+fn default_toolkit_cap() -> u16 {
+    7
+}
+/// Default Treasure cap (absolute). `[needs playtesting]`.
+fn default_treasure_cap() -> u16 {
+    3
+}
+/// Default god-tier cap (absolute — ~10% of the 20-spell grimoire).
+/// `[needs playtesting]`.
+fn default_god_tier_cap() -> u16 {
+    2
+}
+
+/// One pantry bucket's eligible card family.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PantryBucketConfig {
+    /// Which of the 12 buckets this family belongs to.
+    pub bucket: PantryBucket,
+    /// The archetypes the realizer rolls from for this bucket. The colour slot
+    /// is derived from the bucket (Ochre → off-colour, Wisp → wild, the rest →
+    /// own colour), so a family can never contradict its bucket's identity.
+    pub cards: Vec<BucketCardConfig>,
+}
+
+/// One rollable archetype within a bucket family.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BucketCardConfig {
+    /// Explosion risk (0–7).
+    pub volatility: u8,
+    /// Point value as a colored Vote (0–3).
+    pub points: u8,
 }
 
 /// Pantry-wide settings.
@@ -138,12 +208,22 @@ pub struct TimingConfig {
     /// once all four picks arrive; a straggler is auto-picked at the timer).
     #[serde(default = "default_brewer_pick_ms")]
     pub brewer_pick_ms: u32,
+    /// Budget for the pre-game Apothecary draft (closes early once all four
+    /// recipes land; a straggler gets the frame's suggested quick-pick).
+    #[serde(default = "default_draft_ms")]
+    pub draft_ms: u32,
 }
 
 /// Default brewer-pick budget: generous enough to read eight identities,
 /// short enough for the auto-start lobby ethos. `[needs playtesting]`.
 fn default_brewer_pick_ms() -> u32 {
     20_000
+}
+
+/// Default draft budget: two ledgers plus a reserve is a bigger read than the
+/// brewer pair, still inside the lobby ethos. `[needs playtesting]`.
+fn default_draft_ms() -> u32 {
+    30_000
 }
 
 /// The (inclusive) hidden boiling-point range before modifiers.
@@ -234,6 +314,12 @@ pub enum ConfigError {
     /// Two emotes share an id.
     #[error("duplicate emote id {0} in the palette")]
     DuplicateEmoteId(u16),
+    /// A pantry bucket is missing from (or duplicated in) the family roster.
+    #[error("pantry bucket {0} must appear exactly once in [[pantry_bucket]]")]
+    BucketRosterIncomplete(&'static str),
+    /// A pantry bucket's family has no cards to roll from.
+    #[error("pantry bucket {0} has an empty card family")]
+    EmptyBucketFamily(&'static str),
     /// The TOML failed to parse.
     #[error("config parse error: {0}")]
     Parse(String),
@@ -354,6 +440,32 @@ impl ContentConfig {
             });
         }
 
+        // The Apothecary roster: every pantry bucket present exactly once,
+        // each family non-empty with in-range attributes (the realizer must be
+        // able to roll any legal pick-set into a legal deck).
+        for bucket in PantryBucket::ALL {
+            let families: Vec<&PantryBucketConfig> = self
+                .pantry_bucket
+                .iter()
+                .filter(|b| b.bucket == bucket)
+                .collect();
+            if families.len() != 1 {
+                return Err(ConfigError::BucketRosterIncomplete(bucket.name()));
+            }
+            let family = families[0];
+            if family.cards.is_empty() {
+                return Err(ConfigError::EmptyBucketFamily(bucket.name()));
+            }
+            for card in &family.cards {
+                if card.volatility > MAX_VOLATILITY || card.points > MAX_POINTS {
+                    return Err(ConfigError::IngredientOutOfRange {
+                        volatility: card.volatility,
+                        points: card.points,
+                    });
+                }
+            }
+        }
+
         // Emote palette: at least one enabled emote, with unique ids.
         let mut seen_emotes = HashSet::new();
         for emote in self.emote.iter().filter(|e| e.enabled) {
@@ -398,11 +510,40 @@ impl ContentConfig {
             .map(|m| (m.kind, m.copies))
             .collect();
 
+        // The bucket families, in PantryBucket::ALL order (deterministic), with
+        // each card's colour slot derived from its bucket's identity.
+        let pantry_families: Vec<(PantryBucket, Vec<BucketCard>)> = PantryBucket::ALL
+            .into_iter()
+            .map(|bucket| {
+                let slot = match bucket {
+                    PantryBucket::Ochre => PantrySlot::OffColor,
+                    PantryBucket::Wisp => PantrySlot::Wild,
+                    _ => PantrySlot::Own,
+                };
+                let cards = self
+                    .pantry_bucket
+                    .iter()
+                    .find(|b| b.bucket == bucket)
+                    .expect("validated: every bucket present")
+                    .cards
+                    .iter()
+                    .map(|c| BucketCard {
+                        slot,
+                        volatility: c.volatility,
+                        points: c.points,
+                    })
+                    .collect();
+                (bucket, cards)
+            })
+            .collect();
+
         Ok(ContentRegistry::new(
             ingredients,
             spells,
             self.spell_values,
             &enabled_modifiers,
+            self.apothecary,
+            pantry_families,
         ))
     }
 }

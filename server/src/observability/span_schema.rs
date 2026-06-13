@@ -42,6 +42,11 @@ pub mod span {
     /// pairs and the table's picks, both public. Landed additively, no schema
     /// bump (it was documented as planned). Child of [`GAME`].
     pub const BREWER_PICK: &str = "brewer.pick";
+    /// The pre-game Apothecary draft (`boom2-apothecary`): the table's
+    /// recipes, public (the realized decks stay in the engine and the `hand`
+    /// spans). Landed additively, no schema bump (it was documented as
+    /// planned). Child of [`GAME`].
+    pub const DRAFT: &str = "draft";
     /// One round within a game. Child of [`GAME`].
     pub const ROUND: &str = "round";
     /// One wave (commit window) within a round. Child of [`ROUND`].
@@ -79,12 +84,9 @@ pub mod span {
 /// Pre-game spans documented as **planned**: their content changes have not landed,
 /// so the server does not emit them yet. They will land **additively, without a
 /// schema bump** (the projection ignores unknown spans until then) — exactly as
-/// `brewer.pick` did when `boom2-brewers` landed it (now in [`span`]).
-pub mod planned {
-    /// The pre-game Apothecary draft (buckets taken are public; the realized decks
-    /// stay sensitive). Lands with `boom2-apothecary`. Child of `game`.
-    pub const DRAFT: &str = "draft";
-}
+/// `brewer.pick` (`boom2-brewers`) and `draft` (`boom2-apothecary`) did (both
+/// now in [`span`]). Currently empty.
+pub mod planned {}
 
 /// Stable attribute keys. Public keys may be exported; the keys in
 /// [`SENSITIVE_ATTRS`] carry hidden game state and are only ever read in-process
@@ -114,6 +116,9 @@ pub mod attr {
     pub const BREWER_OFFERS: &str = "brewer.offers";
     /// The table's chosen Brewers, in seat order (public from the reveal).
     pub const BREWER_PICKS: &str = "brewer.picks";
+    /// The table's drafted recipes, in seat order (public from the reveal —
+    /// only the realized decks are secret, and they never ride this span).
+    pub const DRAFT_RECIPES: &str = "draft.recipes";
     /// Whether a round boomed — the v2 detonator-only explosion (public after the
     /// depile).
     pub const ROUND_BOOMED: &str = "round.boomed";
@@ -205,6 +210,7 @@ pub const SPAN_TREE: &[(&str, Option<&str>)] = &[
     (span::LOBBY_WAIT, None),
     (span::GAME, Some(span::GROUP_LIFETIME)),
     (span::BREWER_PICK, Some(span::GAME)),
+    (span::DRAFT, Some(span::GAME)),
     (span::ROUND, Some(span::GAME)),
     (span::HAND, Some(span::ROUND)),
     (span::WAVE, Some(span::ROUND)),
@@ -221,7 +227,9 @@ pub const SPAN_TREE: &[(&str, Option<&str>)] = &[
 
 /// The planned (not yet emitted) spans and their documented parents. Kept out of
 /// [`SPAN_TREE`] so the projection treats them as unknown until they land.
-pub const PLANNED_SPANS: &[(&str, Option<&str>)] = &[(planned::DRAFT, Some(span::GAME))];
+/// Currently empty: the last planned span (`draft`) landed with
+/// `boom2-apothecary`.
+pub const PLANNED_SPANS: &[(&str, Option<&str>)] = &[];
 
 /// Whether `name` is a span the schema knows about. The projection uses this to
 /// ignore unrecognized spans gracefully (forward/backward tolerance) — including

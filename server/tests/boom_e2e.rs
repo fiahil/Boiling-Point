@@ -22,7 +22,7 @@ use tracing::Instrument as _;
 use uuid::Uuid;
 
 use boiling_point_protocol::frame::PendingDecision;
-use boiling_point_protocol::vocab::{Brewer, Color};
+use boiling_point_protocol::vocab::{Brewer, Color, GrimoireBucket, Recipe};
 use boiling_point_protocol::{CardId, ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use boiling_point_server::admin::AdminProjection;
@@ -87,6 +87,19 @@ async fn bot(
                     .send(GroupCommand::Action {
                         player,
                         msg: ClientMessage::PickBrewer { brewer: options[0] },
+                    })
+                    .await;
+            }
+            // Submit the frame's suggested quick-pick recipe — the straggler
+            // default, so the sync ground truth reproduces the realized decks.
+            ServerMessage::DecisionFrame {
+                decision: PendingDecision::ApothecaryDraft { suggested, .. },
+                ..
+            } => {
+                let _ = tx
+                    .send(GroupCommand::Action {
+                        player,
+                        msg: ClientMessage::SubmitRecipe { recipe: suggested },
                     })
                     .await;
             }
@@ -164,14 +177,28 @@ async fn a_seeded_boom_appears_in_spans_and_the_boom_rate_metric() {
             display_name: format!("p{id}", id = id.0),
         })
         .collect();
-    // The bots pick the first of each dealt pair — the deterministic deal +
-    // auto-pick rule — so the ground truth carries the same brewers.
+    // The bots pick the first of each dealt pair and submit the suggested
+    // quick-pick recipe — the deterministic deal + auto-pick + straggler
+    // defaults — so the ground truth carries the same brewers and decks.
     let brewers: std::collections::HashMap<PlayerId, Brewer> = sync_players
         .iter()
         .zip(session::deal_brewer_pairs(SEED, sync_players.len()))
         .map(|(p, pair)| (p.id, session::auto_pick(&pair)))
         .collect();
-    let mut sync_game = Game::with_brewers(&registry, &cfg, sync_players, brewers, SEED);
+    let recipes: std::collections::HashMap<PlayerId, Recipe> = sync_players
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let excluded =
+                boiling_point_server::game::brewers::excluded_buckets(brewers.get(&p.id).copied());
+            let options: Vec<GrimoireBucket> = GrimoireBucket::ALL
+                .into_iter()
+                .filter(|b| !excluded.contains(b))
+                .collect();
+            (p.id, session::suggested_recipe(SEED, i, &options))
+        })
+        .collect();
+    let mut sync_game = Game::with_recipes(&registry, &cfg, sync_players, brewers, recipes, SEED);
     let mut decider = play_first_else_pass;
     let truth = sync_game.play_out(&mut decider);
     let expected_rounds = truth.rounds.len() as u64;

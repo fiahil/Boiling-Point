@@ -8,6 +8,7 @@
 //! never what the bot must re-derive. All randomness (tie-breaks, the Random
 //! baseline, epsilon blunders) draws from the seat's seeded RNG ([`rng`]).
 
+pub mod decks;
 pub mod rng;
 
 use async_trait::async_trait;
@@ -18,7 +19,9 @@ use boiling_point_protocol::EmoteId;
 use boiling_point_protocol::frame::{
     CastableSpell, PendingDecision, PlayableIngredient, TargetOptions,
 };
-use boiling_point_protocol::vocab::{Brewer, SpellKind, SpellTarget};
+use boiling_point_protocol::vocab::{Brewer, Recipe, SpellKind, SpellTarget};
+
+pub use decks::DeckArchetype;
 
 use crate::brain::{Answer, Brain, SpellCast, WaveAction};
 use crate::view::{FrameContext, SeatView};
@@ -66,7 +69,8 @@ impl Archetype {
 
 /// The bot brain's settings (distinct from the agent brain's — spec
 /// `boom-bot-brain`): archetype, blunder epsilon, the optional Brewer
-/// preference (the harness's persona × Brewer axis), and the seat RNG.
+/// preference and deck plan (the harness's persona × Brewer × deck-archetype
+/// axes), and the seat RNG.
 pub struct BotBrain {
     archetype: Archetype,
     /// Per-decision probability of substituting a uniformly random legal
@@ -76,6 +80,9 @@ pub struct BotBrain {
     /// first option (the deal is random, so a preference is best-effort —
     /// the harness matrix keys on the *actual* pick).
     brewer_preference: Option<Brewer>,
+    /// Planned recipe for the Apothecary draft (the deck-archetype axis):
+    /// legalized against the frame, falling back to the suggested quick-pick.
+    deck_plan: Option<Recipe>,
     rng: StdRng,
 }
 
@@ -86,6 +93,7 @@ impl BotBrain {
             archetype,
             epsilon: 0.0,
             brewer_preference: None,
+            deck_plan: None,
             rng,
         }
     }
@@ -99,6 +107,12 @@ impl BotBrain {
     /// Set the pre-game Brewer preference (the harness's brewer axis).
     pub fn with_brewer_preference(mut self, brewer: Option<Brewer>) -> Self {
         self.brewer_preference = brewer;
+        self
+    }
+
+    /// Set the planned draft recipe (the harness's deck-archetype axis).
+    pub fn with_deck_plan(mut self, plan: Option<Recipe>) -> Self {
+        self.deck_plan = plan;
         self
     }
 
@@ -116,7 +130,7 @@ const KNOWN_BP_MARGIN: f64 = 5.0;
 const BLIND_RISK_ESTIMATE: f64 = 18.0;
 
 /// The frame's wave-commit parts (empty/false for a non-wave frame, which the
-/// heuristics never see — [`BotBrain::decide`] answers Brewer picks first).
+/// heuristics never see — [`BotBrain::decide`] answers the pre-game kinds first).
 fn parts(decision: &PendingDecision) -> (&[PlayableIngredient], bool, &[CastableSpell]) {
     match decision {
         PendingDecision::WaveCommit {
@@ -125,7 +139,7 @@ fn parts(decision: &PendingDecision) -> (&[PlayableIngredient], bool, &[Castable
             spells,
             ..
         } => (playable, *can_pass, spells),
-        PendingDecision::BrewerPick { .. } => (&[], false, &[]),
+        _ => (&[], false, &[]),
     }
 }
 
@@ -439,6 +453,25 @@ impl Brain for BotBrain {
             };
             return Answer::BrewerPick { brewer };
         }
+        // The pre-game Apothecary draft: a pinned deck plan (legalized against
+        // the frame) overrides every posture — it is the experiment's
+        // variable. Unpinned, Random rolls a uniformly random legal recipe
+        // (the baseline covers the draft surface too) and the heuristics take
+        // the frame's suggested quick-pick.
+        if let PendingDecision::ApothecaryDraft { suggested, .. } = &frame.decision {
+            let planned = self
+                .deck_plan
+                .as_ref()
+                .and_then(|plan| decks::legalize(plan, &frame.decision))
+                .filter(|r| frame.decision.permits_recipe(r));
+            let recipe = match (planned, self.archetype) {
+                (Some(recipe), _) => recipe,
+                (None, Archetype::Random) => decks::random_recipe(&frame.decision, &mut self.rng)
+                    .unwrap_or_else(|| suggested.clone()),
+                (None, _) => suggested.clone(),
+            };
+            return Answer::ApothecaryDraft { recipe };
+        }
         // Blunder injection: with probability epsilon, a uniformly random
         // legal action replaces the heuristic choice (Random is exactly the
         // always-uniform case).
@@ -676,6 +709,57 @@ mod tests {
                 brewer: Brewer::Featherhand
             }
         );
+    }
+
+    /// Every archetype answers a draft frame legally; a pinned plan is
+    /// followed verbatim when offered in full (any posture, Random included);
+    /// unpinned, the postures take the suggested quick-pick while Random
+    /// rolls its own legal recipe.
+    #[tokio::test]
+    async fn draft_answers_are_legal_and_plan_aware() {
+        use boiling_point_protocol::vocab::{GrimoireBucket, PantryBucket, Recipe};
+        let suggested = Recipe {
+            pantry: vec![PantryBucket::Sage, PantryBucket::Mint, PantryBucket::Honey],
+            grimoire: vec![GrimoireBucket::Farsight, GrimoireBucket::Hoarfrost],
+            reserves: vec![],
+        };
+        let draft_frame = FrameContext {
+            round_number: 0,
+            wave_number: 0,
+            timer_ms: Some(30_000),
+            decision: PendingDecision::ApothecaryDraft {
+                pantry_options: PantryBucket::ALL.to_vec(),
+                grimoire_options: GrimoireBucket::ALL.to_vec(),
+                picks_min: 2,
+                picks_max: 3,
+                bonus_buckets: 0,
+                reserves_max: 1,
+                suggested: suggested.clone(),
+            },
+        };
+        let plan = DeckArchetype::Warlord.recipe();
+        for archetype in Archetype::ALL {
+            let mut unpinned = BotBrain::new(archetype, rng(4));
+            let answer = unpinned.decide(&view_with(0), &draft_frame).await;
+            assert!(answer.is_legal(&draft_frame.decision), "{archetype:?}");
+            if archetype != Archetype::Random {
+                assert_eq!(
+                    answer,
+                    Answer::ApothecaryDraft {
+                        recipe: suggested.clone()
+                    },
+                    "{archetype:?} takes the quick-pick when unpinned"
+                );
+            }
+            let mut pinned = BotBrain::new(archetype, rng(4)).with_deck_plan(Some(plan.clone()));
+            assert_eq!(
+                pinned.decide(&view_with(0), &draft_frame).await,
+                Answer::ApothecaryDraft {
+                    recipe: plan.clone()
+                },
+                "{archetype:?} follows the pinned plan"
+            );
+        }
     }
 
     /// The cautious bot bails out of a pot it estimates as risky, and trusts a

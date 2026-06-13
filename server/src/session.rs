@@ -35,15 +35,18 @@ use boiling_point_protocol::frame::{
     CastableSpell, PendingDecision, PlayableIngredient, TargetOptions,
 };
 use boiling_point_protocol::server::{
-    Audience, Contribution, ErrorCode, Outbound, PlayerBrewer, PlayerPublic, PlayerScore,
-    ScoringOutcome,
+    Audience, Contribution, ErrorCode, Outbound, PlayerBrewer, PlayerPublic, PlayerRecipe,
+    PlayerScore, ScoringOutcome,
 };
-use boiling_point_protocol::vocab::{Brewer, Color, SpellTarget, TargetKind};
+use boiling_point_protocol::vocab::{
+    Brewer, Color, GrimoireBucket, PantryBucket, Recipe, SpellTarget, TargetKind,
+};
 use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
 use crate::game::brewers;
+use crate::game::realizer::{DRAFT_PICKS_MAX, DRAFT_PICKS_MIN};
 use crate::game::round::{RoundEnd, SpellChoice, WaveAction, WaveChoice};
 use crate::game::runner::{
     Game, RoundLog, RoundScoring, WaveResolution, build_completed_game, depile_entries,
@@ -57,6 +60,10 @@ use crate::replay::{RecordedInput, TimedInput, encode_replay};
 /// dealt pairs are deterministic per game without perturbing the engine's
 /// modifier/boiling-point streams.
 const BREWER_DEAL_SALT: u64 = 0xB4E3_77E5;
+
+/// Salt for the draft's suggested-recipe stream (`boom2-apothecary`) — same
+/// branching rationale as [`BREWER_DEAL_SALT`].
+const DRAFT_SUGGEST_SALT: u64 = 0xD4AF_7E55;
 
 /// A seated player as the game loop needs them: identity, colour, and the
 /// outbound channel to reach them.
@@ -430,6 +437,199 @@ async fn run_brewer_phase(
     picks
 }
 
+/// The deterministic quick-pick recipe for a seat (`boom2-apothecary`): three
+/// seeded buckets per ledger from the seat's offered rosters, no reserve — a
+/// sane, varied default that keeps the draft inside the lobby time budget. It
+/// rides every draft frame as `suggested` (the one-tap pick) and is applied
+/// server-side to stragglers at the timer.
+pub fn suggested_recipe(seed: u64, seat: usize, grimoire_options: &[GrimoireBucket]) -> Recipe {
+    let mut rng = StdRng::seed_from_u64(seed ^ DRAFT_SUGGEST_SALT ^ seat as u64);
+    let mut pantry = PantryBucket::ALL.to_vec();
+    pantry.shuffle(&mut rng);
+    pantry.truncate(DRAFT_PICKS_MAX as usize);
+    let mut grimoire = grimoire_options.to_vec();
+    grimoire.shuffle(&mut rng);
+    grimoire.truncate(DRAFT_PICKS_MAX as usize);
+    Recipe {
+        pantry,
+        grimoire,
+        reserves: Vec::new(),
+    }
+}
+
+/// Run the pre-game Apothecary draft (`boom2-apothecary`): offer each seat the
+/// bucket rosters with its Brewer-bent allowances (the Connoisseur's bonus
+/// bucket, the Reservist's two reserves, the Cinderwright's Ironbark-free
+/// grimoire roster) as an `ApothecaryDraft` decision frame, collect the
+/// simultaneous recipe submissions until everyone connected has submitted or
+/// the timer lapses, quick-pick stragglers (the frame's `suggested`), and
+/// return the table's recipes. Ordered **after** the Brewer pick (you draft
+/// knowing who you are) and **before** deck realization
+/// ([`Game::with_recipes`] consults the recipes when realizing decks).
+#[allow(clippy::too_many_arguments)]
+async fn run_draft_phase(
+    config: &ContentConfig,
+    players: &mut [SeatInfo],
+    rx: &mut mpsc::Receiver<GroupCommand>,
+    gone: &mut HashSet<PlayerId>,
+    palette: &HashSet<u16>,
+    game_start: std::time::Instant,
+    input_log: &mut Vec<TimedInput>,
+    seed: u64,
+    brewers: &HashMap<PlayerId, Brewer>,
+) -> HashMap<PlayerId, Recipe> {
+    let frames: HashMap<PlayerId, PendingDecision> = players
+        .iter()
+        .enumerate()
+        .map(|(i, seat)| {
+            let brewer = brewers.get(&seat.id).copied();
+            let excluded = brewers::excluded_buckets(brewer);
+            let grimoire_options: Vec<GrimoireBucket> = GrimoireBucket::ALL
+                .into_iter()
+                .filter(|b| !excluded.contains(b))
+                .collect();
+            let suggested = suggested_recipe(seed, i, &grimoire_options);
+            let decision = PendingDecision::ApothecaryDraft {
+                pantry_options: PantryBucket::ALL.to_vec(),
+                grimoire_options,
+                picks_min: DRAFT_PICKS_MIN,
+                picks_max: DRAFT_PICKS_MAX,
+                bonus_buckets: brewers::extra_buckets(brewer),
+                reserves_max: brewers::reserve_allowance(brewer),
+                suggested,
+            };
+            (seat.id, decision)
+        })
+        .collect();
+
+    let offer_frame = |decision: &PendingDecision| ServerMessage::DecisionFrame {
+        round_number: 0,
+        wave_number: 0,
+        timer_ms: Some(config.timing.draft_ms),
+        decision: decision.clone(),
+    };
+    for seat in players.iter() {
+        if !gone.contains(&seat.id) {
+            send_to(players, seat.id, offer_frame(&frames[&seat.id])).await;
+        }
+    }
+
+    let seat_ids: Vec<PlayerId> = players.iter().map(|s| s.id).collect();
+    let mut recipes: HashMap<PlayerId, Recipe> = HashMap::new();
+    let sleep = tokio::time::sleep(Duration::from_millis(config.timing.draft_ms as u64));
+    tokio::pin!(sleep);
+    while !seat_ids
+        .iter()
+        .all(|id| recipes.contains_key(id) || gone.contains(id))
+    {
+        tokio::select! {
+            _ = &mut sleep => break,
+            maybe = rx.recv() => {
+                match maybe {
+                    None => break,
+                    Some(GroupCommand::Action { player, msg }) => {
+                        if let Some(input) = recorded_input(&msg) {
+                            input_log.push(TimedInput {
+                                player,
+                                at_ms: game_start.elapsed().as_millis() as u32,
+                                input,
+                            });
+                        }
+                        match msg {
+                            ClientMessage::SubmitRecipe { recipe } => {
+                                match recipes.entry(player) {
+                                    // Submissions are final on receipt
+                                    // (simultaneous, no revision), like the
+                                    // brewer pick.
+                                    std::collections::hash_map::Entry::Occupied(_) => {
+                                        send_to(players, player, ServerMessage::Error {
+                                            code: ErrorCode::StaleFrame,
+                                            message: "your recipe is already in".into(),
+                                        }).await;
+                                    }
+                                    std::collections::hash_map::Entry::Vacant(slot) => {
+                                        if frames.get(&player).is_some_and(|f| f.permits_recipe(&recipe)) {
+                                            slot.insert(recipe);
+                                        } else {
+                                            send_to(players, player, ServerMessage::Error {
+                                                code: ErrorCode::InvalidTarget,
+                                                message: "that recipe is outside your draft frame".into(),
+                                            }).await;
+                                        }
+                                    }
+                                }
+                            }
+                            // The brewer pick resolved before the draft opened.
+                            ClientMessage::PickBrewer { .. } => {
+                                send_to(players, player, ServerMessage::Error {
+                                    code: ErrorCode::StaleFrame,
+                                    message: "the brewer pick has already been resolved".into(),
+                                }).await;
+                            }
+                            ClientMessage::Heartbeat => {
+                                send_to(players, player, ServerMessage::Heartbeat).await;
+                            }
+                            ClientMessage::Emote { emote } if palette.contains(&emote.0) => {
+                                broadcast(players, ServerMessage::EmoteBroadcast { from: player, emote }).await;
+                            }
+                            ClientMessage::Emote { .. } => {
+                                send_to(players, player, ServerMessage::Error {
+                                    code: ErrorCode::InvalidEmote,
+                                    message: "unknown emote".into(),
+                                }).await;
+                            }
+                            // No wave is open and no other phase action is
+                            // legal during the draft (§I: an error, never a drop).
+                            _ => {
+                                send_to(players, player, ServerMessage::Error {
+                                    code: ErrorCode::WrongPhase,
+                                    message: "the apothecary draft is open".into(),
+                                }).await;
+                            }
+                        }
+                    }
+                    Some(GroupCommand::Leave { player }) => {
+                        gone.insert(player);
+                    }
+                    Some(GroupCommand::Join { player, out, .. }) => {
+                        if let Some(seat) = players.iter_mut().find(|s| s.id == player) {
+                            seat.out = out;
+                            gone.remove(&player);
+                            // Re-offer the frame if their recipe is still owed.
+                            if !recipes.contains_key(&player)
+                                && let Some(decision) = frames.get(&player)
+                            {
+                                send_to(players, player, offer_frame(decision)).await;
+                            }
+                        } else {
+                            let _ = out
+                                .send(ServerMessage::Error {
+                                    code: ErrorCode::WrongPhase,
+                                    message: "game already in progress".into(),
+                                })
+                                .await;
+                        }
+                    }
+                    Some(GroupCommand::ForceStart) => {}
+                    Some(GroupCommand::Shutdown) => break,
+                }
+            }
+        }
+    }
+
+    // Quick-pick every straggler (timeout/disconnect): the frame's suggested
+    // recipe — the game never stalls on a draft (the lobby ethos).
+    for seat in players.iter() {
+        recipes.entry(seat.id).or_insert_with(|| {
+            match &frames[&seat.id] {
+                PendingDecision::ApothecaryDraft { suggested, .. } => suggested.clone(),
+                _ => Recipe::default(), // unreachable: every frame is a draft
+            }
+        });
+    }
+    recipes
+}
+
 /// Send `player` their current private hand (ingredients + spells).
 async fn send_hand(players: &[SeatInfo], game: &Game<'_>, player: PlayerId) {
     let (ingredients, spells) = game
@@ -605,7 +805,8 @@ async fn collect_late_commit(
                             | ClientMessage::CommitPass
                             | ClientMessage::CommitDefer
                             | ClientMessage::LockIn
-                            | ClientMessage::PickBrewer { .. } => {
+                            | ClientMessage::PickBrewer { .. }
+                            | ClientMessage::SubmitRecipe { .. } => {
                                 send_to(players, player, ServerMessage::Error {
                                     code: ErrorCode::StaleFrame,
                                     message: "that decision has already been resolved".into(),
@@ -753,6 +954,60 @@ pub async fn run_game(
         .find(|(_, b)| **b == Brewer::Lurker)
         .map(|(p, _)| *p);
 
+    // The pre-game Apothecary draft (`boom2-apothecary`): offer the rosters
+    // (you draft knowing who you are — Brewer first), collect the simultaneous
+    // recipes, publish the table's intent — all BEFORE deck realization.
+    // `draft` span — child of the game span; recipes are public (the realized
+    // decks are not — they live in the engine and the hand spans).
+    let recipes = {
+        let draft_span = game_span
+            .in_scope(|| tracing::info_span!("draft", draft.recipes = tracing::field::Empty));
+        let collected = run_draft_phase(
+            config,
+            &mut players,
+            rx,
+            &mut gone,
+            palette,
+            game_start,
+            &mut input_log,
+            seed,
+            &brewers,
+        )
+        .await;
+        let recipes_str = ids
+            .iter()
+            .map(|id| {
+                let r = &collected[id];
+                let pantry: Vec<&str> = r.pantry.iter().map(|b| b.name()).collect();
+                let grimoire: Vec<&str> = r.grimoire.iter().map(|b| b.name()).collect();
+                let reserves: Vec<String> = r.reserves.iter().map(|k| format!("{k:?}")).collect();
+                format!(
+                    "{}/{}/{}",
+                    pantry.join("+"),
+                    grimoire.join("+"),
+                    reserves.join("+")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        draft_span.record("draft.recipes", recipes_str.as_str());
+        collected
+    };
+    let recipe_list: Vec<PlayerRecipe> = ids
+        .iter()
+        .map(|id| PlayerRecipe {
+            player: *id,
+            recipe: recipes[id].clone(),
+        })
+        .collect();
+    broadcast(
+        &players,
+        ServerMessage::RecipesRevealed {
+            recipes: recipe_list.clone(),
+        },
+    )
+    .await;
+
     // The single orchestration core: `run_game` owns no game state of its own. It
     // drives a `Game` — the same engine `Game::play_out` is tested against — through
     // its `begin_round` / `top_up_active` / `resolve_wave` / `settle_round` /
@@ -761,8 +1016,9 @@ pub async fn run_game(
     // scores, modifiers, RNG, round bookkeeping, per-player/per-round analytics, and
     // the replay action log all live in `Game`, so the shipping path cannot drift
     // from the tested one and the post-game write feeds straight off the engine.
-    // Constructed AFTER the brewer phase: deck building consults the picks (the
-    // brewer-before-deck ordering).
+    // Constructed AFTER the brewer phase and the draft: deck building consults
+    // the picks (the brewer-before-deck ordering) and realizes each player's
+    // decks from their recipe (the Apothecary as deck source).
     let game_players: Vec<Player> = players
         .iter()
         .map(|s| Player {
@@ -771,7 +1027,7 @@ pub async fn run_game(
             display_name: s.name.clone(),
         })
         .collect();
-    let mut game = Game::with_brewers(registry, config, game_players, brewers, seed);
+    let mut game = Game::with_recipes(registry, config, game_players, brewers, recipes, seed);
 
     for round_number in 1..=ROUND_COUNT {
         // The Lurker's defer is once per round.
@@ -1062,6 +1318,7 @@ pub async fn run_game(
                     round_number,
                     players: public_players(&players, &gone),
                     brewers: brewer_list.clone(),
+                    recipes: recipe_list.clone(),
                     scores: scores_vec(game.scores(), &ids),
                     active_modifiers: game.active_modifiers().to_vec(),
                     contributions: to_contributions(game.contributions(&ids)),
@@ -1303,6 +1560,7 @@ pub async fn run_game(
         started_at,
         &players,
         &brewer_list,
+        &recipe_list,
         game.scores(),
         game.cards_played(),
         game.round_logs(),
@@ -1348,6 +1606,7 @@ async fn persist_completed_game(
     started_at: chrono::DateTime<Utc>,
     players: &[SeatInfo],
     brewers: &[PlayerBrewer],
+    recipes: &[PlayerRecipe],
     scores: &HashMap<PlayerId, i32>,
     cards_played: &HashMap<PlayerId, u32>,
     rounds: &[RoundLog],
@@ -1366,6 +1625,7 @@ async fn persist_completed_game(
         config,
         players.iter().map(|p| (p.id, p.color, p.name.clone())),
         brewers.iter().map(|b| (b.player, b.brewer)),
+        recipes.iter().map(|r| (r.player, r.recipe.clone())),
         action_log,
         input_log,
     ) {
@@ -1408,6 +1668,9 @@ fn recorded_input(msg: &ClientMessage) -> Option<RecordedInput> {
         ClientMessage::CommitPass => Some(RecordedInput::CommitPass),
         ClientMessage::CommitDefer => Some(RecordedInput::CommitDefer),
         ClientMessage::PickBrewer { brewer } => Some(RecordedInput::PickBrewer { brewer: *brewer }),
+        ClientMessage::SubmitRecipe { recipe } => Some(RecordedInput::SubmitRecipe {
+            recipe: recipe.clone(),
+        }),
         ClientMessage::LockIn => Some(RecordedInput::LockIn),
         ClientMessage::Emote { emote } => Some(RecordedInput::Emote { emote: *emote }),
         _ => None,
@@ -1447,6 +1710,7 @@ async fn reject_stale(
                     | ClientMessage::CommitPass
                     | ClientMessage::CommitDefer
                     | ClientMessage::PickBrewer { .. }
+                    | ClientMessage::SubmitRecipe { .. }
                     | ClientMessage::LockIn => {
                         send_to(
                             players,
@@ -1852,14 +2116,16 @@ async fn collect_wave(
                                 )
                                 .await;
                             }
-                            // The pre-game pick frame resolved long ago.
-                            ClientMessage::PickBrewer { .. } => {
+                            // The pre-game frames resolved long ago.
+                            ClientMessage::PickBrewer { .. }
+                            | ClientMessage::SubmitRecipe { .. } => {
                                 send_to(
                                     players,
                                     player,
                                     ServerMessage::Error {
                                         code: ErrorCode::StaleFrame,
-                                        message: "the brewer pick has already been resolved".into(),
+                                        message: "the pre-game decisions have already been resolved"
+                                            .into(),
                                     },
                                 )
                                 .await;
@@ -2559,6 +2825,7 @@ mod tests {
         cfg.timing.wave1_ms = 2_000;
         cfg.timing.wave_ms = 2_000;
         cfg.timing.brewer_pick_ms = 2_000;
+        cfg.timing.draft_ms = 2_000;
         let registry = cfg.build_registry().unwrap();
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<GroupCommand>(512);
@@ -2629,6 +2896,12 @@ mod tests {
                                 brewer: Brewer::Lurker,
                             })
                             .await;
+                        }
+                        ServerMessage::DecisionFrame {
+                            decision: PendingDecision::ApothecaryDraft { suggested, .. },
+                            ..
+                        } => {
+                            send(ClientMessage::SubmitRecipe { recipe: suggested }).await;
                         }
                         ServerMessage::DecisionFrame { decision, .. } => {
                             if awaiting_late {
@@ -3051,6 +3324,20 @@ mod tests {
                         })
                         .await;
                 }
+                // Answer the draft with the frame's suggested quick-pick — the
+                // same recipe the server's straggler default applies, so the
+                // sync parity runner can rebuild it via `suggested_recipe`.
+                ServerMessage::DecisionFrame {
+                    decision: PendingDecision::ApothecaryDraft { suggested, .. },
+                    ..
+                } => {
+                    let _ = cmd_tx
+                        .send(GroupCommand::Action {
+                            player: id,
+                            msg: ClientMessage::SubmitRecipe { recipe: suggested },
+                        })
+                        .await;
+                }
                 ServerMessage::WaveOpened { wave_number, .. } => {
                     if wave_number == 1 {
                         passed = false;
@@ -3100,9 +3387,10 @@ mod tests {
         let mut cfg = ContentConfig::from_toml(include_str!("../content.toml")).unwrap();
         cfg.timing.wave1_ms = wave_ms;
         cfg.timing.wave_ms = wave_ms;
-        // The pick phase closes early once all four picks land; the timer only
-        // bounds a straggler.
+        // The pre-game phases close early once all four answers land; the
+        // timers only bound a straggler.
         cfg.timing.brewer_pick_ms = 2_000;
+        cfg.timing.draft_ms = 2_000;
         let registry = cfg.build_registry().unwrap();
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<GroupCommand>(512);
@@ -3200,16 +3488,29 @@ mod tests {
                     .map(|s| (s.player, s.score))
                     .collect();
 
-            // The async clients pick the first of each dealt pair — exactly the
-            // deterministic deal + auto-pick rule — so the sync runner carries
-            // identical brewer assignments.
+            // The async clients pick the first of each dealt pair and submit
+            // the suggested quick-pick recipe — exactly the deterministic deal
+            // + auto-pick + straggler-default rules — so the sync runner
+            // carries identical brewer assignments and recipes.
             let players = sync_players();
             let brewers: HashMap<PlayerId, Brewer> = players
                 .iter()
                 .zip(deal_brewer_pairs(seed, players.len()))
                 .map(|(p, pair)| (p.id, auto_pick(&pair)))
                 .collect();
-            let mut game = Game::with_brewers(&registry, &cfg, players, brewers, seed);
+            let recipes: HashMap<PlayerId, Recipe> = players
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    let excluded = brewers::excluded_buckets(brewers.get(&p.id).copied());
+                    let options: Vec<GrimoireBucket> = GrimoireBucket::ALL
+                        .into_iter()
+                        .filter(|b| !excluded.contains(b))
+                        .collect();
+                    (p.id, suggested_recipe(seed, i, &options))
+                })
+                .collect();
+            let mut game = Game::with_recipes(&registry, &cfg, players, brewers, recipes, seed);
             let mut decider = play_first_else_pass();
             let sync_scores = game.play_out(&mut decider).scores;
 

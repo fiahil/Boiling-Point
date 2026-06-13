@@ -19,16 +19,19 @@
 //! - **Broker** — the winning-split rounding ([`crate::game::scoring`]).
 //! - **Lurker** — the once-per-round deferred commit (the staged wave in
 //!   [`crate::game::round`] / the session's two-step collection).
-//! - **Connoisseur / Reservist** (draft) and **Herbalist / Distiller /
-//!   Alchemist** (compounding) — inert seams below: their hooked systems land
-//!   with `boom2-apothecary` / `boom2-compounding`; until then the constants
-//!   are defined (and tested) but nothing consults them. A known phasing gap,
-//!   not a bug (spec `boom-brewers`, "degrade gracefully").
+//! - **Connoisseur / Reservist** — the Apothecary-draft bends
+//!   (`boom2-apothecary` activated the seams): the draft frame's allowances
+//!   ([`extra_buckets`], [`reserve_allowance`]); the Cinderwright's no-Ward
+//!   rule also filters Ironbark from their draft ([`excluded_buckets`]).
+//! - **Herbalist / Distiller / Alchemist** (compounding) — inert seams below:
+//!   their hooked system lands with `boom2-compounding`; until then the
+//!   constants are defined (and tested) but nothing consults them. A known
+//!   phasing gap, not a bug (spec `boom-brewers`, "degrade gracefully").
 //!
 //! Every magnitude is `[needs playtesting]` (Principle IV); the persona ×
 //! Brewer harness matrix gates them.
 
-use boiling_point_protocol::vocab::{Brewer, SpellKind};
+use boiling_point_protocol::vocab::{Brewer, GrimoireBucket, SpellKind};
 
 use crate::config::INGREDIENT_HAND;
 
@@ -44,13 +47,14 @@ pub const CHANNELER_SPELLS_PER_WAVE: u8 = 2;
 /// built without them; frames never enumerate them; the engine drops them).
 pub const WARDS: [SpellKind; 3] = [SpellKind::Cap, SpellKind::Halve, SpellKind::Redirect];
 
-/// Inert seam (`boom2-apothecary`): extra buckets the Connoisseur drafts in
-/// one ledger. `[needs playtesting]`.
+/// Extra buckets the Connoisseur drafts in one ledger (the 4th bucket;
+/// consulted by [`extra_buckets`] since `boom2-apothecary`).
+/// `[needs playtesting]`.
 pub const CONNOISSEUR_EXTRA_BUCKETS: u8 = 1;
 
-/// Inert seam (`boom2-apothecary`): grimoire reserves (exact spells locked at
-/// the draft) — two for the Reservist, one for everyone else.
-/// `[needs playtesting]`.
+/// Grimoire reserves (exact spells locked at the draft) — two for the
+/// Reservist, one for everyone else (consulted by [`reserve_allowance`] since
+/// `boom2-apothecary`). `[needs playtesting]`.
 pub const RESERVIST_RESERVES: u8 = 2;
 
 /// Inert seam (`boom2-compounding`): combo halves the Herbalist needs in the
@@ -88,6 +92,34 @@ pub fn hand_floor(brewer: Option<Brewer>) -> usize {
 pub fn excluded_spells(brewer: Option<Brewer>) -> &'static [SpellKind] {
     match brewer {
         Some(Brewer::Cinderwright) => &WARDS,
+        _ => &[],
+    }
+}
+
+/// Extra buckets ONE ledger may take past the draft's standard maximum: the
+/// Connoisseur's 4th bucket; zero for everyone else (`boom2-apothecary`).
+pub fn extra_buckets(brewer: Option<Brewer>) -> u8 {
+    match brewer {
+        Some(Brewer::Connoisseur) => CONNOISSEUR_EXTRA_BUCKETS,
+        _ => 0,
+    }
+}
+
+/// Grimoire reserves a seat may lock at the draft: the Reservist's two, one
+/// for everyone else (`boom2-apothecary`).
+pub fn reserve_allowance(brewer: Option<Brewer>) -> u8 {
+    match brewer {
+        Some(Brewer::Reservist) => RESERVIST_RESERVES,
+        _ => 1,
+    }
+}
+
+/// Grimoire buckets a seat is never offered in the draft: the Cinderwright can
+/// never hold a Ward, and Ironbark's whole family is the three wards — an
+/// offered-but-dead bucket would violate the frame's exact-enumeration rule.
+pub fn excluded_buckets(brewer: Option<Brewer>) -> &'static [GrimoireBucket] {
+    match brewer {
+        Some(Brewer::Cinderwright) => &[GrimoireBucket::Ironbark],
         _ => &[],
     }
 }
@@ -147,5 +179,43 @@ mod tests {
         }
         assert_eq!(spell_limit(None), 1);
         assert_eq!(hand_floor(None), INGREDIENT_HAND as usize);
+    }
+
+    /// The draft bends (`boom2-apothecary`): only the Connoisseur gets the 4th
+    /// bucket, only the Reservist a second reserve, and only the Cinderwright
+    /// loses a bucket — exactly Ironbark, whose family is exactly the wards.
+    #[test]
+    fn draft_bends_apply_to_exactly_their_brewer() {
+        for brewer in Brewer::ALL {
+            let b = Some(brewer);
+            assert_eq!(
+                extra_buckets(b),
+                if brewer == Brewer::Connoisseur {
+                    CONNOISSEUR_EXTRA_BUCKETS
+                } else {
+                    0
+                }
+            );
+            assert_eq!(
+                reserve_allowance(b),
+                if brewer == Brewer::Reservist {
+                    RESERVIST_RESERVES
+                } else {
+                    1
+                }
+            );
+            let excluded = excluded_buckets(b);
+            if brewer == Brewer::Cinderwright {
+                assert_eq!(excluded, &[GrimoireBucket::Ironbark]);
+            } else {
+                assert!(excluded.is_empty());
+            }
+        }
+        assert_eq!(extra_buckets(None), 0);
+        assert_eq!(reserve_allowance(None), 1);
+        assert!(excluded_buckets(None).is_empty());
+        // The no-Ward rule and the no-Ironbark rule are the same rule: the
+        // bucket's family is exactly the ward list.
+        assert_eq!(GrimoireBucket::Ironbark.spells(), &WARDS);
     }
 }

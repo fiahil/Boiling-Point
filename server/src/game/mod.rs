@@ -8,6 +8,8 @@
 //! - [`pot`]: the accumulating round pot (running total, colour adjustments),
 //! - [`modifiers`]: the cumulative modifier stack,
 //! - [`brewers`]: the per-Brewer rule bends (`boom2-brewers`),
+//! - [`realizer`]: the Apothecary deck realizer (`boom2-apothecary`) — recipes
+//!   to fixed-size, capped, colour-anchored decks, re-rolled per game,
 //! - [`spells`]: Instant resolution, Active prime/fire, ward/Hex/Harvest fires,
 //! - [`round`]: the wave loop, detonator identification, and the sorted depile,
 //! - [`scoring`]: the P-symmetry (safe-brew dominance, detonator explosion).
@@ -18,6 +20,7 @@ pub mod deathmatch;
 pub mod deck;
 pub mod modifiers;
 pub mod pot;
+pub mod realizer;
 pub mod round;
 pub mod runner;
 pub mod scoring;

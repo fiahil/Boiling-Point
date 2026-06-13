@@ -90,6 +90,27 @@ async fn frame_bot(
                     send(ClientMessage::PickBrewer { brewer: options[0] }).await;
                     continue;
                 }
+                // The pre-game draft: the probe seat first submits a
+                // duplicate-bucket recipe (never enumerated — must be
+                // rejected), then everyone submits the suggested quick-pick
+                // verbatim.
+                if let PendingDecision::ApothecaryDraft { suggested, .. } = &decision {
+                    if probe {
+                        report.probes_sent += 1;
+                        let mut bad = suggested.clone();
+                        bad.pantry[1] = bad.pantry[0];
+                        assert!(
+                            !decision.permits_recipe(&bad),
+                            "a duplicate-bucket recipe must not be enumerated"
+                        );
+                        send(ClientMessage::SubmitRecipe { recipe: bad }).await;
+                    }
+                    send(ClientMessage::SubmitRecipe {
+                        recipe: suggested.clone(),
+                    })
+                    .await;
+                    continue;
+                }
                 // Frame/hand agreement: the playable set IS the hand.
                 let PendingDecision::WaveCommit {
                     playable,
@@ -165,7 +186,9 @@ async fn frame_bot(
                 send(ClientMessage::LockIn).await;
             }
             ServerMessage::Error { code, message } => {
-                if probe && matches!(code, ErrorCode::NotYourCard) {
+                // NotYourCard rejects the wave probe; InvalidTarget the
+                // duplicate-recipe draft probe.
+                if probe && matches!(code, ErrorCode::NotYourCard | ErrorCode::InvalidTarget) {
                     report.probe_rejections += 1;
                 } else {
                     report
@@ -189,6 +212,7 @@ async fn run_frame_driven_game(seed: u64) -> Vec<FrameBotReport> {
     cfg.timing.wave1_ms = 3_000;
     cfg.timing.wave_ms = 3_000;
     cfg.timing.brewer_pick_ms = 3_000;
+    cfg.timing.draft_ms = 3_000;
     let registry = cfg.build_registry().unwrap();
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<GroupCommand>(512);
@@ -289,6 +313,7 @@ async fn non_enumerated_spell_probes_are_rejected() {
     cfg.timing.wave1_ms = 1_500;
     cfg.timing.wave_ms = 1_500;
     cfg.timing.brewer_pick_ms = 1_500;
+    cfg.timing.draft_ms = 1_500;
     let registry = cfg.build_registry().unwrap();
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<GroupCommand>(512);
@@ -340,6 +365,17 @@ async fn non_enumerated_spell_probes_are_rejected() {
                             })
                             .await;
                     }
+                    ServerMessage::DecisionFrame {
+                        decision: PendingDecision::ApothecaryDraft { suggested, .. },
+                        ..
+                    } => {
+                        let _ = cmd_tx
+                            .send(GroupCommand::Action {
+                                player: id,
+                                msg: ClientMessage::SubmitRecipe { recipe: suggested },
+                            })
+                            .await;
+                    }
                     ServerMessage::DecisionFrame { .. } => {
                         let _ = cmd_tx
                             .send(GroupCommand::Action {
@@ -375,6 +411,17 @@ async fn non_enumerated_spell_probes_are_rejected() {
                             .send(GroupCommand::Action {
                                 player: me,
                                 msg: ClientMessage::PickBrewer { brewer: options[0] },
+                            })
+                            .await;
+                    }
+                    ServerMessage::DecisionFrame {
+                        decision: PendingDecision::ApothecaryDraft { suggested, .. },
+                        ..
+                    } => {
+                        let _ = cmd_tx
+                            .send(GroupCommand::Action {
+                                player: me,
+                                msg: ClientMessage::SubmitRecipe { recipe: suggested },
                             })
                             .await;
                     }

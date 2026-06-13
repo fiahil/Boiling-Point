@@ -21,8 +21,8 @@ use boiling_point_protocol::server::{
     Contribution, DepileEntry, PlayerScore, ScoringOutcome, SpellFire,
 };
 use boiling_point_protocol::vocab::{
-    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, SpellKind, SpellTarget,
-    TargetKind,
+    Brewer, Color, HandIngredient, HandSpell, IngredientView, ModifierKind, Recipe, SpellKind,
+    SpellTarget, TargetKind,
 };
 
 use crate::config::{ContentConfig, ROUND_COUNT};
@@ -34,6 +34,7 @@ use super::card::Ingredient;
 use super::deathmatch::{DeathmatchResult, run_deathmatch};
 use super::deck::{Grimoire, Pantry};
 use super::modifiers::ActiveModifiers;
+use super::realizer;
 use super::round::{DepileData, Round, RoundEnd, SpellChoice, WaveAction, WaveChoice, WaveInput};
 use super::scoring::{ExplosionResult, SafeScore, ScoringContext, explosion, score_safe};
 use super::spells::CastCommit;
@@ -441,6 +442,9 @@ pub struct Game<'a> {
     /// Each player's public Brewer (`boom2-brewers`); empty when no brewer
     /// phase ran (the brewerless sync runner and pre-v6 replays).
     brewers: HashMap<PlayerId, Brewer>,
+    /// Each player's public recipe (`boom2-apothecary`); empty when no draft
+    /// ran (the fixed-deck fallback: sync tests, teaching games, old replays).
+    recipes: HashMap<PlayerId, Recipe>,
     modifiers: ActiveModifiers,
     modifier_pile: Vec<ModifierKind>,
     rng: StdRng,
@@ -472,15 +476,32 @@ impl<'a> Game<'a> {
         Game::with_brewers(registry, config, players, HashMap::new(), seed)
     }
 
-    /// Create a game whose players carry their picked Brewers. Brewer picks
-    /// MUST be settled before construction: deck building consults them (the
-    /// Cinderwright's grimoire is built ward-free), which is the engine half
-    /// of the brewer-before-deck ordering (spec `boom-brewers`).
+    /// Create a game whose players carry their picked Brewers but no recipes:
+    /// every deck is the **fixed** colour-anchored deal — the harness/teaching
+    /// fallback since `boom2-apothecary` (and the shape of pre-draft replays).
     pub fn with_brewers(
         registry: &'a ContentRegistry,
         config: &ContentConfig,
         players: Vec<Player>,
         brewers: HashMap<PlayerId, Brewer>,
+        seed: u64,
+    ) -> Self {
+        Game::with_recipes(registry, config, players, brewers, HashMap::new(), seed)
+    }
+
+    /// Create a game whose players carry their picked Brewers and their
+    /// drafted recipes. Both MUST be settled before construction: deck
+    /// building consults them — a player's decks are **realized** from their
+    /// recipe ([`realizer`]), and the Cinderwright's grimoire is built
+    /// ward-free either way. A player absent from `recipes` falls back to the
+    /// fixed deal (task 4.2's harness/teaching fallback), so the brewerless,
+    /// recipeless [`Game::new`] still deals the classic decks.
+    pub fn with_recipes(
+        registry: &'a ContentRegistry,
+        config: &ContentConfig,
+        players: Vec<Player>,
+        brewers: HashMap<PlayerId, Brewer>,
+        recipes: HashMap<PlayerId, Recipe>,
         seed: u64,
     ) -> Self {
         let mut rng = StdRng::seed_from_u64(seed);
@@ -500,19 +521,48 @@ impl<'a> Game<'a> {
         for p in &players {
             let pantry_seed = deck_seeder.next_u64();
             let grimoire_seed = deck_seeder.next_u64();
-            pantries.insert(
-                p.id,
-                Pantry::build(registry, p.color, &mut next_id, pantry_seed),
-            );
-            grimoires.insert(
-                p.id,
-                Grimoire::build_excluding(
-                    registry,
-                    &mut next_id,
-                    grimoire_seed,
-                    brewers::excluded_spells(brewers.get(&p.id).copied()),
-                ),
-            );
+            let excluded = brewers::excluded_spells(brewers.get(&p.id).copied());
+            match recipes.get(&p.id) {
+                // The Apothecary path: realize both decks from the recipe,
+                // re-rolled per game off the same per-seat seed stream.
+                Some(recipe) => {
+                    pantries.insert(
+                        p.id,
+                        Pantry::from_cards(
+                            realizer::realize_pantry(
+                                registry,
+                                &recipe.pantry,
+                                p.color,
+                                &mut next_id,
+                                pantry_seed,
+                            ),
+                            pantry_seed,
+                        ),
+                    );
+                    grimoires.insert(
+                        p.id,
+                        Grimoire::from_spells(realizer::realize_grimoire(
+                            registry,
+                            &recipe.grimoire,
+                            &recipe.reserves,
+                            excluded,
+                            &mut next_id,
+                            grimoire_seed,
+                        )),
+                    );
+                }
+                // The fixed-deal fallback.
+                None => {
+                    pantries.insert(
+                        p.id,
+                        Pantry::build(registry, p.color, &mut next_id, pantry_seed),
+                    );
+                    grimoires.insert(
+                        p.id,
+                        Grimoire::build_excluding(registry, &mut next_id, grimoire_seed, excluded),
+                    );
+                }
+            }
         }
 
         let color_owner: HashMap<Color, PlayerId> =
@@ -532,6 +582,7 @@ impl<'a> Game<'a> {
             color_owner,
             player_color,
             brewers,
+            recipes,
             modifiers: ActiveModifiers::new(),
             modifier_pile,
             rng,
@@ -555,6 +606,12 @@ impl<'a> Game<'a> {
     /// A player's Brewer, if one was picked.
     pub fn brewer_of(&self, player: PlayerId) -> Option<Brewer> {
         self.brewers.get(&player).copied()
+    }
+
+    /// Each player's public recipe (empty when no draft ran — the fixed-deck
+    /// fallback).
+    pub fn recipes(&self) -> &HashMap<PlayerId, Recipe> {
+        &self.recipes
     }
 
     /// Play the whole game with the given decider, returning the outcome. The
@@ -1537,6 +1594,7 @@ mod tests {
             roster
                 .iter()
                 .map(|p| (p.id, p.color, p.display_name.clone())),
+            std::iter::empty(),
             std::iter::empty(),
             &outcome.action_log,
             &[],
