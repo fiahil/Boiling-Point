@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use boiling_point_protocol::frame::PendingDecision;
 use boiling_point_protocol::server::{CompoundingFire, DepileEntry};
-use boiling_point_protocol::vocab::{Color, ComboHalf, ComboPair, Compounding, SpellKind};
+use boiling_point_protocol::vocab::{Color, ComboId, Compounding, SpellKind};
 use boiling_point_protocol::{CardId, ClientMessage, PlayerId, ServerMessage};
 
 use crate::ClientError;
@@ -107,8 +107,8 @@ pub async fn run_seat<C: Connection>(
     }
 
     // Tally compounding from the depile reveals (`boom2-compounding`): the fires
-    // narrated on completing/threshold cards, the combo-half exposure, and the
-    // lone (dead-draw) halves — a half whose partner was absent for its owner.
+    // narrated on completing/threshold cards, the combo-member exposure, and the
+    // lone (dead-draw) members — those in a combo the owner never completed.
     fn record_compounding(r: &mut RoundObservation, reveals: &[DepileEntry]) {
         for entry in reveals {
             match entry.compounding {
@@ -123,24 +123,20 @@ pub async fn run_seat<C: Connection>(
                 None => {}
             }
         }
-        // (has_A, has_B, count) per (owner, pair) from the printed combo tags.
-        let mut groups: HashMap<(PlayerId, ComboPair), (bool, bool, u32)> = HashMap::new();
+        // Per (owner, combo): the distinct members present and the card count.
+        // A combo is lone (dead) when its distinct members fall short of size.
+        let mut groups: HashMap<(PlayerId, ComboId), (HashSet<u8>, u32)> = HashMap::new();
         for entry in reveals {
-            if let Some(Compounding::Combo { pair, half }) = entry.ingredient.compounding {
-                r.combo_halves += 1;
-                let g = groups
-                    .entry((entry.player, pair))
-                    .or_insert((false, false, 0));
-                match half {
-                    ComboHalf::A => g.0 = true,
-                    ComboHalf::B => g.1 = true,
-                }
-                g.2 += 1;
+            if let Some(Compounding::Combo { combo, member }) = entry.ingredient.compounding {
+                r.combo_members += 1;
+                let g = groups.entry((entry.player, combo)).or_default();
+                g.0.insert(member);
+                g.1 += 1;
             }
         }
-        for (_, (has_a, has_b, count)) in groups {
-            if !(has_a && has_b) {
-                r.lone_combo_halves += count;
+        for ((_, combo), (members, count)) in groups {
+            if (members.len() as u8) < combo.size() {
+                r.lone_combo_members += count;
             }
         }
     }

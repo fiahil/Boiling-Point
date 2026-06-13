@@ -36,12 +36,12 @@ pub struct RoundObservation {
     pub combo_fires: u32,
     /// Count-thresholds that paid off this round (`boom2-compounding`).
     pub threshold_fires: u32,
-    /// Combo-half cards present in the pot at settle — the combo-content
+    /// Combo-member cards present in the pot at settle — the combo-content
     /// exposure (`boom2-compounding`).
-    pub combo_halves: u32,
-    /// Combo halves whose partner was absent for their owner — the dead-draw
-    /// signal (a lone half is a plain card, never a penalty).
-    pub lone_combo_halves: u32,
+    pub combo_members: u32,
+    /// Combo-member cards in a combo their owner never completed — the
+    /// dead-draw signal (a lone member is a plain card, never a penalty).
+    pub lone_combo_members: u32,
     /// Total compounding bonus points narrated this round (combo + threshold) —
     /// the snowball proxy against the scored pot value.
     pub compounding_points: u32,
@@ -64,8 +64,8 @@ impl RoundObservation {
             modifier: None,
             combo_fires: 0,
             threshold_fires: 0,
-            combo_halves: 0,
-            lone_combo_halves: 0,
+            combo_members: 0,
+            lone_combo_members: 0,
             compounding_points: 0,
         }
     }

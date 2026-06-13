@@ -89,9 +89,12 @@ pub struct Contribution {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum CompoundingFire {
-    /// A named combo paid off (both halves present, or one for a Herbalist).
+    /// A named combo paid off — all its members were in the pot (a Herbalist's
+    /// fires twice). Bigger combos pay massively.
     Combo {
-        /// Bonus points the combo added to this card's colour.
+        /// The combo's size (2–5 members) — the bigger, the rarer and richer.
+        size: u8,
+        /// Bonus points the combo added to the owner's colour.
         bonus_points: u8,
         /// Bonus volatility the combo added (non-zero only for an Alchemist).
         bonus_volatility: u8,

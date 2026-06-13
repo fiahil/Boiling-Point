@@ -53,17 +53,6 @@ impl PotIngredient {
         }
     }
 
-    /// The compounding bonus points this card adds to its colour at resolution
-    /// (zero unless it serves a colour — a colorless/wild play forfeits the
-    /// bonus, like its base points).
-    pub fn compounding_points(&self) -> u8 {
-        if self.effective_color().is_some() {
-            self.compounding.bonus_points
-        } else {
-            0
-        }
-    }
-
     /// The volatility this card contributes: its printed value plus any
     /// compounding-added volatility (`boom2-compounding` — an Alchemist's fired
     /// combo). The detonator sort and the explosion check both use this.
@@ -112,15 +101,17 @@ impl Pot {
     }
 
     /// Compounding bonus points attributed to `color` at resolution
-    /// (`boom2-compounding`): the combo + count-threshold bonuses on cards
-    /// serving that colour. Kept separate from [`Pot::color_points`] so the
-    /// in-round spell snapshots (Double Down / Sour read pure Vote totals) stay
-    /// decoupled from compounding, which only resolves at scoring.
+    /// (`boom2-compounding`): the combo + count-threshold bonuses whose
+    /// `credit_color` is this colour. A combo credits its **owner's** colour
+    /// (cross-colour safe), a threshold its own card's colour. Kept separate
+    /// from [`Pot::color_points`] so the in-round spell snapshots (Double Down /
+    /// Sour read pure Vote totals) stay decoupled from compounding, which only
+    /// resolves at scoring.
     pub fn compounding_points(&self, color: Color) -> u32 {
         self.cards
             .iter()
-            .filter(|p| p.effective_color() == Some(color))
-            .map(|p| p.compounding_points() as u32)
+            .filter(|p| p.compounding.credit_color == Some(color))
+            .map(|p| p.compounding.bonus_points as u32)
             .sum()
     }
 
@@ -259,6 +250,7 @@ mod tests {
         card.compounding = CardCompounding {
             bonus_points: 2,
             bonus_volatility: 2,
+            credit_color: Some(Color::Ruby),
             fire: None,
         };
         pot.cards.push(card);

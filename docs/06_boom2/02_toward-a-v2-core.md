@@ -229,7 +229,7 @@ no two pull the same lever:
 | **Reservist** | Apothecary draft | Your grimoire holds **two reserves** — lock two exact spells, not one. |
 | **Channeler** 🌶️ | Spell economy (O2) | You may play **two spells per wave**, not one. |
 | **Forager** | Ingredient hand | You top up ingredients to **4** each wave, not 3. |
-| **Herbalist** | Compounding (O3) | Your named combos fire from **a single half** — you never need both ingredients in the pot. |
+| **Herbalist** | Compounding (O3) | Your named combos fire **twice** — double the payoff when one completes. |
 | **Distiller** | Compounding (O3) | Your count-threshold cards treat the pot as **2 cards larger** — payoffs come online sooner. |
 | **Alchemist** 🌶️ | Compounding (O3) | When one of your combos fires it also **adds volatility** to the pot — chemistry as a weapon. |
 | **Eavesdropper** | Info flow | Whenever **anyone** casts Peek, you secretly learn the boiling point too (conditional, public — bends flow, not the answer). |
@@ -586,42 +586,57 @@ beyond the spec:
   such ingredient exists); if added later it MUST be capped or Peek-gated
   (spec `boom-compounding`). This is the Principle-III "start with the legible
   classes" call.
+- **Combos are named 2–5-ingredient sets, not pairs.** A combo ([`ComboId`])
+  fires when **all** its distinct members are in the pot, paying a size-scaling
+  bonus: 2→2, 3→5, 4→9, 5→**15** (`combo_bonus`, `[needs playtesting]`). The
+  roster is weighted toward 3s (the plurality), with one 2, one 4, and one
+  5-member jackpot. Bigger combos are far rarer to assemble — a deliberate
+  rare-massive-payoff curve.
 - **Effective volatility is the seam.** Combo-added volatility (Alchemist only)
-  lands on the **completing** (latest-played) half and flows through
+  lands on the **completing** (latest-played) member and flows through
   `PotIngredient::effective_volatility()`, so it feeds the *same-wave* explosion
   check, the fatal-wave sort, and the depile climb with no parallel path — the
   contract the combat core specified up front. Point bonuses (combo + threshold)
   stay off `color_points` (the Double Down / Sour snapshot reads pure Votes) and
   fold in only at scoring via `Pot::scored_color_points`.
-- **Combos are bonuses, never requirements.** A lone half is a plain card (no
-  bonus, no penalty); a pair fires **once per owner** even with extra copies
-  (anti-snowball); the bonus credits the owner's colour. The three compounding
-  Brewers are now live: Herbalist fires a combo from one half, Distiller treats
-  the pot as 2 cards larger for thresholds, Alchemist adds volatility on a fire.
+- **Compounding applies across colours.** A combo is detected by **owner**, not
+  colour, so its members can span colours (own + off-colour, even a colourless
+  play). The bonus is credited to the **owner's** anchor colour (`credit_color`
+  via the per-seat colour map), so a cross-colour combo always pays its builder
+  — never a rival, never forfeited when the completing card is colourless.
+- **Combos are bonuses, never requirements.** A lone member is a plain card (no
+  bonus, no penalty); a combo fires **once per owner** even with extra copies
+  (anti-snowball). The three compounding Brewers are now live: Herbalist fires a
+  completed combo **twice** (double payoff), Distiller treats the pot as 2 cards
+  larger for thresholds, Alchemist adds volatility on a fire.
 
-**Third harness derivation (1,800 games, default content `fingerprint
-87d3064e98a444d5`, seed 20260613, three cells):** a mixed baseline, one Chemist
-(Bramble+Honey+Sage, a new archetype) vs a mixed field, and a four-Chemist
-mirror. New harness metrics: combo/threshold fires per round, the lone-combo-half
-(dead-draw) rate, compounding points per round, and compounding's share of the
-scored pot — with a new `compounding_snowball` smell (flags share > 40%).
+**Third harness derivation (1,800 games, default content `fingerprint`, seed
+20260613, three cells):** a mixed baseline, one Chemist (Bramble+Honey+Sage, a
+new archetype) vs a mixed field, and a four-Chemist mirror. New harness metrics:
+combo/threshold fires per round, the lone-combo-member (dead-draw) rate,
+compounding points per round, and compounding's share of the scored pot — with a
+new `compounding_snowball` smell (flags share > 40%).
 
-- **Compounding seasons the pot; it does not become it.** The new snowball smell
-  **never fired**: compounding's share of the scored pot ran **19.2%** (baseline)
-  → 13.8% (vs-field) → **36.3%** at the four-Chemist maximum, all under the 40%
-  cap. The core is intact — the mixed baseline holds **41.5% explosion** (target
+- **Compounding seasons the pot; it does not become it.** The snowball smell
+  **never fired**: compounding's share of the scored pot ran **18.8%** (baseline)
+  → 14.0% (vs-field) → **35.7%** at the four-Chemist maximum, all under the 40%
+  cap. The core is intact — the mixed baseline holds **40.8% explosion** (target
   40–50%), 0% freeze, matching the pre-compounding economy.
-- **Thresholds carry the weight; combos rarely connect.** Honey fired 0.65–2.73
-  times/round (5–18 bonus pts/round); Bramble combos fired only **0.04–0.14
-  times/round** because both halves seldom co-occur in an owner-unknown deck —
-  the **lone-half rate is 70–96%**. This is the bonus-not-requirement design
-  working (no dead-draw feel-bad — a lone half just plays normally), but it means
-  the Bramble teeth are dull at the shipped `+2`. Headline tuning candidate for
-  human playtests: a larger combo bonus, or leaning on the Herbalist (one-half
-  fire) to make Bramble matter.
+- **Thresholds carry the weight; combos almost never connect.** Honey fired
+  0.67–2.71 times/round (5–17 bonus pts/round); named combos fired **~0/round**
+  (lone-member rate **99.6–99.9%**) — assembling all 2–5 specific members of one
+  combo from an owner-unknown, 17-archetype Bramble bucket is a lottery, and the
+  bigger the combo the rarer the win. This is the intended rare-massive-payoff
+  shape (and the bonus-not-requirement guarantee — a lone member just plays as a
+  plain card, no feel-bad), but it means Bramble is currently a **jackpot bucket
+  whose teeth seldom land**. Headline tuning candidate for human playtests: a
+  realizer that biases toward *completing* a drafted combo, smaller combos, or a
+  count-based "more members = more bonus" payoff instead of all-or-nothing. The
+  Herbalist double and the size curve are unit-validated but rarely exercised at
+  scale precisely because combos seldom complete.
 - **The Chemist deck is low-volatility and freeze-prone in a mirror.** Four
   Chemists explode ~0% and freeze 64% (Sage/Honey/Bramble are all low-vol);
-  vs a field the cautious Chemist over-wins (55%) on a safe deck + threshold
+  vs a field the cautious Chemist over-wins (~55%) on a safe deck + threshold
   payoffs. This is a **deck-composition** read (the same freeze artifact the
   apothecary mirror documented), not a compounding-magnitude problem — the
   mirror cell is the maximal-pressure snowball probe, not a balance verdict.
@@ -631,8 +646,10 @@ scored pot — with a new `compounding_snowball` smell (flags share > 40%).
 **Verdict (per Principle IV):** ship the compounding magnitudes untuned — they
 are conservative and structurally snowball-free (share < 40% even at the
 four-Chemist maximum), and the core economy is unmoved. The watch item is the
-**dull Bramble combo** (fires too rarely to feel meaningful); thresholds land
-well. Numbers stay `[needs playtesting]`. Rerun:
+**rarely-firing combo** (named 2–5 sets are a lottery on owner-unknown decks —
+thresholds carry compounding today); if humans want combos to land more often,
+the realizer or the payoff model is the lever. Numbers stay `[needs playtesting]`.
+Rerun:
 `cargo run --release -p boiling-point-ai-client --features harness --bin balance_tester -- --spec clients/ai/specs/compounding-sample.toml`.
 
 ---

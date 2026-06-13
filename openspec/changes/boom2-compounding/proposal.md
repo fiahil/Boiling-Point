@@ -5,7 +5,7 @@ Ingredients in the combat core are independent atoms. The "brewing recipes" fant
 ## What Changes
 
 - **Count-threshold compounding (Honey):** ingredients that score more in big/late pots, keyed off the **public** card count — plannable and legible.
-- **Named-ingredient combos (Bramble):** paired bonuses (e.g. Sage + Mint) that give the drafting names mechanical teeth. **Combos are bonuses, never requirements** — a card is always fine alone, better paired (avoids dead draws in an owner-unknown deck).
+- **Named-ingredient combos (Bramble):** named 2–5-member sets (e.g. Sage + Mint) with a size-scaling bonus that gives the drafting names mechanical teeth (bigger combos pay massively, but are far rarer to assemble). **Combos are bonuses, never requirements** — a card is always fine alone, better combined (avoids dead draws in an owner-unknown deck).
 - **Effective volatility feeds the detonator sort.** A card's *effective* (post-compounding) volatility is what the explosion check and the fatal-wave sort use (already required by combat core; this change is the first source of cards whose effective volatility differs from printed).
 - **Color-synergy compounding** (hidden, snowball-prone) is **capped or Peek-gated** if used at all.
 - **Reach-in manipulation stays in the grimoire** (Double Down, Sour) — compounding does **not** bake table-reaching effects onto ingredients.
@@ -26,7 +26,7 @@ Ingredients in the combat core are independent atoms. The "brewing recipes" fant
 
 ## Impact
 
-- **Protocol crate:** compounding tags on ingredients (threshold params, combo-pair ids); the depile must narrate compounding that fired.
-- **Server engine:** evaluate count-thresholds (public count), combo bonuses (both halves present), and effective-volatility recomputation feeding the explosion check + sort.
+- **Protocol crate:** compounding tags on ingredients (threshold params, named-combo ids + member); the depile must narrate compounding that fired.
+- **Server engine:** evaluate count-thresholds (public count), combo bonuses (all members present), and effective-volatility recomputation feeding the explosion check + sort.
 - **Clients:** the depile shows when a combo/threshold fired and its contribution.
 - **Balance (IV):** the harness validates that compounding doesn't snowball (color-synergy cap) and that combos stay bonuses (no dead-draw feel-bad); activates Herbalist/Distiller/Alchemist hooks.

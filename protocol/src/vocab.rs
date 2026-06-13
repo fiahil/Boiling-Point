@@ -197,7 +197,7 @@ pub enum Brewer {
     Channeler,
     /// You top up ingredients to 4 each wave, not 3.
     Forager,
-    /// Your named combos fire from a single half. (Full effect with
+    /// Your named combos fire twice — double the payoff. (Full effect with
     /// `boom2-compounding`.)
     Herbalist,
     /// Your count-threshold cards treat the pot as 2 cards larger. (Full
@@ -271,7 +271,7 @@ impl Brewer {
             Brewer::Channeler => "You may play two spells per wave, not one.",
             Brewer::Forager => "You top up ingredients to 4 each wave, not 3.",
             Brewer::Herbalist => {
-                "Your named combos fire from a single half — you never need both ingredients in the pot."
+                "Your named combos fire twice — double the payoff when one completes."
             }
             Brewer::Distiller => {
                 "Your count-threshold cards treat the pot as 2 cards larger — payoffs come online sooner."
@@ -510,32 +510,69 @@ pub struct Recipe {
     pub reserves: Vec<SpellKind>,
 }
 
-/// One of the two named halves of a combo pair (change `boom2-compounding`).
-/// A pair fires when **both** halves are in the pot — or one half for a
-/// Herbalist. Which side a card is only matters for completing the pair; the
-/// bonus is symmetric.
+/// A named combo (change `boom2-compounding`): the drafting names that earn
+/// mechanical teeth. A combo is a **named set of 2–5 distinct ingredients**; it
+/// pays a size-scaling bonus when **all** its members are in the pot (a
+/// Herbalist's fires *twice*). Bigger combos are rarer to assemble but pay
+/// massively. A tag and its static size only — the payoff curve lives in the
+/// server engine. Most combos are 3-member, fewer 2/4, one 5 (`[needs playtesting]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ComboHalf {
-    /// The first half of the pair.
-    A,
-    /// The second half of the pair.
-    B,
+pub enum ComboId {
+    /// Sage + Mint — the canonical 2-ingredient combo (the O3 example).
+    SageMint,
+    /// A 3-ingredient herbal tincture.
+    HerbalTincture,
+    /// A 3-ingredient bitter draught.
+    BitterDraught,
+    /// A 4-ingredient golden elixir.
+    GoldenElixir,
+    /// The 5-ingredient master's panacea — the rare, massive jackpot.
+    MastersPanacea,
 }
 
-/// A named combo pair (change `boom2-compounding`): the drafting names that earn
-/// mechanical teeth. Each pair has an `A` and a `B` half; both in the pot pay a
-/// bonus. A tag only — the bonus magnitude lives in the server engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ComboPair {
-    /// Sage + Mint — the canonical first pair (the O3 example).
-    SageMint,
+impl ComboId {
+    /// Every combo, in a stable order.
+    pub const ALL: [ComboId; 5] = [
+        ComboId::SageMint,
+        ComboId::HerbalTincture,
+        ComboId::BitterDraught,
+        ComboId::GoldenElixir,
+        ComboId::MastersPanacea,
+    ];
+
+    /// How many distinct members the combo needs in the pot to fire (2–5).
+    pub fn size(self) -> u8 {
+        match self {
+            ComboId::SageMint => 2,
+            ComboId::HerbalTincture => 3,
+            ComboId::BitterDraught => 3,
+            ComboId::GoldenElixir => 4,
+            ComboId::MastersPanacea => 5,
+        }
+    }
+
+    /// The stable display/config name.
+    pub fn name(self) -> &'static str {
+        match self {
+            ComboId::SageMint => "SageMint",
+            ComboId::HerbalTincture => "HerbalTincture",
+            ComboId::BitterDraught => "BitterDraught",
+            ComboId::GoldenElixir => "GoldenElixir",
+            ComboId::MastersPanacea => "MastersPanacea",
+        }
+    }
+
+    /// Parse a name back into a combo.
+    pub fn by_name(name: &str) -> Option<ComboId> {
+        ComboId::ALL.into_iter().find(|c| c.name() == name)
+    }
 }
 
 /// An ingredient's optional **compounding** tag (change `boom2-compounding`):
 /// the in-pot interaction it participates in. A tag only — the scoring (and the
 /// Alchemist's combo volatility) lives in the server engine. Knowable
 /// compounding (count thresholds keyed off the public card count) is plannable;
-/// combos are *bonuses, never requirements* (a lone half is a normal card).
+/// combos are *bonuses, never requirements* (a lone member is a normal card).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Compounding {
@@ -547,14 +584,14 @@ pub enum Compounding {
         /// Extra points per card past the threshold.
         per_card: u8,
     },
-    /// Bramble: one half of a named pair. The pair pays a bonus when **both**
-    /// halves are in the pot (one half for a Herbalist). A lone half plays as a
-    /// normal ingredient with no penalty.
+    /// Bramble: one member of a named combo. The combo pays a size-scaling
+    /// bonus when **all** its members are in the pot (a Herbalist's fires
+    /// twice). A lone member plays as a normal ingredient with no penalty.
     Combo {
-        /// Which named pair this card belongs to.
-        pair: ComboPair,
-        /// Which half of the pair this card is.
-        half: ComboHalf,
+        /// Which named combo this card belongs to.
+        combo: ComboId,
+        /// Which distinct member of the combo this card is (`0..size`).
+        member: u8,
     },
 }
 

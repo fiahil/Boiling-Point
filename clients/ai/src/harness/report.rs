@@ -371,12 +371,12 @@ impl Report {
                 s.avg_pot_value, s.avg_cards_per_round, s.avg_waves_per_round,
             ));
             out.push_str(&format!(
-                "- Compounding: combos {:.2}/round, thresholds {:.2}/round, {:.2} bonus pts/round ({:.1}% of pot); lone-half rate {:.1}%\n",
+                "- Compounding: combos {:.2}/round, thresholds {:.2}/round, {:.2} bonus pts/round ({:.1}% of pot); lone-member rate {:.1}%\n",
                 s.combo_fires_per_round,
                 s.threshold_fires_per_round,
                 s.compounding_points_per_round,
                 s.compounding_pot_share * 100.0,
-                s.lone_combo_half_rate * 100.0,
+                s.lone_combo_member_rate * 100.0,
             ));
             out.push_str(
                 "\n| seat label | wins | win share | detonations | folded safe | fallback rate |\n",

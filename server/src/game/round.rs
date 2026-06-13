@@ -193,6 +193,10 @@ pub struct Round {
     /// recomputed. Empty when no brewer phase ran (combos/thresholds still fire,
     /// just without the bends).
     compounding: CompoundingBrewers,
+    /// Each seat's anchor colour, so a combo credits its **owner's** colour
+    /// (cross-colour safe, `boom2-compounding`). Empty in brewerless sync tests
+    /// — combos then credit the completing card's own colour.
+    player_color: HashMap<PlayerId, Color>,
     /// The half-applied state of a staged (Lurker-deferred) wave, between the
     /// partial step and its finalize.
     staged: Option<StagedWave>,
@@ -215,6 +219,7 @@ impl Round {
             ended: None,
             featherhands: HashSet::new(),
             compounding: CompoundingBrewers::default(),
+            player_color: HashMap::new(),
             staged: None,
         }
     }
@@ -231,6 +236,13 @@ impl Round {
     /// recomputed.
     pub fn with_compounding(mut self, compounding: CompoundingBrewers) -> Self {
         self.compounding = compounding;
+        self
+    }
+
+    /// Supply each seat's anchor colour, so a combo credits its owner's colour
+    /// (cross-colour safe, `boom2-compounding`).
+    pub fn with_player_color(mut self, player_color: HashMap<PlayerId, Color>) -> Self {
+        self.player_color = player_color;
         self
     }
 
@@ -369,7 +381,7 @@ impl Round {
         // Recompute compounding now the pot has changed (cards landed, a Skim
         // may have left): combo-added volatility must feed this same wave's
         // explosion check, and the bonuses drive scoring and the depile.
-        compounding::recompute(&mut self.pot.cards, &self.compounding);
+        compounding::recompute(&mut self.pot.cards, &self.compounding, &self.player_color);
 
         (played, outcome)
     }
@@ -578,7 +590,7 @@ impl Round {
 mod tests {
     use super::*;
     use crate::game::card::Spell;
-    use boiling_point_protocol::vocab::{ComboHalf, ComboPair, Compounding, SpellKind};
+    use boiling_point_protocol::vocab::{ComboId, Compounding, SpellKind};
     use uuid::Uuid;
 
     fn pid(n: u128) -> PlayerId {
@@ -615,15 +627,16 @@ mod tests {
         }
     }
 
-    fn combo_ing(id: u32, vol: u8, half: ComboHalf) -> Ingredient {
+    /// A member of the 2-ingredient SageMint combo (members 0 and 1).
+    fn combo_ing(id: u32, vol: u8, member: u8) -> Ingredient {
         Ingredient {
             id: CardId(id),
             color: Color::Ruby,
             volatility: vol,
             points: 1,
             compounding: Some(Compounding::Combo {
-                pair: ComboPair::SageMint,
-                half,
+                combo: ComboId::SageMint,
+                member,
             }),
         }
     }
@@ -964,8 +977,8 @@ mod tests {
         // but an Alchemist's +2 combo volatility (→ 8) crosses the line.
         let cards = || {
             vec![
-                (ps[0], combo_ing(1, 3, ComboHalf::A), false),
-                (ps[0], combo_ing(2, 3, ComboHalf::B), false),
+                (ps[0], combo_ing(1, 3, 0), false),
+                (ps[0], combo_ing(2, 3, 1), false),
             ]
         };
 
@@ -1007,8 +1020,8 @@ mod tests {
             &values(),
             wave(
                 vec![
-                    (ps[0], combo_ing(1, 2, ComboHalf::A), false),
-                    (ps[0], combo_ing(2, 2, ComboHalf::B), false),
+                    (ps[0], combo_ing(1, 2, 0), false),
+                    (ps[0], combo_ing(2, 2, 1), false),
                 ],
                 vec![ps[1]],
             ),
@@ -1018,7 +1031,8 @@ mod tests {
         assert_eq!(
             fired,
             vec![CompoundingFire::Combo {
-                bonus_points: crate::game::compounding::COMBO_BONUS_POINTS,
+                size: 2,
+                bonus_points: crate::game::compounding::combo_bonus(2),
                 bonus_volatility: crate::game::brewers::ALCHEMIST_COMBO_VOLATILITY,
             }]
         );

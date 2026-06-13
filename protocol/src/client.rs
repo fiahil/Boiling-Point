@@ -43,9 +43,10 @@ pub type ProtocolVersion = u16;
 /// Decks are realized server-side from the recipes and stay hidden, owner
 /// included.
 /// v8: compounding (`boom2-compounding`) — ingredients gain an optional
-/// [`crate::vocab::Compounding`] tag (count-threshold / named-combo half) on
-/// [`crate::vocab::IngredientView`], and the depile narrates which combos and
-/// thresholds fired via [`crate::server::DepileEntry::compounding`].
+/// [`crate::vocab::Compounding`] tag (count-threshold, or one member of a named
+/// 2–5-ingredient [`crate::vocab::ComboId`]) on [`crate::vocab::IngredientView`],
+/// and the depile narrates which combos and thresholds fired via
+/// [`crate::server::DepileEntry::compounding`].
 pub const PROTOCOL_VERSION: ProtocolVersion = 8;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays

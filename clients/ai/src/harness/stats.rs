@@ -94,10 +94,10 @@ pub struct CellStats {
     pub combo_fires_per_round: f64,
     /// Count-thresholds that paid off per round (`boom2-compounding`).
     pub threshold_fires_per_round: f64,
-    /// Fraction of combo-half cards left lone (no partner) — the dead-draw
-    /// signal. Expected non-zero in owner-unknown decks (a lone half is a plain
-    /// card); a runaway value means the combo content rarely connects.
-    pub lone_combo_half_rate: f64,
+    /// Fraction of combo-member cards left lone (their combo never completed) —
+    /// the dead-draw signal. Expected non-zero in owner-unknown decks (a lone
+    /// member is a plain card); a runaway value means combos rarely connect.
+    pub lone_combo_member_rate: f64,
     /// Compounding bonus points per round (combo + threshold).
     pub compounding_points_per_round: f64,
     /// Compounding's share of the scored pot value — the snowball read: how much
@@ -138,8 +138,8 @@ impl CellStats {
         let mut waves_sum = 0u64;
         let mut combo_fires_sum = 0u64;
         let mut threshold_fires_sum = 0u64;
-        let mut combo_halves_sum = 0u64;
-        let mut lone_combo_halves_sum = 0u64;
+        let mut combo_members_sum = 0u64;
+        let mut lone_combo_members_sum = 0u64;
         let mut compounding_points_sum = 0u64;
         let mut total_wins = 0usize;
         let mut by_label: BTreeMap<String, LabelStats> = BTreeMap::new();
@@ -236,8 +236,8 @@ impl CellStats {
                 waves_sum += round.waves as u64;
                 combo_fires_sum += round.combo_fires as u64;
                 threshold_fires_sum += round.threshold_fires as u64;
-                combo_halves_sum += round.combo_halves as u64;
-                lone_combo_halves_sum += round.lone_combo_halves as u64;
+                combo_members_sum += round.combo_members as u64;
+                lone_combo_members_sum += round.lone_combo_members as u64;
                 compounding_points_sum += round.compounding_points as u64;
                 if let Some(modifier) = round.modifier {
                     *modifier_draws.entry(format!("{modifier:?}")).or_insert(0) += 1;
@@ -285,7 +285,7 @@ impl CellStats {
             avg_waves_per_round: waves_sum as f64 / rounds_f,
             combo_fires_per_round: combo_fires_sum as f64 / rounds_f,
             threshold_fires_per_round: threshold_fires_sum as f64 / rounds_f,
-            lone_combo_half_rate: lone_combo_halves_sum as f64 / combo_halves_sum.max(1) as f64,
+            lone_combo_member_rate: lone_combo_members_sum as f64 / combo_members_sum.max(1) as f64,
             compounding_points_per_round: compounding_points_sum as f64 / rounds_f,
             compounding_pot_share: compounding_points_sum as f64 / pot_value_sum.max(1) as f64,
             total_wins,

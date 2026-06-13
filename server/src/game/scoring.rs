@@ -433,6 +433,7 @@ mod tests {
         pot.cards[0].compounding = CardCompounding {
             bonus_points: 2,
             bonus_volatility: 0,
+            credit_color: Some(Color::Ruby),
             fire: None,
         };
         let mut primed = Vec::new();

@@ -839,7 +839,8 @@ impl<'a> Game<'a> {
         let compounding = compounding::CompoundingBrewers::from_map(&self.brewers);
         let round = Round::start(active, effective_boiling_point, start_vol)
             .with_featherhands(featherhands)
-            .with_compounding(compounding);
+            .with_compounding(compounding)
+            .with_player_color(self.player_color.clone());
         self.current = Some(ActiveRound {
             round,
             round_number,
