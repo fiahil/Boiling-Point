@@ -137,10 +137,12 @@ These also sit beyond v1. (Some overlap with the design-side deferrals in
   the v1 *persistence-and-replays* work stores match results and replays but
   attaches **no** profile or cross-game identity. Moved here out of the v1
   persistence scope.
-- **Server benchmarks** — now scoped in change **`boom2-benchmarking`** as one
+- **Server benchmarks** — **shipped** in change **`boom2-benchmarking`** as one
   instrument of the **benchmarking suite** (the other is the on-demand **balance
-  study**, where the revived bot harness fits; both read from one self-contained
-  HTML dashboard, all observational — benchmarks measure, tests gate):
+  study**, the AI-client harness wrapped as `bench/balance-study/`; both read from
+  one self-contained HTML dashboard, all observational — benchmarks measure, tests
+  gate). The suite lives at `bench/` + `server/benches/` — see
+  [`bench/README.md`](../bench/README.md):
   - **Engine micro-benchmarks** (`criterion`): hot paths in the round engine —
     deck realization, wave resolution, explosion resolution/depile, modifier
     stacking — run per merge to `main`, read as *trends* (observed rerun noise

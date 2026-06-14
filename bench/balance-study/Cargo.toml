@@ -1,0 +1,41 @@
+[package]
+name = "boiling-point-balance-study"
+description = "Boiling Point balance study (change `boom2-benchmarking`, `balance-study`): a thin study wrapper over the AI client's harness mode — study configs in, versioned reproducible §IV reports out. On demand, at scale, purely observational; it never gates."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "boiling_point_balance_study"
+path = "src/lib.rs"
+
+# The on-demand study runner: one command from a study config to a versioned report.
+[[bin]]
+name = "balance_study"
+path = "src/main.rs"
+
+[dependencies]
+# The wire vocabulary (player/colour ids the reports key on).
+boiling-point-protocol = { path = "../../protocol" }
+# The engine + the SHARED §IV metric definitions (design D3: one definition, two
+# populations — the study folds the same `balance_metrics` formulas the live
+# pipeline does, never re-deriving a number).
+boiling-point-server = { path = "../../server" }
+# The standing §IV instrument. The study does NOT duplicate the runner: it drives
+# the harness's seeded batch runner, stats, and report, and adds provenance + the
+# shared-definition fold on top. The `harness` feature is what links the server.
+boiling-point-ai-client = { path = "../../clients/ai", features = ["harness"] }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = "0.8"
+clap = { workspace = true }
+# The harness runner is async (it boots in-process games); a current-thread
+# runtime is enough for a deterministic batch.
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }

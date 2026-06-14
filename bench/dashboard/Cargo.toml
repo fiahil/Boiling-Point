@@ -1,0 +1,26 @@
+[package]
+name = "boiling-point-bench-dashboard"
+description = "Boiling Point bench dashboard (change `boom2-benchmarking`, `bench-dashboard`): collects criterion estimates into the bench history and renders the whole suite — criterion trends + balance-study reports — to one self-contained, offline HTML page."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "boiling_point_bench_dashboard"
+path = "src/lib.rs"
+
+# `collect` (criterion -> one history record) + `render` (history + studies -> HTML).
+[[bin]]
+name = "bench_dashboard"
+path = "src/main.rs"
+
+[dependencies]
+# Decoupled by design: the dashboard reads JSON it renders (study reports as
+# generic values, history records as its own owned schema) — no dependency on the
+# heavy study/harness/server crates, so it stays a fast, pure presentation tool.
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }

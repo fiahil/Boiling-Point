@@ -56,3 +56,15 @@ tower = { version = "0.5", features = ["util"] }
 tokio = { version = "1", features = ["full"] }
 uuid = { workspace = true }
 boiling-point-protocol = { path = "../protocol" }
+# Engine micro-benchmarks (change `boom2-benchmarking`, `server-benchmarks`).
+# A dev-dependency: benches never ship in the server binary and never gate (D1) —
+# only their compilation rides the ordinary build gate.
+criterion = "0.5"
+
+# The criterion suite over the v2 engine hot paths. `harness = false` hands the
+# entry point to `criterion_main!` instead of libtest. Run per `main` merge,
+# read as trends; never gating.
+[[bench]]
+name = "engine"
+path = "benches/engine.rs"
+harness = false

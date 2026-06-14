@@ -1,6 +1,6 @@
 # Boiling Point — Agent Guidelines
 
-## Constitution (v2.2.1)
+## Constitution (v2.3.0)
 
 ### I. Server-Authoritative
 
@@ -70,6 +70,13 @@ Game mechanics, scoring values, thresholds, and card effects are hypotheses unti
   run — the AI client's harness mode (`clients/ai/` `balance_tester`, change
   `boom2-ai-client`) is the standing instrument for running thousands of seeded
   games to surface degenerate strategies and derive the balance numbers
+- Benchmarks measure; tests gate. The benchmarking suite (`bench/` + `server/benches/`,
+  change `boom2-benchmarking`) is the standing observational home for both measurement
+  workloads — criterion engine micro-benchmarks read as trends per `main` merge, and
+  on-demand at-scale balance studies (the AI-client harness, wrapped as
+  `bench/balance-study/`) emitting versioned reproducible reports — read on one
+  self-contained dashboard. Its output informs human balance decisions; it never gates
+  CI or a deploy
 - No balance number is sacred — if data says change it, change it
 
 ## Technology Stack
@@ -105,11 +112,15 @@ first-class selection criterion for any client technology decision.
 
 ```
 ├── server/        # authoritative game logic (Axum + Tokio) — cargo workspace member
+│   └── benches/   # criterion engine micro-benchmarks (boom2-benchmarking) — per-merge, observational
 ├── protocol/      # wire protocol types, game enums, serde derives (canonical source)
 ├── clients/
 │   ├── ai/        # AI client — bot + Claude brains, §IV balance harness (balance_tester),
 │   │              # seat-filler (familiar_summoning); Rust workspace member, protocol-only firewall
 │   └── web/       # graphical client — TypeScript + PixiJS (lands with adopt-pixi-client)
+├── bench/         # benchmarking suite (boom2-benchmarking) — workspace members, observational:
+│   ├── balance-study/  # on-demand at-scale §IV studies (wraps the AI-client harness)
+│   └── dashboard/      # one self-contained HTML dashboard (criterion trends + study reports)
 └── archive/       # retired v1 components — tui-client, bot-harness, agent-harness,
                    # playtest.sh — revivable, not deleted
 ```
@@ -134,6 +145,15 @@ When a practice conflicts with a principle above, the principle wins.
 Violations MUST be documented with justification and rejected simpler alternative.
 
 **Amendment log:**
+- **v2.3.0 (2026-06-14)** — MINOR. The `boom2-benchmarking` change landed the
+  benchmarking suite: `server/benches/` (criterion engine micro-benchmarks, per
+  `main` merge, read as trends) and `bench/` (`balance-study/` — the on-demand
+  at-scale §IV studies wrapping the AI-client harness, emitting versioned
+  reproducible reports — and `dashboard/` — one self-contained HTML reading
+  surface). Principle IV gains the "benchmarks measure, tests gate" observational
+  bullet, and the project structure gains `bench/` + `server/benches/`. The CI gate
+  (`ci.yml`) is unchanged; a separate post-merge `bench` workflow records and
+  publishes numbers without asserting on any. No principle changed meaning.
 - **v2.2.1 (2026-06-12)** — PATCH. The `boom2-ai-client` change landed `clients/ai/`:
   Principle II's instrument bullet and Principle IV's at-scale mandate now point at
   the AI client's harness mode (which cross-validated the combat-core balance
