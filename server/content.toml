@@ -273,19 +273,47 @@ cards = [
   { volatility = 7, points = 0 },
 ]
 
+# Bramble = named combos (boom2-compounding): each named combo is a SET of 2-5
+# distinct members; it pays a size-scaling bonus when ALL its members are in the
+# pot (a Herbalist's fires twice; an Alchemist's also adds volatility). Bigger
+# combos are far rarer to assemble but pay massively (2->2, 3->5, 4->9, 5->15).
+# A lone member is a plain card — bonus, never requirement. Roster: one 2, two
+# 3s (the plurality), one 4, one 5. [needs playtesting]
 [[pantry_bucket]]
-bucket = "Bramble" # named-combo pairs (teeth land with boom2-compounding)
+bucket = "Bramble"
 cards = [
-  { volatility = 2, points = 1 },
-  { volatility = 3, points = 1 },
-  { volatility = 3, points = 2 },
+  # SageMint — 2 members
+  { volatility = 2, points = 1, compounding = { kind = "Combo", combo = "SageMint", member = 0 } },
+  { volatility = 3, points = 1, compounding = { kind = "Combo", combo = "SageMint", member = 1 } },
+  # HerbalTincture — 3 members
+  { volatility = 1, points = 2, compounding = { kind = "Combo", combo = "HerbalTincture", member = 0 } },
+  { volatility = 2, points = 1, compounding = { kind = "Combo", combo = "HerbalTincture", member = 1 } },
+  { volatility = 3, points = 1, compounding = { kind = "Combo", combo = "HerbalTincture", member = 2 } },
+  # BitterDraught — 3 members
+  { volatility = 2, points = 1, compounding = { kind = "Combo", combo = "BitterDraught", member = 0 } },
+  { volatility = 3, points = 2, compounding = { kind = "Combo", combo = "BitterDraught", member = 1 } },
+  { volatility = 4, points = 1, compounding = { kind = "Combo", combo = "BitterDraught", member = 2 } },
+  # GoldenElixir — 4 members
+  { volatility = 1, points = 1, compounding = { kind = "Combo", combo = "GoldenElixir", member = 0 } },
+  { volatility = 2, points = 2, compounding = { kind = "Combo", combo = "GoldenElixir", member = 1 } },
+  { volatility = 3, points = 1, compounding = { kind = "Combo", combo = "GoldenElixir", member = 2 } },
+  { volatility = 4, points = 2, compounding = { kind = "Combo", combo = "GoldenElixir", member = 3 } },
+  # MastersPanacea — 5 members (the rare, massive jackpot)
+  { volatility = 1, points = 1, compounding = { kind = "Combo", combo = "MastersPanacea", member = 0 } },
+  { volatility = 2, points = 1, compounding = { kind = "Combo", combo = "MastersPanacea", member = 1 } },
+  { volatility = 2, points = 2, compounding = { kind = "Combo", combo = "MastersPanacea", member = 2 } },
+  { volatility = 3, points = 1, compounding = { kind = "Combo", combo = "MastersPanacea", member = 3 } },
+  { volatility = 4, points = 2, compounding = { kind = "Combo", combo = "MastersPanacea", member = 4 } },
 ]
 
+# Honey = count-threshold cards (boom2-compounding): +1 point per card in the pot
+# past the 5th, keyed off the PUBLIC card count (plannable). A Distiller treats
+# the pot as 2 cards larger. The vol-3 card is a plain filler. [needs playtesting]
 [[pantry_bucket]]
-bucket = "Honey" # count-threshold cards (teeth land with boom2-compounding)
+bucket = "Honey"
 cards = [
-  { volatility = 1, points = 1 },
-  { volatility = 2, points = 2 },
+  { volatility = 1, points = 1, compounding = { kind = "CountThreshold", past = 5, per_card = 1 } },
+  { volatility = 2, points = 2, compounding = { kind = "CountThreshold", past = 5, per_card = 1 } },
   { volatility = 3, points = 2 },
 ]
 

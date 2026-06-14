@@ -48,6 +48,9 @@ pub struct Thresholds {
     pub brewer_win_rate_max: f64,
     /// Seat-games a Brewer needs before its win-rate band fires.
     pub brewer_min_games: usize,
+    /// Compounding's share of the scored pot above which compounding is flagged
+    /// as snowballing (out-scaling printed Votes — `boom2-compounding`).
+    pub compounding_snowball_share: f64,
 }
 
 impl Default for Thresholds {
@@ -66,6 +69,9 @@ impl Default for Thresholds {
             brewer_win_rate_min: 0.15,
             brewer_win_rate_max: 0.35,
             brewer_min_games: 200,
+            // Compounding should season the pot, not become it: flag if more
+            // than ~40% of the scored pot comes from compounding. `[needs playtesting]`.
+            compounding_snowball_share: 0.40,
         }
     }
 }
@@ -270,6 +276,19 @@ fn detect(cell: &CellReport, thresholds: &Thresholds) -> Vec<Smell> {
             ),
         });
     }
+    if stats.rounds > 0 && stats.compounding_pot_share > thresholds.compounding_snowball_share {
+        smells.push(Smell {
+            cell: cell.name.clone(),
+            kind: "compounding_snowball".into(),
+            detail: format!(
+                "compounding is {:.1}% of the scored pot (combos {:.2}/round, thresholds {:.2}/round), above the {:.0}% snowball threshold",
+                stats.compounding_pot_share * 100.0,
+                stats.combo_fires_per_round,
+                stats.threshold_fires_per_round,
+                thresholds.compounding_snowball_share * 100.0,
+            ),
+        });
+    }
     smells
 }
 
@@ -350,6 +369,14 @@ impl Report {
             out.push_str(&format!(
                 "- Avg pot value {:.2}, cards {:.2}, waves {:.2} per round\n",
                 s.avg_pot_value, s.avg_cards_per_round, s.avg_waves_per_round,
+            ));
+            out.push_str(&format!(
+                "- Compounding: combos {:.2}/round, thresholds {:.2}/round, {:.2} bonus pts/round ({:.1}% of pot); lone-member rate {:.1}%\n",
+                s.combo_fires_per_round,
+                s.threshold_fires_per_round,
+                s.compounding_points_per_round,
+                s.compounding_pot_share * 100.0,
+                s.lone_combo_member_rate * 100.0,
             ));
             out.push_str(
                 "\n| seat label | wins | win share | detonations | folded safe | fallback rate |\n",

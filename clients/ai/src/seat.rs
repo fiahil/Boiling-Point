@@ -7,11 +7,12 @@
 //! per-game fallback accounting. Every inbound message passes the live
 //! secret-boundary audit first, so every game doubles as a no-leak test.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use boiling_point_protocol::frame::PendingDecision;
-use boiling_point_protocol::vocab::{Color, SpellKind};
+use boiling_point_protocol::server::{CompoundingFire, DepileEntry};
+use boiling_point_protocol::vocab::{Color, ComboId, Compounding, SpellKind};
 use boiling_point_protocol::{CardId, ClientMessage, PlayerId, ServerMessage};
 
 use crate::ClientError;
@@ -101,6 +102,41 @@ pub async fn run_seat<C: Connection>(
                     rounds.push(done);
                 }
                 *current = Some(RoundObservation::new(n));
+            }
+        }
+    }
+
+    // Tally compounding from the depile reveals (`boom2-compounding`): the fires
+    // narrated on completing/threshold cards, the combo-member exposure, and the
+    // lone (dead-draw) members — those in a combo the owner never completed.
+    fn record_compounding(r: &mut RoundObservation, reveals: &[DepileEntry]) {
+        for entry in reveals {
+            match entry.compounding {
+                Some(CompoundingFire::Combo { bonus_points, .. }) => {
+                    r.combo_fires += 1;
+                    r.compounding_points += bonus_points as u32;
+                }
+                Some(CompoundingFire::Threshold { bonus_points }) => {
+                    r.threshold_fires += 1;
+                    r.compounding_points += bonus_points as u32;
+                }
+                None => {}
+            }
+        }
+        // Per (owner, combo): the distinct members present and the card count.
+        // A combo is lone (dead) when its distinct members fall short of size.
+        let mut groups: HashMap<(PlayerId, ComboId), (HashSet<u8>, u32)> = HashMap::new();
+        for entry in reveals {
+            if let Some(Compounding::Combo { combo, member }) = entry.ingredient.compounding {
+                r.combo_members += 1;
+                let g = groups.entry((entry.player, combo)).or_default();
+                g.0.insert(member);
+                g.1 += 1;
+            }
+        }
+        for ((_, combo), (members, count)) in groups {
+            if (members.len() as u8) < combo.size() {
+                r.lone_combo_members += count;
             }
         }
     }
@@ -246,6 +282,7 @@ pub async fn run_seat<C: Connection>(
                         r.folded_safe = folded_this_round.iter().copied().collect();
                         r.folded_safe.sort_by_key(|p| p.0);
                     }
+                    record_compounding(r, &reveals);
                 }
             }
             ServerMessage::RoundScored {
@@ -394,6 +431,7 @@ mod tests {
                             color: Color::Ruby,
                             volatility: 2,
                             points: 1,
+                            compounding: None,
                         },
                     },
                     colorless_allowed: true,

@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use boiling_point_protocol::vocab::Compounding;
+
 /// How the deck builder instantiates an ingredient's colour for a given seat.
 /// The pantry is colour-anchored: the same definitions yield each player a deck
 /// identical in composition up to colour choice.
@@ -45,4 +47,7 @@ pub struct BucketCard {
     pub volatility: u8,
     /// Point value when played as a colored Vote (0–3).
     pub points: u8,
+    /// The in-pot interaction this archetype carries, if any
+    /// (`boom2-compounding` — the Bramble/Honey teeth). `None` for a plain card.
+    pub compounding: Option<Compounding>,
 }

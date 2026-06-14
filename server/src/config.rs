@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use boiling_point_protocol::vocab::{ModifierKind, PantryBucket, SpellKind};
+use boiling_point_protocol::vocab::{Compounding, ModifierKind, PantryBucket, SpellKind};
 
 use crate::content::card::{BucketCard, IngredientDef, PantrySlot};
 use crate::content::registry::ContentRegistry;
@@ -123,6 +123,11 @@ pub struct BucketCardConfig {
     pub volatility: u8,
     /// Point value as a colored Vote (0–3).
     pub points: u8,
+    /// The compounding tag this archetype carries, if any (`boom2-compounding`):
+    /// a `{ kind = "CountThreshold", past, per_card }` or
+    /// `{ kind = "Combo", pair, half }` table. Absent for a plain card.
+    #[serde(default)]
+    pub compounding: Option<Compounding>,
 }
 
 /// Pantry-wide settings.
@@ -531,6 +536,7 @@ impl ContentConfig {
                         slot,
                         volatility: c.volatility,
                         points: c.points,
+                        compounding: c.compounding,
                     })
                     .collect();
                 (bucket, cards)

@@ -16,17 +16,17 @@ Some ingredients SHALL carry a **count threshold** that scores more when the pot
 
 ### Requirement: Named-Combo Bonuses Are Bonuses, Never Requirements
 
-Some ingredients SHALL form **named pairs** (e.g. Sage + Mint) that grant a **bonus** when both are in the pot. A combo card SHALL be fully playable and useful **alone**; the pairing only adds an upside. No card SHALL be dead or penalized for lacking its partner.
+Some ingredients SHALL belong to **named combos** of 2–5 distinct members that grant a **size-scaling bonus** when every member is in the pot (larger combos pay more and are rarer to assemble). A combo card SHALL be fully playable and useful **alone**; the combo only adds an upside. No card SHALL be dead or penalized for lacking its combo-mates.
 
 #### Scenario: A combo pays off when completed
 
-- **WHEN** both halves of a Bramble pair are in the pot
-- **THEN** the combo bonus applies (e.g. +2 points, or a volatility add per its definition)
+- **WHEN** all members of a named combo are in the pot
+- **THEN** the size-scaling combo bonus applies (more points for larger combos; a Herbalist's fires twice; an Alchemist's also adds volatility)
 
-#### Scenario: A lone combo half is still a normal card
+#### Scenario: A lone combo member is still a normal card
 
-- **WHEN** only one half of a pair is in the pot
-- **THEN** that ingredient plays as a normal ingredient with no penalty for the missing partner
+- **WHEN** only some of a combo's members are in the pot
+- **THEN** each present member plays as a normal ingredient with no penalty for the missing members
 
 ### Requirement: Effective Volatility Feeds Resolution
 

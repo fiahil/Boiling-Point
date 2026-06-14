@@ -9,6 +9,7 @@ use boiling_point_protocol::PlayerId;
 use boiling_point_protocol::vocab::Color;
 
 use super::card::Ingredient;
+use super::compounding::CardCompounding;
 
 /// One ingredient in the pot, with how it was played.
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +25,10 @@ pub struct PotIngredient {
     pub wave_number: u8,
     /// Whether an Expose has already revealed it (each card is exposed at most once).
     pub exposed: bool,
+    /// The compounding bonus this card carries given the current pot
+    /// (`boom2-compounding`): recomputed whenever the pot changes. Default
+    /// (no bonus) for a plain card or a lone combo half.
+    pub compounding: CardCompounding,
 }
 
 impl PotIngredient {
@@ -37,7 +42,9 @@ impl PotIngredient {
         }
     }
 
-    /// The points this card contributes to its colour (zero unless a colored Vote).
+    /// The points this card contributes to its colour as a printed Vote (zero
+    /// unless a colored Vote). Compounding bonus points are tracked separately
+    /// in [`PotIngredient::compounding`] and folded in at scoring.
     pub fn effective_points(&self) -> u8 {
         if self.effective_color().is_some() {
             self.ingredient.points
@@ -46,11 +53,13 @@ impl PotIngredient {
         }
     }
 
-    /// The volatility this card contributes. Printed value for now — the seam
-    /// where compounding (boom2-compounding) will adjust per-card volatility;
-    /// the detonator sort and the explosion check both use this.
+    /// The volatility this card contributes: its printed value plus any
+    /// compounding-added volatility (`boom2-compounding` — an Alchemist's fired
+    /// combo). The detonator sort and the explosion check both use this.
     pub fn effective_volatility(&self) -> u8 {
-        self.ingredient.volatility
+        self.ingredient
+            .volatility
+            .saturating_add(self.compounding.bonus_volatility)
     }
 }
 
@@ -91,6 +100,27 @@ impl Pot {
         adjusted.max(0) as u32
     }
 
+    /// Compounding bonus points attributed to `color` at resolution
+    /// (`boom2-compounding`): the combo + count-threshold bonuses whose
+    /// `credit_color` is this colour. A combo credits its **owner's** colour
+    /// (cross-colour safe), a threshold its own card's colour. Kept separate
+    /// from [`Pot::color_points`] so the in-round spell snapshots (Double Down /
+    /// Sour read pure Vote totals) stay decoupled from compounding, which only
+    /// resolves at scoring.
+    pub fn compounding_points(&self, color: Color) -> u32 {
+        self.cards
+            .iter()
+            .filter(|p| p.compounding.credit_color == Some(color))
+            .map(|p| p.compounding.bonus_points as u32)
+            .sum()
+    }
+
+    /// The full points `color` scores at resolution: its Votes + spell
+    /// adjustment ([`Pot::color_points`]) plus compounding bonuses.
+    pub fn scored_color_points(&self, color: Color) -> u32 {
+        self.color_points(color) + self.compounding_points(color)
+    }
+
     /// Whether any Vote of `color` is present in the pot.
     pub fn color_present(&self, color: Color) -> bool {
         self.cards
@@ -104,6 +134,16 @@ impl Pot {
         Color::PLAYER_COLORS
             .into_iter()
             .map(|c| self.color_points(c))
+            .sum()
+    }
+
+    /// The scored pot value: [`Pot::vote_points`] plus every colour's
+    /// compounding bonuses (`boom2-compounding`). This is the additive base the
+    /// pot value **P** is built from at resolution.
+    pub fn scored_value(&self) -> u32 {
+        Color::PLAYER_COLORS
+            .into_iter()
+            .map(|c| self.scored_color_points(c))
             .sum()
     }
 
@@ -157,10 +197,12 @@ mod tests {
                 color,
                 volatility: vol,
                 points: pts,
+                compounding: None,
             },
             colorless,
             wave_number: wave,
             exposed: false,
+            compounding: CardCompounding::default(),
         }
     }
 
@@ -196,6 +238,30 @@ mod tests {
         pot.cards.push(entry(pid(1), Color::Ruby, 1, 2, false, 1));
         pot.color_adjust.insert(Color::Ruby, -5);
         assert_eq!(pot.color_points(Color::Ruby), 0);
+    }
+
+    /// Compounding bonuses ride the effective values: combo volatility joins
+    /// the running total and the per-card sort; bonus points join the scored
+    /// colour total but not the pure Vote total (the spell snapshot stays clean).
+    #[test]
+    fn compounding_feeds_effective_values() {
+        let mut pot = Pot::new(0);
+        let mut card = entry(pid(1), Color::Ruby, 3, 2, false, 1);
+        card.compounding = CardCompounding {
+            bonus_points: 2,
+            bonus_volatility: 2,
+            credit_color: Some(Color::Ruby),
+            fire: None,
+        };
+        pot.cards.push(card);
+        // Volatility: printed 3 + combo 2 = 5.
+        assert_eq!(pot.cards[0].effective_volatility(), 5);
+        assert_eq!(pot.total_volatility(), 5);
+        // Points: pure Vote total stays 2; scored total folds in the +2 bonus.
+        assert_eq!(pot.color_points(Color::Ruby), 2);
+        assert_eq!(pot.compounding_points(Color::Ruby), 2);
+        assert_eq!(pot.scored_color_points(Color::Ruby), 4);
+        assert_eq!(pot.scored_value(), 4);
     }
 
     /// Skim removes the caster's most recent card, with its points and volatility.

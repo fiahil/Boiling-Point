@@ -31,6 +31,7 @@ use crate::persistence::{CompletedGame, GameStats, PlayerOutcome, StoredReplay};
 
 use super::brewers;
 use super::card::Ingredient;
+use super::compounding;
 use super::deathmatch::{DeathmatchResult, run_deathmatch};
 use super::deck::{Grimoire, Pantry};
 use super::modifiers::ActiveModifiers;
@@ -275,6 +276,7 @@ pub fn depile_entries(depile: &DepileData) -> Vec<DepileEntry> {
             wave_number: item.wave_number,
             running_volatility: item.running_volatility.clamp(0, u8::MAX as i32) as u8,
             liable: item.liable,
+            compounding: item.compounding,
         })
         .collect()
 }
@@ -834,8 +836,11 @@ impl<'a> Game<'a> {
             .filter(|(_, b)| **b == Brewer::Featherhand)
             .map(|(p, _)| *p)
             .collect();
+        let compounding = compounding::CompoundingBrewers::from_map(&self.brewers);
         let round = Round::start(active, effective_boiling_point, start_vol)
-            .with_featherhands(featherhands);
+            .with_featherhands(featherhands)
+            .with_compounding(compounding)
+            .with_player_color(self.player_color.clone());
         self.current = Some(ActiveRound {
             round,
             round_number,
@@ -1900,6 +1905,7 @@ mod tests {
                 color: Color::Ruby,
                 volatility: 99,
                 points: 0,
+                compounding: None,
             }]);
             let mut h2 = Hand::new();
             h2.add_ingredients([Ingredient {
@@ -1907,6 +1913,7 @@ mod tests {
                 color: Color::Sapphire,
                 volatility: 1,
                 points: 0,
+                compounding: None,
             }]);
             g.hands.insert(p1, h1);
             g.hands.insert(p2, h2);

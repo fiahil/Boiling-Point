@@ -166,6 +166,7 @@ pub fn realize_pantry(
                 color,
                 volatility: c.volatility,
                 points: c.points,
+                compounding: c.compounding,
             };
             *next_id += 1;
             card

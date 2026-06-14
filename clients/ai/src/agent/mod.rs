@@ -287,6 +287,7 @@ mod tests {
                             color: Color::Ruby,
                             volatility: 2,
                             points: 1,
+                            compounding: None,
                         },
                     },
                     colorless_allowed: true,

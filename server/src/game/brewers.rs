@@ -23,10 +23,11 @@
 //!   (`boom2-apothecary` activated the seams): the draft frame's allowances
 //!   ([`extra_buckets`], [`reserve_allowance`]); the Cinderwright's no-Ward
 //!   rule also filters Ironbark from their draft ([`excluded_buckets`]).
-//! - **Herbalist / Distiller / Alchemist** (compounding) — inert seams below:
-//!   their hooked system lands with `boom2-compounding`; until then the
-//!   constants are defined (and tested) but nothing consults them. A known
-//!   phasing gap, not a bug (spec `boom-brewers`, "degrade gracefully").
+//! - **Herbalist / Distiller / Alchemist** (compounding) — consulted by
+//!   [`crate::game::compounding`]: the Herbalist fires a completed combo twice
+//!   ([`HERBALIST_COMBO_MULTIPLIER`]), the Distiller treats the pot as
+//!   [`DISTILLER_POT_BONUS`] cards larger for count-thresholds, the Alchemist's
+//!   fired combo adds [`ALCHEMIST_COMBO_VOLATILITY`] to the pot.
 //!
 //! Every magnitude is `[needs playtesting]` (Principle IV); the persona ×
 //! Brewer harness matrix gates them.
@@ -57,9 +58,10 @@ pub const CONNOISSEUR_EXTRA_BUCKETS: u8 = 1;
 /// `boom2-apothecary`). `[needs playtesting]`.
 pub const RESERVIST_RESERVES: u8 = 2;
 
-/// Inert seam (`boom2-compounding`): combo halves the Herbalist needs in the
-/// pot for a named combo to fire (everyone else needs both). `[needs playtesting]`.
-pub const HERBALIST_COMBO_HALVES: u8 = 1;
+/// How many times a Herbalist's named combo fires when it completes — twice,
+/// for double the payoff (everyone else fires it once, `boom2-compounding`).
+/// `[needs playtesting]`.
+pub const HERBALIST_COMBO_MULTIPLIER: u8 = 2;
 
 /// Inert seam (`boom2-compounding`): extra cards the Distiller's
 /// count-threshold cards see in the pot. `[needs playtesting]`.

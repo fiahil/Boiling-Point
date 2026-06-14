@@ -35,15 +35,20 @@ pub enum DeckArchetype {
     /// the Peek economy and cash-in (Sage+Mint+Nightshade /
     /// Eyebright+Goldenseal+Mandrake, Peek reserved).
     Loyalist,
+    /// The synergy hunter (`boom2-compounding`): both chemistry buckets and a
+    /// safe own-colour anchor, Peek to plan the count-threshold payoff
+    /// (Bramble+Honey+Sage / Eyebright+Goldenseal, Peek reserved).
+    Chemist,
 }
 
 impl DeckArchetype {
     /// Every archetype, in a stable order.
-    pub const ALL: [DeckArchetype; 4] = [
+    pub const ALL: [DeckArchetype; 5] = [
         DeckArchetype::Warlord,
         DeckArchetype::Fortress,
         DeckArchetype::Kingmaker,
         DeckArchetype::Loyalist,
+        DeckArchetype::Chemist,
     ];
 
     /// The stable name sample specs and reports use.
@@ -53,6 +58,7 @@ impl DeckArchetype {
             DeckArchetype::Fortress => "fortress",
             DeckArchetype::Kingmaker => "kingmaker",
             DeckArchetype::Loyalist => "loyalist",
+            DeckArchetype::Chemist => "chemist",
         }
     }
 
@@ -106,6 +112,15 @@ impl DeckArchetype {
                     GrimoireBucket::Goldenseal,
                     GrimoireBucket::Mandrake,
                 ],
+                reserves: vec![SpellKind::Peek],
+            },
+            DeckArchetype::Chemist => Recipe {
+                pantry: vec![
+                    PantryBucket::Bramble,
+                    PantryBucket::Honey,
+                    PantryBucket::Sage,
+                ],
+                grimoire: vec![GrimoireBucket::Eyebright, GrimoireBucket::Goldenseal],
                 reserves: vec![SpellKind::Peek],
             },
         }

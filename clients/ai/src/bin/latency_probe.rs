@@ -60,6 +60,7 @@ fn fixture() -> (SeatView, FrameContext) {
                 color,
                 volatility: vol,
                 points: pts,
+                compounding: None,
             },
         },
         colorless_allowed: true,

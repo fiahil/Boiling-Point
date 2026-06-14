@@ -9,12 +9,14 @@
 
 use std::collections::{HashMap, HashSet};
 
+use boiling_point_protocol::server::CompoundingFire;
 use boiling_point_protocol::vocab::{Color, SpellTarget};
 use boiling_point_protocol::{CardId, PlayerId};
 
 use crate::content::spell::SpellValues;
 
 use super::card::Ingredient;
+use super::compounding::{self, CompoundingBrewers};
 use super::pot::{Pot, PotIngredient};
 use super::spells::{CastCommit, PrimedSpell, WaveSpellOutcome, resolve_wave_spells};
 
@@ -139,10 +141,13 @@ pub struct DepileItem {
     pub colorless: bool,
     /// The wave it landed in.
     pub wave_number: u8,
-    /// Cumulative volatility after this entry in the sorted climb.
+    /// Cumulative volatility after this entry in the sorted climb (includes any
+    /// combo-added volatility).
     pub running_volatility: i32,
     /// Whether this entry is liable for the explosion.
     pub liable: bool,
+    /// The compounding that fired on this card, if any (`boom2-compounding`).
+    pub compounding: Option<CompoundingFire>,
 }
 
 /// The data needed to render the end-of-round depile. The boiling point is
@@ -183,6 +188,15 @@ pub struct Round {
     /// Players whose cards count as the lowest at their value in the
     /// fatal-wave sort (the Featherhand bend, `boom2-brewers`).
     featherhands: HashSet<PlayerId>,
+    /// The compounding Brewer seats (`boom2-compounding`): the Herbalist /
+    /// Distiller / Alchemist bends consulted when the pot's compounding is
+    /// recomputed. Empty when no brewer phase ran (combos/thresholds still fire,
+    /// just without the bends).
+    compounding: CompoundingBrewers,
+    /// Each seat's anchor colour, so a combo credits its **owner's** colour
+    /// (cross-colour safe, `boom2-compounding`). Empty in brewerless sync tests
+    /// — combos then credit the completing card's own colour.
+    player_color: HashMap<PlayerId, Color>,
     /// The half-applied state of a staged (Lurker-deferred) wave, between the
     /// partial step and its finalize.
     staged: Option<StagedWave>,
@@ -204,6 +218,8 @@ impl Round {
             final_wave_used: false,
             ended: None,
             featherhands: HashSet::new(),
+            compounding: CompoundingBrewers::default(),
+            player_color: HashMap::new(),
             staged: None,
         }
     }
@@ -212,6 +228,21 @@ impl Round {
     /// at their value in the fatal-wave liability sort).
     pub fn with_featherhands(mut self, featherhands: HashSet<PlayerId>) -> Self {
         self.featherhands = featherhands;
+        self
+    }
+
+    /// Supply the compounding Brewer seats (`boom2-compounding`): the Herbalist /
+    /// Distiller / Alchemist bends consulted each time the pot's compounding is
+    /// recomputed.
+    pub fn with_compounding(mut self, compounding: CompoundingBrewers) -> Self {
+        self.compounding = compounding;
+        self
+    }
+
+    /// Supply each seat's anchor colour, so a combo credits its owner's colour
+    /// (cross-colour safe, `boom2-compounding`).
+    pub fn with_player_color(mut self, player_color: HashMap<PlayerId, Color>) -> Self {
+        self.player_color = player_color;
         self
     }
 
@@ -336,6 +367,7 @@ impl Round {
                 colorless,
                 wave_number: self.wave_number,
                 exposed: false,
+                compounding: compounding::CardCompounding::default(),
             });
         }
 
@@ -345,6 +377,12 @@ impl Round {
             self.quench_next_wave = true;
         }
         self.removed.extend(outcome.skimmed.iter().copied());
+
+        // Recompute compounding now the pot has changed (cards landed, a Skim
+        // may have left): combo-added volatility must feed this same wave's
+        // explosion check, and the bonuses drive scoring and the depile.
+        compounding::recompute(&mut self.pot.cards, &self.compounding, &self.player_color);
+
         (played, outcome)
     }
 
@@ -537,6 +575,7 @@ impl Round {
                 wave_number: pc.wave_number,
                 running_volatility: running,
                 liable: liable_cards.contains(&pc.ingredient.id),
+                compounding: pc.compounding.fire,
             });
         }
         DepileData {
@@ -551,7 +590,7 @@ impl Round {
 mod tests {
     use super::*;
     use crate::game::card::Spell;
-    use boiling_point_protocol::vocab::SpellKind;
+    use boiling_point_protocol::vocab::{ComboId, Compounding, SpellKind};
     use uuid::Uuid;
 
     fn pid(n: u128) -> PlayerId {
@@ -575,6 +614,7 @@ mod tests {
             color: Color::Ruby,
             volatility: vol,
             points: 1,
+            compounding: None,
         }
     }
 
@@ -584,6 +624,20 @@ mod tests {
             spells: vec![],
             passers,
             exhausted: vec![],
+        }
+    }
+
+    /// A member of the 2-ingredient SageMint combo (members 0 and 1).
+    fn combo_ing(id: u32, vol: u8, member: u8) -> Ingredient {
+        Ingredient {
+            id: CardId(id),
+            color: Color::Ruby,
+            volatility: vol,
+            points: 1,
+            compounding: Some(Compounding::Combo {
+                combo: ComboId::SageMint,
+                member,
+            }),
         }
     }
 
@@ -911,5 +965,78 @@ mod tests {
             .map(|r| r.ingredient.volatility)
             .collect();
         assert_eq!(liable, vec![3]);
+    }
+
+    /// An Alchemist's combo adds volatility that feeds the very wave's explosion
+    /// check: the same cards explode with the Alchemist bend where they settle
+    /// safely without it (`boom2-compounding` — chemistry as a weapon).
+    #[test]
+    fn alchemist_combo_volatility_tips_the_explosion_check() {
+        let ps: Vec<PlayerId> = (1..=2).map(pid).collect();
+        // Two combo halves (vol 3 each = 6) against boiling point 7: safe alone,
+        // but an Alchemist's +2 combo volatility (→ 8) crosses the line.
+        let cards = || {
+            vec![
+                (ps[0], combo_ing(1, 3, 0), false),
+                (ps[0], combo_ing(2, 3, 1), false),
+            ]
+        };
+
+        let mut plain = Round::start(ps.clone(), 7, 0);
+        let r = plain.apply_wave(&values(), wave(cards(), vec![ps[1]]));
+        assert_ne!(
+            r.ended,
+            Some(RoundEnd::Exploded),
+            "6 ≤ 7: no Alchemist, safe"
+        );
+        assert_eq!(plain.pot().total_volatility(), 6);
+
+        let alchemist = CompoundingBrewers {
+            alchemists: vec![ps[0]],
+            ..Default::default()
+        };
+        let mut round = Round::start(ps.clone(), 7, 0).with_compounding(alchemist);
+        let r = round.apply_wave(&values(), wave(cards(), vec![ps[1]]));
+        assert_eq!(
+            r.ended,
+            Some(RoundEnd::Exploded),
+            "8 > 7: the combo tips it"
+        );
+        assert_eq!(round.detonators(), vec![ps[0]]);
+        assert_eq!(round.pot().total_volatility(), 8);
+    }
+
+    /// The depile narrates a fired combo on its completing entry, and the
+    /// running climb reflects the combo-added volatility.
+    #[test]
+    fn depile_narrates_a_fired_combo() {
+        let ps: Vec<PlayerId> = (1..=2).map(pid).collect();
+        let alchemist = CompoundingBrewers {
+            alchemists: vec![ps[0]],
+            ..Default::default()
+        };
+        let mut round = Round::start(ps.clone(), 50, 0).with_compounding(alchemist);
+        round.apply_wave(
+            &values(),
+            wave(
+                vec![
+                    (ps[0], combo_ing(1, 2, 0), false),
+                    (ps[0], combo_ing(2, 2, 1), false),
+                ],
+                vec![ps[1]],
+            ),
+        );
+        let d = round.depile();
+        let fired: Vec<CompoundingFire> = d.reveals.iter().filter_map(|r| r.compounding).collect();
+        assert_eq!(
+            fired,
+            vec![CompoundingFire::Combo {
+                size: 2,
+                bonus_points: crate::game::compounding::combo_bonus(2),
+                bonus_volatility: crate::game::brewers::ALCHEMIST_COMBO_VOLATILITY,
+            }]
+        );
+        // Climb reflects the +2 combo volatility: 2 + (2 + 2) = 6.
+        assert_eq!(d.reveals.last().unwrap().running_volatility, 6);
     }
 }

@@ -41,6 +41,10 @@ mod tests {
             color: Color::Ruby,
             volatility: 5,
             points: 3,
+            compounding: Some(Compounding::CountThreshold {
+                past: 5,
+                per_card: 1,
+            }),
         }
     }
 
@@ -282,6 +286,7 @@ mod tests {
                     wave_number: 2,
                     running_volatility: 5,
                     liable: true,
+                    compounding: Some(CompoundingFire::Threshold { bonus_points: 2 }),
                 }],
                 exploded: true,
                 boiling_point: 24,

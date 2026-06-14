@@ -32,7 +32,7 @@ Combo-added volatility flows through the **same** effective value the combat cor
 
 | Principle | Compliance |
 |---|---|
-| **I — Server-authoritative** | The server evaluates thresholds (public count), combos (both halves present), and effective-volatility recomputation; the client only renders what the depile narrates. No compounding logic is client-side. |
+| **I — Server-authoritative** | The server evaluates thresholds (public count), combos (all members of a named 2–5 set present), and effective-volatility recomputation; the client only renders what the depile narrates. No compounding logic is client-side. |
 | **II — Agent-driven** | Compounding is ingredient data + server evaluation; the harness stress-tests snowball and dead-draw rates headlessly. |
 | **III — Start simple** | Sequenced **last**; ships the **legible** classes (count-threshold, combo-bonus) and **caps/gates** the snowball-prone one; explicitly keeps reach-in effects out of ingredients. **Rejected simpler alternative:** no compounding — but that leaves the Bramble/Honey buckets and three Brewers (Herbalist/Distiller/Alchemist) without teeth, and drops the "brewing chemistry" the design wants. |
 | **IV — Playtest-driven** | All magnitudes `[needs playtesting]`; the harness validates no color-synergy snowball, combos remain bonuses (no dead-draw penalty), and the threshold values reward big/late pots without trivializing safe-treasure. |
@@ -40,5 +40,5 @@ Combo-added volatility flows through the **same** effective value the combat cor
 ## Risks / Migration
 
 - **Hidden-pot legibility:** content-based synergy is opaque; the cap/Peek-gate and the depile narration (showing what fired) are the mitigations.
-- **Dead-draw feel-bad:** enforced away by the bonus-not-requirement rule; the harness measures lone-half frequency.
+- **Dead-draw feel-bad:** enforced away by the bonus-not-requirement rule; the harness measures lone-combo-member frequency.
 - **Detonator surprises:** combo-added volatility can shift liability; acceptable and intended (the Alchemist Brewer weaponizes exactly this), but the depile must explain it.

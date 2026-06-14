@@ -66,6 +66,7 @@ impl Pantry {
                     color,
                     volatility: def.volatility,
                     points: def.points,
+                    compounding: None,
                 });
                 *next_id += 1;
             }

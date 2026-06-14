@@ -1,0 +1,38 @@
+# boom2-compounding balance sample (Principle IV). Three cells:
+#  - baseline: a mixed field with no pinned archetype (random drafts surface
+#    Bramble/Honey sometimes — the ambient compounding rate).
+#  - chemist-field: one Chemist (Bramble+Honey+Sage) vs the field — does the
+#    synergy hunt over- or under-perform, and how often do combos connect?
+#  - chemist-mirror: four Chemists — the maximum compounding pressure, where the
+#    snowball smell would fire if magnitudes are too hot.
+root_seed = 20260613
+
+[[cells]]
+name = "baseline-mixed"
+games = 600
+seats = [
+    { brain = "bot", archetype = "aggressive" },
+    { brain = "bot", archetype = "cautious" },
+    { brain = "bot", archetype = "political" },
+    { brain = "bot", archetype = "random" },
+]
+
+[[cells]]
+name = "chemist-vs-field"
+games = 600
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "chemist" },
+    { brain = "bot", archetype = "aggressive", deck_archetype = "warlord" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "fortress" },
+    { brain = "bot", archetype = "political", deck_archetype = "kingmaker" },
+]
+
+[[cells]]
+name = "chemist-mirror"
+games = 600
+seats = [
+    { brain = "bot", archetype = "cautious", deck_archetype = "chemist" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "chemist" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "chemist" },
+    { brain = "bot", archetype = "cautious", deck_archetype = "chemist" },
+]
