@@ -1,0 +1,88 @@
+# Benchmarking suite (change `boom2-benchmarking`): the per-`main`-merge job.
+#
+# Benchmarks MEASURE; tests gate. This is a separate, post-merge workflow on
+# `main` — it is NOT a required check and cannot block a PR, a merge, or a deploy
+# (D1). Each run plays the criterion engine suite alone on a pinned runner type,
+# extracts the estimates + confidence bounds into one JSON record, appends it to
+# the orphan `bench-data` branch (D5), and republishes the single self-contained
+# dashboard. It rides `boom2-delivery`'s pipeline once that lands (and can switch
+# the dashboard to that pipeline's static hosting); until then it is plain.
+name: Bench
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialize history appends so concurrent merges never race the `bench-data`
+# branch — and never cancel, so every merge's record lands.
+concurrency:
+  group: bench-data
+  cancel-in-progress: false
+
+# Append-only write to the orphan history branch; nothing else.
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  bench:
+    name: Engine benchmarks
+    # Pinned runner type: criterion wall-clock trends are only comparable across
+    # records from the same hardware class (D2). Keep this label stable — a change
+    # is a level shift in every trend at once, so note it if you ever must.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: bench
+
+      # Run the suite alone (no other load on the runner) and without plots — the
+      # per-bench estimates.json the collector reads is written regardless.
+      - name: Run criterion engine suite
+        run: cargo bench -p boiling-point-server --bench engine -- --noplot
+
+      # Extract one record, append it to the orphan bench-data branch, and
+      # re-render the dashboard from the full history + any study reports.
+      - name: Append history record and render dashboard
+        run: |
+          set -euo pipefail
+          git config user.name "bench-bot"
+          git config user.email "bench-bot@users.noreply.github.com"
+          SHA="$(git rev-parse --short HEAD)"
+
+          # Check out (or create) the orphan history branch in a worktree.
+          if git ls-remote --exit-code --heads origin bench-data >/dev/null 2>&1; then
+            git fetch origin bench-data
+            git worktree add -B bench-data bench-data origin/bench-data
+          else
+            git worktree add --detach bench-data
+            git -C bench-data checkout --orphan bench-data
+            git -C bench-data rm -rf . >/dev/null 2>&1 || true
+          fi
+          mkdir -p bench-data/criterion bench-data/studies
+
+          cargo run -q -p boiling-point-bench-dashboard --bin bench_dashboard -- \
+            collect --criterion-dir target/criterion --commit "$SHA" \
+            --out "bench-data/criterion/$SHA.json"
+          cargo run -q -p boiling-point-bench-dashboard --bin bench_dashboard -- \
+            render --history bench-data/criterion --studies bench-data/studies \
+            --out bench-data/benches.html
+
+          git -C bench-data add -A
+          git -C bench-data commit -m "bench: $SHA" || { echo "no change to record"; exit 0; }
+          git -C bench-data push origin HEAD:bench-data
+
+      # Publish the dashboard as a build artifact (static hosting via the delivery
+      # pipeline once `boom2-delivery` lands — decided there).
+      - name: Publish dashboard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benches-html
+          path: bench-data/benches.html
+          if-no-files-found: warn

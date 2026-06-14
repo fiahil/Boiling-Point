@@ -9,7 +9,7 @@
 # excluded, not members; see archive/README.md for the revival recipe.
 [workspace]
 resolver = "2"
-members = ["protocol", "server", "clients/ai"]
+members = ["protocol", "server", "clients/ai", "bench/balance-study", "bench/dashboard"]
 exclude = ["archive"]
 
 [workspace.package]

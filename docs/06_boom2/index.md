@@ -28,7 +28,8 @@ bot harness that delivered the combat-core derivation (since returned to
 `archive/bot-harness/`). Change
 [`boom2-benchmarking`](../../openspec/changes/boom2-benchmarking/) folds its runs into
 the benchmarking suite as the **balance study** instrument — on-demand, purely
-observational — alongside the criterion server benchmarks.)
+observational — alongside the criterion server benchmarks; the suite now lives at
+[`bench/`](../../bench/README.md) + `server/benches/`.)
 
 ## Design → the boom2 core changes
 

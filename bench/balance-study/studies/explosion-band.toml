@@ -1,0 +1,33 @@
+# Example balance study (change `boom2-benchmarking`, capability `balance-study`).
+#
+# A study is question-driven: a knob changed, or a degenerate strategy is
+# suspected. Run it on demand —
+#
+#   make bench-study STUDY=bench/balance-study/studies/explosion-band.toml
+#
+# — and read the report (target/bench/studies/*.md, or on the dashboard). The run
+# is purely observational: off-target numbers are flagged for a human, never gated.
+
+name = "explosion-band"
+question = "does the BP 31-43 window hold the ~45% explosion target across personas and Brewers?"
+
+# Knob values under test: omit `content_config` to study the embedded default
+# content, or point it at a tuned content TOML to study a knob change.
+# content_config = "server/content.toml"
+
+[sample]
+# Root of the deterministic RNG tree (root -> cell -> game -> seat).
+root_seed = 770_424
+
+# One mixed-archetype cell. Add cells (and per-seat `brewer` / `deck_archetype`
+# preferences) to sweep the persona x Brewer x deck-archetype matrix; the report
+# aggregates per actual pick, so every cell contributes matrix signal.
+[[sample.cells]]
+name = "mixed-field"
+games = 2000
+seats = [
+    { brain = "bot", archetype = "aggressive" },
+    { brain = "bot", archetype = "cautious" },
+    { brain = "bot", archetype = "political" },
+    { brain = "bot", archetype = "random" },
+]
