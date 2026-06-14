@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::account::{AccountCredential, OAuthProvider};
+use crate::account::AccountCredential;
 use crate::ids::{CardId, EmoteId, GroupCode};
 use crate::vocab::{Brewer, Recipe, SpellTarget};
 
@@ -44,14 +44,19 @@ pub type ProtocolVersion = u16;
 /// Decks are realized server-side from the recipes and stay hidden, owner
 /// included.
 /// v8: the identity stack (`boom2-identity`) — persistent accounts as an
-/// additive upgrade. Entry messages may carry an optional
-/// [`AccountCredential`] to **sign in** (adopt an account's durable player id);
-/// in-session [`ClientMessage::CreateDeviceAccount`] /
-/// [`ClientMessage::LinkOAuth`] **upgrade** the current anonymous identity. The
-/// server confirms with [`crate::server::ServerMessage::AccountEstablished`]
-/// and reports the FFA rating via
-/// [`crate::server::ServerMessage::RatingUpdate`]. Anonymous play stays the
-/// default — every account field is optional and may be omitted.
+/// additive upgrade. Entry messages may carry an optional [`AccountCredential`]
+/// to **sign in** — a device token, an OAuth provider identity
+/// (Google/Apple/Microsoft/Discord), or a passkey (pseudonym + WebAuthn
+/// assertion). Same provider identity ⇒ same account (portable); one account is
+/// bound to one identity (no provider linking). In-session
+/// [`ClientMessage::CreateDeviceAccount`] upgrades the current identity to a
+/// device account, [`ClientMessage::RegisterPasskey`] creates a passkey account,
+/// [`ClientMessage::SetDisplayName`] renames it **once**, and
+/// [`ClientMessage::DeleteAccount`] erases it. Accounts carry an auto-assigned,
+/// unique, themed display name (never a real name); the server confirms with
+/// [`crate::server::ServerMessage::AccountEstablished`] and reports the FFA
+/// rating via [`crate::server::ServerMessage::RatingUpdate`]. Anonymous play
+/// stays the default — every account field is optional and may be omitted.
 pub const PROTOCOL_VERSION: ProtocolVersion = 8;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays
@@ -170,16 +175,29 @@ pub enum ClientMessage {
     /// carrying the durable token to persist. Valid in any state (menu or in a
     /// group); never disrupts the session (the player id is unchanged).
     CreateDeviceAccount,
-    /// **Upgrade** the current identity by linking an **OAuth** account: the
-    /// server verifies the token with the provider and binds the connection's
-    /// existing player id to the resolved account. Replies with
-    /// [`crate::server::ServerMessage::AccountEstablished`] on success.
-    LinkOAuth {
-        /// The provider that issued the token.
-        provider: OAuthProvider,
-        /// The provider-issued access (or id) token to verify.
-        access_token: String,
+    /// Create a **passkey** account from a completed WebAuthn registration: the
+    /// server verifies the attestation, mints an account (auto-named) bound to
+    /// the connection's existing player id, stores the credential, and replies
+    /// with [`crate::server::ServerMessage::AccountEstablished`]. No password,
+    /// no password backup.
+    RegisterPasskey {
+        /// The serialized WebAuthn registration (attestation) to verify.
+        registration: String,
     },
+    /// Change the account's display name — allowed **once**. The server checks
+    /// the name is well-formed and unique, applies it, and locks further
+    /// renames; it replies with an updated
+    /// [`crate::server::ServerMessage::AccountEstablished`], or an error if the
+    /// name is taken/invalid or the one rename was already spent.
+    SetDisplayName {
+        /// The desired new display name.
+        display_name: String,
+    },
+    /// **Delete** the current account: the server erases the account, its rating,
+    /// and its player record (no game history is preserved for it) and replies
+    /// with [`crate::server::ServerMessage::AccountDeleted`]. The connection
+    /// continues as an anonymous player.
+    DeleteAccount,
     /// Liveness keepalive.
     Heartbeat,
 }

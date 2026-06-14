@@ -50,6 +50,10 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
 ] }
+# OIDC id-token (JWT) verification for the OAuth providers (Google/Apple/
+# Microsoft); the `jwk` support decodes the provider JWKS. We verify only —
+# `openidconnect` is the heavier full-flow alternative we don't need.
+jsonwebtoken = "9"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",

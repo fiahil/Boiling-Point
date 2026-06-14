@@ -2247,11 +2247,13 @@ async fn collect_wave(
                             | ClientMessage::FillGroup
                             | ClientMessage::CancelFill
                             | ClientMessage::LeaveGroup
-                            // Account upgrades are handled at the transport layer and
-                            // never reach the group as an Action; covered for
-                            // exhaustiveness (they are not valid wave actions either).
+                            // Account ops are handled at the transport layer and never
+                            // reach the group as an Action; covered for exhaustiveness
+                            // (they are not valid wave actions either).
                             | ClientMessage::CreateDeviceAccount
-                            | ClientMessage::LinkOAuth { .. } => {
+                            | ClientMessage::RegisterPasskey { .. }
+                            | ClientMessage::SetDisplayName { .. }
+                            | ClientMessage::DeleteAccount => {
                                 send_to(
                                     players,
                                     player,

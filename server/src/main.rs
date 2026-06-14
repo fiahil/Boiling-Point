@@ -11,9 +11,8 @@ use std::time::Duration;
 use boiling_point_protocol::AccountId;
 use boiling_point_server::admin::{self, AdminProjection, AdminState, OperatorAuth};
 use boiling_point_server::config::ContentConfig;
-use boiling_point_server::lobby::accounts::{
-    AccountRecord, AccountStore, DisabledOAuthVerifier, HttpOAuthVerifier, OAuthVerifier,
-};
+use boiling_point_server::lobby::accounts::{AccountRecord, AccountStore};
+use boiling_point_server::lobby::verifiers::{OAuthConfig, oauth_verifier};
 use boiling_point_server::lobby::{GroupRegistry, MatchQueue, SessionStore, SkillBased};
 use boiling_point_server::observability;
 use boiling_point_server::persistence;
@@ -142,21 +141,26 @@ async fn main() {
     };
 
     // The identity stack (`boom2-identity`). OAuth is the heaviest dependency and
-    // opt-in: with `BP_OAUTH_ENABLED` unset, OAuth sign-in is disabled (the HTTP
-    // verifier is never constructed) while device-bound and anonymous play work
-    // unchanged. The account and rating stores are shared (one `Arc` each) across
-    // the registry, queue, and transport so identity is consistent everywhere.
-    let oauth_enabled = std::env::var("BP_OAUTH_ENABLED")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let verifier: Arc<dyn OAuthVerifier> = if oauth_enabled {
-        tracing::info!("OAuth sign-in enabled (Google/Discord)");
-        Arc::new(HttpOAuthVerifier::new())
-    } else {
-        tracing::info!("OAuth sign-in disabled (set BP_OAUTH_ENABLED=1 to enable)");
-        Arc::new(DisabledOAuthVerifier)
-    };
-    let accounts = Arc::new(AccountStore::with_verifier(verifier).with_pool(pool.clone()));
+    // opt-in per provider: a provider with no configured client id (`BP_OAUTH_*`)
+    // is disabled, and with none configured the HTTP verifier is never built —
+    // device-bound, passkey, and anonymous play are unaffected. (Passkeys: the
+    // production WebAuthn verifier lands with the web client; until then the
+    // store's passkey verifier is the disabled default.) The account and rating
+    // stores are shared (one `Arc` each) across the registry, queue, and transport
+    // so identity is consistent everywhere.
+    let oauth_config = OAuthConfig::from_env();
+    let mut account_store = AccountStore::new().with_pool(pool.clone());
+    match oauth_verifier(oauth_config) {
+        Some(verifier) => {
+            tracing::info!("OAuth sign-in enabled for the configured providers");
+            account_store = account_store.with_oauth_verifier(verifier);
+        }
+        None => tracing::info!(
+            "OAuth sign-in disabled (configure BP_OAUTH_<PROVIDER>_CLIENT_ID / \
+             BP_OAUTH_DISCORD_ENABLED to enable)"
+        ),
+    }
+    let accounts = Arc::new(account_store);
     let ratings = Arc::new(RatingStore::default());
 
     // Hydrate accounts + ratings from durable storage so identities and skill
@@ -165,14 +169,28 @@ async fn main() {
     if let Some(p) = &pool {
         match persistence::load_accounts(p).await {
             Ok(rows) => {
-                for (id, player_id, kind, device_token, oauth_provider, oauth_subject) in rows {
+                for (
+                    id,
+                    player_id,
+                    kind,
+                    display_name,
+                    renames_remaining,
+                    device_token,
+                    oauth_provider,
+                    oauth_subject,
+                    passkey_credential,
+                ) in rows
+                {
                     accounts.hydrate(AccountRecord {
                         id,
                         player_id,
                         kind,
+                        display_name,
+                        renames_remaining,
                         device_token,
                         oauth_provider,
                         oauth_subject,
+                        passkey_credential,
                     });
                 }
                 tracing::info!(accounts = accounts.len(), "hydrated accounts");

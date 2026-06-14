@@ -157,11 +157,14 @@ pub enum ErrorCode {
     /// The emote id is not in the configured palette.
     InvalidEmote,
     /// A presented account credential could not be verified (bad/expired token,
-    /// or the provider rejected it / OAuth is not configured on this server).
+    /// the provider rejected it / OAuth/passkey is not configured on this
+    /// server, or no account matches a passkey pseudonym).
     AuthFailed,
-    /// An account operation conflicts with existing state (e.g. linking an OAuth
-    /// identity that is already bound to a different account — sign in instead).
-    AccountConflict,
+    /// A requested display name is unavailable — already taken by another
+    /// account, or malformed (length/characters).
+    NameUnavailable,
+    /// The account's single display-name change has already been spent.
+    RenameLocked,
     /// An unexpected server-side error.
     Internal,
 }
@@ -414,11 +417,22 @@ pub enum ServerMessage {
         account_type: AccountType,
         /// The durable player identity now bound to the account.
         player_id: PlayerId,
+        /// The account's current display name — auto-assigned (a unique, themed
+        /// pseudonym; never a real name) and, for a passkey account, its sign-in
+        /// pseudonym. Re-sent after a [`crate::ClientMessage::SetDisplayName`].
+        display_name: String,
+        /// How many display-name changes remain (1 for a fresh account, 0 once
+        /// the single rename is spent).
+        renames_remaining: u8,
         /// The device account token to persist — present **only** for a freshly
         /// minted device-bound account (the one secret the client stores and
-        /// replays). `None` for OAuth and for resuming an existing account.
+        /// replays). `None` for passkey/OAuth and for resuming an existing account.
         account_token: Option<String>,
     },
+    /// Confirms a [`crate::ClientMessage::DeleteAccount`]: the account, its
+    /// rating, and its player record are erased; the connection is now an
+    /// anonymous player again. (private)
+    AccountDeleted,
     /// The connection's current FFA rating readout, sent on account establishment
     /// and after each rated game completes. Only accounts are rated; an
     /// anonymous connection never receives this. (private)
@@ -481,6 +495,7 @@ impl ServerMessage {
                 | ServerMessage::StateSnapshot { .. }
                 | ServerMessage::LeftGroup
                 | ServerMessage::AccountEstablished { .. }
+                | ServerMessage::AccountDeleted
                 | ServerMessage::RatingUpdate { .. }
         )
     }

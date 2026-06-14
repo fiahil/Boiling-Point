@@ -83,14 +83,17 @@ mod tests {
                 session_token: None,
                 account_credential: Some(crate::account::AccountCredential::OAuth {
                     provider: crate::account::OAuthProvider::Google,
-                    access_token: "ya29.fake".into(),
+                    token: "id.token.google".into(),
                 }),
             },
             ClientMessage::CreateDeviceAccount,
-            ClientMessage::LinkOAuth {
-                provider: crate::account::OAuthProvider::Discord,
-                access_token: "disc.fake".into(),
+            ClientMessage::RegisterPasskey {
+                registration: "webauthn.registration".into(),
             },
+            ClientMessage::SetDisplayName {
+                display_name: "gilded-sapphire-moth".into(),
+            },
+            ClientMessage::DeleteAccount,
             ClientMessage::CommitIngredient {
                 card: CardId(7),
                 colorless: false,
@@ -161,14 +164,27 @@ mod tests {
                 account_id: crate::account::AccountId(uuid::Uuid::from_u128(7)),
                 account_type: crate::account::AccountType::DeviceBound,
                 player_id: p,
+                display_name: "simmering-ruby-newt".into(),
+                renames_remaining: 1,
                 account_token: Some("dev-tok-abc".into()),
             },
             ServerMessage::AccountEstablished {
                 account_id: crate::account::AccountId(uuid::Uuid::from_u128(8)),
                 account_type: crate::account::AccountType::OAuth,
                 player_id: p,
+                display_name: "gilded-sapphire-moth".into(),
+                renames_remaining: 0,
                 account_token: None,
             },
+            ServerMessage::AccountEstablished {
+                account_id: crate::account::AccountId(uuid::Uuid::from_u128(9)),
+                account_type: crate::account::AccountType::Passkey,
+                player_id: p,
+                display_name: "volatile-emerald-toad".into(),
+                renames_remaining: 1,
+                account_token: None,
+            },
+            ServerMessage::AccountDeleted,
             ServerMessage::RatingUpdate {
                 rating: crate::account::RatingView {
                     display: 18,

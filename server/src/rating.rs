@@ -223,6 +223,12 @@ impl RatingStore {
         self.ratings.insert(account, StoredRating { skill, games });
     }
 
+    /// Drop an account's in-memory rating (on account deletion; the durable row
+    /// is removed by the account store's deletion transaction).
+    pub fn remove(&self, account: AccountId) {
+        self.ratings.remove(&account);
+    }
+
     /// Apply one finished game's full finishing order to the **accounts** at the
     /// table, in one consistent computation, and return the post-game stored
     /// ratings for each. `ordered` is `(account, finish_rank)` for the rated

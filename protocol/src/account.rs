@@ -31,27 +31,39 @@ impl Default for AccountId {
     }
 }
 
-/// The two account kinds (roadmap "Identity"): the lightest path is a
-/// device-bound anonymous account (a durable token, no credentials); the
-/// portable path is OAuth.
+/// The account kinds (roadmap "Identity"). The lightest path is a device-bound
+/// anonymous account (a durable token, no credentials); the portable paths are a
+/// **passkey** (a pseudonym plus a WebAuthn credential, no password) and
+/// **OAuth**. An account is bound to **one** identity of its kind — there is no
+/// linking a second provider/passkey to the same account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountType {
     /// A durable token tied to one device, with no external credential. Survives
     /// a session on the same device; not portable across devices.
     DeviceBound,
-    /// An OAuth identity (e.g. Google/Discord). Portable: signing in on a new
-    /// device resolves to the same durable identity.
+    /// A passkey (WebAuthn) bound to the account's pseudonym; portable, no
+    /// password and no password backup.
+    Passkey,
+    /// An OAuth identity (one of [`OAuthProvider`]). Portable: signing in on a
+    /// new device with the same provider identity resolves to the same account.
     OAuth,
 }
 
-/// The supported OAuth providers.
+/// The supported OAuth providers. All but Discord are OpenID Connect (verified
+/// by id-token); Discord is plain OAuth2 (verified by a userinfo call). The
+/// server requests **no profile scopes** and never reads a real name or email —
+/// only the provider's stable subject id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OAuthProvider {
-    /// Google sign-in.
+    /// Google sign-in (OIDC).
     Google,
-    /// Discord sign-in.
+    /// Apple sign-in (OIDC; id-token only — Apple has no userinfo endpoint).
+    Apple,
+    /// Microsoft sign-in (OIDC).
+    Microsoft,
+    /// Discord sign-in (OAuth2; userinfo via `users/@me`).
     Discord,
 }
 
@@ -60,9 +72,19 @@ impl OAuthProvider {
     pub fn label(self) -> &'static str {
         match self {
             OAuthProvider::Google => "google",
+            OAuthProvider::Apple => "apple",
+            OAuthProvider::Microsoft => "microsoft",
             OAuthProvider::Discord => "discord",
         }
     }
+
+    /// Every supported provider (for enumeration in config/admin surfaces).
+    pub const ALL: [OAuthProvider; 4] = [
+        OAuthProvider::Google,
+        OAuthProvider::Apple,
+        OAuthProvider::Microsoft,
+        OAuthProvider::Discord,
+    ];
 }
 
 /// A credential a client presents (optionally) on an entry message to **sign in**
@@ -77,13 +99,25 @@ pub enum AccountCredential {
         /// The durable device account token.
         account_token: String,
     },
-    /// Sign in with an OAuth access token; the server verifies it with the
-    /// provider and resolves (or creates) the matching account.
+    /// Sign in with an OAuth token; the server verifies it with the provider
+    /// (an OIDC id token for Google/Apple/Microsoft, an access token for
+    /// Discord) and resolves (or creates, on first sign-in) the matching
+    /// account by its stable subject. One account per provider identity.
     OAuth {
         /// The provider that issued the token.
         provider: OAuthProvider,
-        /// The provider-issued access (or id) token to verify.
-        access_token: String,
+        /// The token to verify (an id token for OIDC providers, else an access
+        /// token). Only the subject is read — no profile scopes, no real name.
+        token: String,
+    },
+    /// Sign in with a **passkey**: the account's pseudonym plus a WebAuthn
+    /// assertion the server verifies against the stored credential (no
+    /// password). The pseudonym is the account's current display name.
+    Passkey {
+        /// The account's pseudonym (its unique display name) to look up.
+        pseudonym: String,
+        /// The serialized WebAuthn authentication assertion.
+        assertion: String,
     },
 }
 
@@ -118,11 +152,23 @@ mod tests {
             },
             AccountCredential::OAuth {
                 provider: OAuthProvider::Google,
-                access_token: "ya29.fake".into(),
+                token: "id.token.google".into(),
+            },
+            AccountCredential::OAuth {
+                provider: OAuthProvider::Apple,
+                token: "id.token.apple".into(),
+            },
+            AccountCredential::OAuth {
+                provider: OAuthProvider::Microsoft,
+                token: "id.token.ms".into(),
             },
             AccountCredential::OAuth {
                 provider: OAuthProvider::Discord,
-                access_token: "disc.fake".into(),
+                token: "disc.access".into(),
+            },
+            AccountCredential::Passkey {
+                pseudonym: "simmering-ruby-newt".into(),
+                assertion: "webauthn.assertion".into(),
             },
         ];
         for c in creds {

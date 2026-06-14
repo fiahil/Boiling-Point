@@ -8,8 +8,11 @@ pub mod matchmaking;
 pub mod policy;
 pub mod registry;
 pub mod session;
+pub mod verifiers;
 
-pub use accounts::{Account, AccountError, AccountStore, OAuthVerifier, SignInCredential};
+pub use accounts::{
+    Account, AccountError, AccountStore, OAuthVerifier, PasskeyVerifier, SignInCredential,
+};
 pub use group::{GroupCommand, GroupHandle};
 pub use matchmaking::MatchQueue;
 pub use policy::{Candidate, FirstCome, MatchPolicy, SkillBased};

@@ -654,9 +654,12 @@ Mostly per prior decisions; see [server-infrastructure.md](03_architecture/02_se
   queue both ship at launch.
 - **Auth:** anonymous session tokens are the default (per the server doc); the
   client persists its token and replays it so identity (and a held seat) survives
-  a socket drop. A player **may optionally upgrade** to a persistent account
-  (device-bound anonymous or OAuth) without disrupting the session — the account
-  binds the existing player UUID. No account is required to play.
+  a socket drop. A player **may optionally upgrade** to a persistent account —
+  **device-bound** (a token), a **passkey** (pseudonym + WebAuthn, no password),
+  or **OAuth** (Google/Apple/Microsoft/Discord) — without disrupting the session.
+  Privacy-first: accounts hold **no email and no real name**, every account gets
+  an auto-assigned themed pseudonym (changeable once), and players can delete
+  their account. No account is required to play.
 - **Landed in v2** (change `boom2-identity`): player **rating** (an FFA
   Weng-Lin/TrueSkill-family model, *not* Elo), **persistent accounts**, and a
   **skill-based matchmaking** policy on the same queue (first-come fallback for

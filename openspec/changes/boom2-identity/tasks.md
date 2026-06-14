@@ -26,3 +26,12 @@
 
 - [x] 5.1 Bot-harness rated-population simulation: rating convergence, cold-start behavior, and match-quality vs queue wait.
 - [x] 5.2 Tune the rating parameters and skill-match tolerance; record results.
+
+## 6. Identity refinements (review)
+
+- [x] 6.1 OAuth providers Google/Apple/Microsoft/Discord; verify OIDC id-tokens (`jsonwebtoken` + JWKS) for the three OIDC providers and a userinfo call for Discord — no profile scopes, read only the subject.
+- [x] 6.2 No conflicts: one identity per account; same provider identity resolves to the same account; never link a second provider; sign-in never errors with a conflict.
+- [x] 6.3 Passkey sign-in (pseudonym + passkey, no password, no password backup) behind a WebAuthn verifier seam (production verifier lands with the web client).
+- [x] 6.4 Auto-assign unique, themed pseudonyms; no email and no real name; allow the display name to change exactly once.
+- [x] 6.5 Account deletion — identity-only erasure (account, rating, player record); shared replays left intact.
+- [x] 6.6 Record the last-login timestamp in the database, updated on every sign-in.

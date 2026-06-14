@@ -10,13 +10,34 @@ this is the human-facing rationale and the Principle-IV tuning record.
 ## What landed
 
 - **Persistent accounts** (`server/src/lobby/accounts.rs`) — an optional upgrade
-  from an anonymous session. Two kinds: a **device-bound anonymous** account (a
-  durable token, no credentials — the lightest path) and an **OAuth** account
-  (Google/Discord — portable across devices). An account *binds* the existing
-  player UUID rather than replacing it, so upgrading never disrupts a session;
-  anonymous play stays the default and the fallback. The in-memory store is
-  authoritative at runtime and writes through to PostgreSQL when a database is
-  configured (hydrated on boot), so the e2e suite needs no DB.
+  from an anonymous session, in **three kinds**: a **device-bound anonymous**
+  account (a durable token, no credentials — the lightest path), a **passkey**
+  account (a pseudonym + a WebAuthn credential, no password and no password
+  backup — portable), and an **OAuth** account (**Google, Apple, Microsoft,
+  Discord** — portable). A device/passkey upgrade *binds* the existing player
+  UUID; an OAuth sign-in adopts the provider's own account. Anonymous play stays
+  the default. The in-memory store is authoritative at runtime and writes
+  through to PostgreSQL when a database is configured (hydrated on boot), so the
+  e2e suite needs no DB.
+  - **Privacy-first:** accounts carry **no email and no real name**. OAuth
+    requests **no profile scopes** and reads only the stable subject; every
+    account is auto-assigned a unique, themed pseudonym (e.g. `simmering-ruby-
+    newt`) that the player may change **once**. An account is bound to **one**
+    identity — there is **no provider linking and no conflicts** (same provider
+    identity ⇒ same account; a new identity ⇒ a fresh account).
+  - **Deletion:** players may delete their account — identity-only erasure (the
+    account, its rating, and its player record); shared anonymous game replays
+    are immutable records and are left intact. The server records each account's
+    **last-login** timestamp.
+  - **Credential verification (`server/src/lobby/verifiers.rs`):** the OIDC
+    providers (Google/Apple/Microsoft) are verified by validating the **id
+    token** (JWT) against the provider's JWKS with `jsonwebtoken` — Apple has no
+    userinfo endpoint, so this is the only option; Discord is verified by a
+    `users/@me` call. Everything sits behind verifier **seams** so the headless
+    tests use stubs (no network). The passkey WebAuthn ceremony (`webauthn-rs` +
+    a server-issued challenge) is client-coupled and lands with the web client
+    (`adopt-pixi-client`); the account model and seam ship here. `openidconnect`
+    is the heavier full-flow alternative we did not need.
 - **FFA rating** (`server/src/rating.rs`) — a **Weng-Lin** Bayesian online rating
   (the Bradley-Terry full-pair model; the TrueSkill family, *not* 2-player Elo),
   so one 4-player finishing order updates all four ratings in a single consistent

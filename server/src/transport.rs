@@ -316,12 +316,8 @@ async fn handle_first_entry(
                 let token = state.sessions.issue(account.player_id);
                 (account.player_id, token, Some(account))
             }
-            Err(AccountError::AuthFailed(msg)) => {
-                send_error(out, ErrorCode::AuthFailed, &msg).await;
-                return None;
-            }
-            Err(AccountError::Conflict) => {
-                send_error(out, ErrorCode::AccountConflict, "account conflict").await;
+            Err(e) => {
+                send_error(out, account_error_code(&e), &account_error_message(&e)).await;
                 return None;
             }
         },
@@ -358,25 +354,41 @@ async fn send_account_intro(
     ratings: &RatingStore,
     account_token: Option<String>,
 ) {
+    let rating = ratings.view(account.id);
     let _ = out
         .send(ServerMessage::AccountEstablished {
             account_id: account.id,
             account_type: account.kind,
             player_id: account.player_id,
+            display_name: account.display_name,
+            renames_remaining: account.renames_remaining,
             account_token,
         })
         .await;
-    let _ = out
-        .send(ServerMessage::RatingUpdate {
-            rating: ratings.view(account.id),
-        })
-        .await;
+    let _ = out.send(ServerMessage::RatingUpdate { rating }).await;
 }
 
-/// Handle an in-session account upgrade (`CreateDeviceAccount` / `LinkOAuth`):
-/// bind the connection's **current** player id to a durable account (never
-/// changing the identity), then confirm + send the rating readout. Errors are
-/// reported and the connection continues anonymously.
+/// The wire error code for an account operation failure.
+fn account_error_code(e: &AccountError) -> ErrorCode {
+    match e {
+        AccountError::AuthFailed(_) => ErrorCode::AuthFailed,
+        AccountError::NameUnavailable => ErrorCode::NameUnavailable,
+        AccountError::RenameLocked => ErrorCode::RenameLocked,
+    }
+}
+
+/// A human-readable message for an account operation failure.
+fn account_error_message(e: &AccountError) -> String {
+    match e {
+        AccountError::AuthFailed(m) => m.clone(),
+        AccountError::NameUnavailable => "that display name is taken or malformed".into(),
+        AccountError::RenameLocked => "you have already used your one display-name change".into(),
+    }
+}
+
+/// Handle an in-session account operation: create a device account, register a
+/// passkey (both **upgrade** the current player id without changing it), rename
+/// once, or delete the account. Errors are reported; the connection continues.
 async fn handle_account_op(
     state: &AppState,
     player: PlayerId,
@@ -387,54 +399,44 @@ async fn handle_account_op(
         ClientMessage::CreateDeviceAccount => {
             match state.accounts.create_device_account(player).await {
                 Ok((account, token)) => {
-                    send_account_intro(out, account, &state.ratings, Some(token)).await;
+                    send_account_intro(out, account, &state.ratings, token).await
                 }
-                Err(AccountError::Conflict) => {
-                    send_error(
-                        out,
-                        ErrorCode::AccountConflict,
-                        "this player already has an account",
-                    )
-                    .await;
-                }
-                Err(AccountError::AuthFailed(msg)) => {
-                    send_error(out, ErrorCode::AuthFailed, &msg).await;
-                }
+                Err(e) => send_error(out, account_error_code(&e), &account_error_message(&e)).await,
             }
         }
-        ClientMessage::LinkOAuth {
-            provider,
-            access_token,
-        } => match state
-            .accounts
-            .link_oauth(player, *provider, access_token)
-            .await
-        {
-            Ok(account) => {
-                send_account_intro(out, account, &state.ratings, None).await;
+        ClientMessage::RegisterPasskey { registration } => {
+            match state.accounts.register_passkey(player, registration).await {
+                Ok(account) => send_account_intro(out, account, &state.ratings, None).await,
+                Err(e) => send_error(out, account_error_code(&e), &account_error_message(&e)).await,
             }
-            Err(AccountError::AuthFailed(msg)) => {
-                send_error(out, ErrorCode::AuthFailed, &msg).await;
+        }
+        ClientMessage::SetDisplayName { display_name } => {
+            match state.accounts.set_display_name(player, display_name).await {
+                // Re-confirm the account with its new name (no token to re-reveal).
+                Ok(account) => send_account_intro(out, account, &state.ratings, None).await,
+                Err(e) => send_error(out, account_error_code(&e), &account_error_message(&e)).await,
             }
-            Err(AccountError::Conflict) => {
-                send_error(
-                    out,
-                    ErrorCode::AccountConflict,
-                    "that account is already linked elsewhere — sign in instead",
-                )
-                .await;
+        }
+        ClientMessage::DeleteAccount => {
+            if let Some(account) = state.accounts.delete_account(player).await {
+                state.ratings.remove(account.id);
             }
-        },
+            // Idempotent: confirm either way (no account ⇒ nothing to erase).
+            let _ = out.send(ServerMessage::AccountDeleted).await;
+        }
         _ => {}
     }
 }
 
-/// Whether a message is an in-session account upgrade (handled regardless of
+/// Whether a message is an in-session account operation (handled regardless of
 /// group binding, never forwarded to a group).
 fn is_account_op(msg: &ClientMessage) -> bool {
     matches!(
         msg,
-        ClientMessage::CreateDeviceAccount | ClientMessage::LinkOAuth { .. }
+        ClientMessage::CreateDeviceAccount
+            | ClientMessage::RegisterPasskey { .. }
+            | ClientMessage::SetDisplayName { .. }
+            | ClientMessage::DeleteAccount
     )
 }
 
@@ -447,10 +449,19 @@ async fn bind_entry(
     session: &Session,
     out: &mpsc::Sender<ServerMessage>,
 ) -> Option<mpsc::Sender<GroupCommand>> {
+    // An accounted player's table name is their account pseudonym (server-owned,
+    // never a real name); only an anonymous player uses the entry display name.
+    let name_for = |entry_name: String| -> String {
+        state
+            .accounts
+            .account_for_player(session.player)
+            .map(|a| a.display_name)
+            .unwrap_or(entry_name)
+    };
     match entry {
         ClientMessage::CreateGroup { display_name, .. } => {
             let (_code, group_tx) = state.groups.create();
-            send_join(out, group_tx, session, display_name).await
+            send_join(out, group_tx, session, name_for(display_name)).await
         }
         ClientMessage::JoinGroup {
             display_name,
@@ -461,7 +472,7 @@ async fn bind_entry(
                 send_error(out, ErrorCode::UnknownGroup, "no such group").await;
                 return None;
             };
-            send_join(out, group_tx, session, display_name).await
+            send_join(out, group_tx, session, name_for(display_name)).await
         }
         ClientMessage::EnqueueMatch { display_name, .. } => {
             // Park until the queue assembles a table and hands back the group (the
@@ -471,7 +482,7 @@ async fn bind_entry(
                 .queue
                 .enqueue(
                     session.player,
-                    display_name,
+                    name_for(display_name),
                     session.token.clone(),
                     out.clone(),
                     notify_tx,
@@ -543,7 +554,9 @@ fn message_kind(msg: &ClientMessage) -> &'static str {
         ClientMessage::CancelFill => "CancelFill",
         ClientMessage::LeaveGroup => "LeaveGroup",
         ClientMessage::CreateDeviceAccount => "CreateDeviceAccount",
-        ClientMessage::LinkOAuth { .. } => "LinkOAuth",
+        ClientMessage::RegisterPasskey { .. } => "RegisterPasskey",
+        ClientMessage::SetDisplayName { .. } => "SetDisplayName",
+        ClientMessage::DeleteAccount => "DeleteAccount",
         ClientMessage::Heartbeat => "Heartbeat",
     }
 }
@@ -1507,6 +1520,118 @@ mod tests {
                 "every account seat received a rating readout for its first rated game"
             );
         }
+    }
+
+    /// Read the next `AccountEstablished`, returning (display_name, renames).
+    async fn next_account(ws: &mut Ws) -> (String, u8) {
+        loop {
+            if let ServerMessage::AccountEstablished {
+                display_name,
+                renames_remaining,
+                ..
+            } = recv(ws).await
+            {
+                return (display_name, renames_remaining);
+            }
+        }
+    }
+
+    /// `boom2-identity`: a fresh account is auto-named (themed, never a real
+    /// name) and may be renamed **once**; the second attempt is locked. Verified
+    /// over the wire.
+    #[tokio::test]
+    async fn display_name_change_is_allowed_once() {
+        let url = start_server().await;
+        let (mut ws, _) = connect_async(url).await.unwrap();
+        send(&mut ws, &create("ignored-entry-name", PROTOCOL_VERSION)).await;
+        while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
+        send(&mut ws, &ClientMessage::CreateDeviceAccount).await;
+        let (auto, renames) = next_account(&mut ws).await;
+        assert_eq!(renames, 1, "a fresh account has its one rename");
+        assert!(
+            auto.split('-').count() >= 3
+                && auto
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+            "auto name is a themed pseudonym: {auto}"
+        );
+
+        // The one rename succeeds and locks.
+        send(
+            &mut ws,
+            &ClientMessage::SetDisplayName {
+                display_name: "spiced-amber-otter".into(),
+            },
+        )
+        .await;
+        let (renamed, left) = next_account(&mut ws).await;
+        assert_eq!(renamed, "spiced-amber-otter");
+        assert_eq!(left, 0, "the single rename is now spent");
+
+        // A second rename is rejected (skip the trailing RatingUpdate readout).
+        send(
+            &mut ws,
+            &ClientMessage::SetDisplayName {
+                display_name: "molten-jade-lynx".into(),
+            },
+        )
+        .await;
+        let locked = loop {
+            match recv(&mut ws).await {
+                ServerMessage::Error {
+                    code: ErrorCode::RenameLocked,
+                    ..
+                } => break true,
+                ServerMessage::RatingUpdate { .. } => continue,
+                other => panic!("expected RenameLocked, got {other:?}"),
+            }
+        };
+        assert!(locked);
+    }
+
+    /// `boom2-identity`: deleting an account erases its identity — the device
+    /// token no longer resolves on a later connection (the connection is rejected
+    /// rather than silently resuming). Verified over the wire.
+    #[tokio::test]
+    async fn account_deletion_erases_the_identity() {
+        let url = start_server().await;
+        let (mut ws, _) = connect_async(url.clone()).await.unwrap();
+        send(&mut ws, &create("solo", PROTOCOL_VERSION)).await;
+        while !matches!(recv(&mut ws).await, ServerMessage::GroupJoined { .. }) {}
+        send(&mut ws, &ClientMessage::CreateDeviceAccount).await;
+        let token = loop {
+            if let ServerMessage::AccountEstablished { account_token, .. } = recv(&mut ws).await {
+                break account_token.expect("device token");
+            }
+        };
+
+        // Delete the account — acknowledged.
+        send(&mut ws, &ClientMessage::DeleteAccount).await;
+        let acked = loop {
+            match recv_opt(&mut ws).await {
+                Some(ServerMessage::AccountDeleted) => break true,
+                Some(_) => continue,
+                None => break false,
+            }
+        };
+        assert!(acked, "deletion is acknowledged");
+        drop(ws);
+
+        // A fresh connection presenting the deleted token is rejected (the
+        // identity is gone; no silent resume).
+        let (mut ws2, _) = connect_async(url).await.unwrap();
+        send(&mut ws2, &create_with_device(&token)).await;
+        let rejected = loop {
+            match recv_opt(&mut ws2).await {
+                Some(ServerMessage::Error {
+                    code: ErrorCode::AuthFailed,
+                    ..
+                }) => break true,
+                Some(_) => continue,
+                None => break false, // closed connection also counts as rejected
+            }
+        };
+        assert!(rejected, "the deleted device token no longer resolves");
     }
 
     use crate::observability::lifecycle::{SpanConsumer, SpanEvent, SpanEventKind};
