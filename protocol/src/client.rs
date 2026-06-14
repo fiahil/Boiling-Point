@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::account::AccountCredential;
 use crate::ids::{CardId, EmoteId, GroupCode};
 use crate::vocab::{Brewer, Recipe, SpellTarget};
 
@@ -42,7 +43,21 @@ pub type ProtocolVersion = u16;
 /// [`crate::server::ServerMessage::RecipesRevealed`] and on the snapshot).
 /// Decks are realized server-side from the recipes and stay hidden, owner
 /// included.
-pub const PROTOCOL_VERSION: ProtocolVersion = 7;
+/// v8: the identity stack (`boom2-identity`) — persistent accounts as an
+/// additive upgrade. Entry messages may carry an optional [`AccountCredential`]
+/// to **sign in** — a device token, an OAuth provider identity
+/// (Google/Apple/Microsoft/Discord), or a passkey (pseudonym + WebAuthn
+/// assertion). Same provider identity ⇒ same account (portable); one account is
+/// bound to one identity (no provider linking). In-session
+/// [`ClientMessage::CreateDeviceAccount`] upgrades the current identity to a
+/// device account, [`ClientMessage::RegisterPasskey`] creates a passkey account,
+/// [`ClientMessage::SetDisplayName`] renames it **once**, and
+/// [`ClientMessage::DeleteAccount`] erases it. Accounts carry an auto-assigned,
+/// unique, themed display name (never a real name); the server confirms with
+/// [`crate::server::ServerMessage::AccountEstablished`] and reports the FFA
+/// rating via [`crate::server::ServerMessage::RatingUpdate`]. Anonymous play
+/// stays the default — every account field is optional and may be omitted.
+pub const PROTOCOL_VERSION: ProtocolVersion = 8;
 
 /// A message from client to server. Enum-tagged so a JSON fallback stays
 /// human-readable for debugging.
@@ -57,6 +72,11 @@ pub enum ClientMessage {
         display_name: String,
         /// Prior session token, to resume an existing identity if presented.
         session_token: Option<String>,
+        /// An optional account credential to **sign in** with: when present and
+        /// valid, the connection adopts the account's durable player id rather
+        /// than the anonymous/session one. Absent ⇒ anonymous (the default).
+        #[serde(default)]
+        account_credential: Option<AccountCredential>,
         /// The invite code of the group to join.
         group_code: GroupCode,
     },
@@ -68,6 +88,10 @@ pub enum ClientMessage {
         display_name: String,
         /// Prior session token, to resume an existing identity if presented.
         session_token: Option<String>,
+        /// An optional account credential to sign in with (see
+        /// [`ClientMessage::JoinGroup`]). Absent ⇒ anonymous (the default).
+        #[serde(default)]
+        account_credential: Option<AccountCredential>,
     },
     /// Enter the auto-match queue to be assembled into a table of four (entry message).
     EnqueueMatch {
@@ -77,6 +101,11 @@ pub enum ClientMessage {
         display_name: String,
         /// Prior session token, to resume an existing identity if presented.
         session_token: Option<String>,
+        /// An optional account credential to sign in with (see
+        /// [`ClientMessage::JoinGroup`]). Signing in before enqueuing is what
+        /// makes a queued player **rated** for skill-based matchmaking.
+        #[serde(default)]
+        account_credential: Option<AccountCredential>,
     },
     /// Commit an ingredient into the current wave (hidden until the wave reveals).
     /// Playing keeps the player active; the ingredient-or-pass choice is mandatory
@@ -140,6 +169,35 @@ pub enum ClientMessage {
     /// state, without closing the socket. The server frees the seat and replies
     /// with [`crate::server::ServerMessage::LeftGroup`].
     LeaveGroup,
+    /// **Upgrade** the current (anonymous) identity to a durable **device-bound**
+    /// account: the server mints an account that binds the connection's existing
+    /// player id and replies with [`crate::server::ServerMessage::AccountEstablished`]
+    /// carrying the durable token to persist. Valid in any state (menu or in a
+    /// group); never disrupts the session (the player id is unchanged).
+    CreateDeviceAccount,
+    /// Create a **passkey** account from a completed WebAuthn registration: the
+    /// server verifies the attestation, mints an account (auto-named) bound to
+    /// the connection's existing player id, stores the credential, and replies
+    /// with [`crate::server::ServerMessage::AccountEstablished`]. No password,
+    /// no password backup.
+    RegisterPasskey {
+        /// The serialized WebAuthn registration (attestation) to verify.
+        registration: String,
+    },
+    /// Change the account's display name — allowed **once**. The server checks
+    /// the name is well-formed and unique, applies it, and locks further
+    /// renames; it replies with an updated
+    /// [`crate::server::ServerMessage::AccountEstablished`], or an error if the
+    /// name is taken/invalid or the one rename was already spent.
+    SetDisplayName {
+        /// The desired new display name.
+        display_name: String,
+    },
+    /// **Delete** the current account: the server erases the account, its rating,
+    /// and its player record (no game history is preserved for it) and replies
+    /// with [`crate::server::ServerMessage::AccountDeleted`]. The connection
+    /// continues as an anonymous player.
+    DeleteAccount,
     /// Liveness keepalive.
     Heartbeat,
 }

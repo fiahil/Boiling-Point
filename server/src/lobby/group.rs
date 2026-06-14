@@ -29,8 +29,10 @@ use boiling_point_protocol::{ClientMessage, GroupCode, PlayerId, ServerMessage};
 
 use crate::config::{ContentConfig, ROUND_COUNT};
 use crate::content::ContentRegistry;
+use crate::rating::RatingStore;
 use crate::session::{self, GameEnd, SeatInfo};
 
+use super::accounts::AccountStore;
 use super::registry::GroupRegistry;
 
 /// Exactly four players to a table. Also the **member cap**: a group holds at most
@@ -165,7 +167,10 @@ impl Standings {
 }
 
 /// Spawn a group task and return a handle to it. `pool` is the optional
-/// persistence pool, threaded to each game's post-game write.
+/// persistence pool, threaded to each game's post-game write; `accounts`/
+/// `ratings` are the shared identity stores, for the post-game rating update and
+/// the fill anchor-rating lookup.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn(
     code: GroupCode,
     groups: Arc<GroupRegistry>,
@@ -173,6 +178,8 @@ pub fn spawn(
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
     pool: Option<PgPool>,
+    accounts: Arc<AccountStore>,
+    ratings: Arc<RatingStore>,
 ) -> GroupHandle {
     let (tx, rx) = mpsc::channel(64);
     tokio::spawn(run(
@@ -184,8 +191,30 @@ pub fn spawn(
         config,
         emote_palette,
         pool,
+        accounts,
+        ratings,
     ));
     GroupHandle { code, tx }
+}
+
+/// The searching group's anchor rating: the mean conservative rating of its
+/// present **members** (guests don't count toward the group's skill), or `None`
+/// if no member has a rated account.
+fn anchor_rating(seats: &[Seat], accounts: &AccountStore, ratings: &RatingStore) -> Option<i32> {
+    let rated: Vec<i32> = seats
+        .iter()
+        .filter(|s| !s.guest)
+        .filter_map(|s| {
+            accounts
+                .account_for_player(s.id)
+                .map(|a| ratings.view(a.id).display)
+        })
+        .collect();
+    if rated.is_empty() {
+        None
+    } else {
+        Some(rated.iter().sum::<i32>() / rated.len() as i32)
+    }
 }
 
 fn public(seats: &[Seat]) -> Vec<PlayerPublic> {
@@ -244,6 +273,8 @@ async fn run_one_game(
     config: &Arc<ContentConfig>,
     emote_palette: &Arc<HashSet<u16>>,
     pool: Option<&PgPool>,
+    accounts: &AccountStore,
+    ratings: &RatingStore,
 ) {
     if *searching {
         groups.close_fill(code);
@@ -282,6 +313,8 @@ async fn run_one_game(
         emote_palette.as_ref(),
         seed,
         pool,
+        accounts,
+        ratings,
     )
     .await;
     standings.record_game(&roster, &winners);
@@ -319,6 +352,8 @@ async fn run(
     config: Arc<ContentConfig>,
     emote_palette: Arc<HashSet<u16>>,
     pool: Option<PgPool>,
+    accounts: Arc<AccountStore>,
+    ratings: Arc<RatingStore>,
 ) {
     let mut seats: Vec<Seat> = Vec::new();
     let mut standings = Standings::default();
@@ -433,6 +468,8 @@ async fn run(
                         &config,
                         &emote_palette,
                         pool.as_ref(),
+                        &accounts,
+                        &ratings,
                     )
                     .await;
                     idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);
@@ -499,6 +536,8 @@ async fn run(
                             &config,
                             &emote_palette,
                             pool.as_ref(),
+                            &accounts,
+                            &ratings,
                         )
                         .await;
                         idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);
@@ -514,8 +553,9 @@ async fn run(
                         && !searching
                     {
                         let needed = TABLE_SIZE - seats.len();
+                        let rating = anchor_rating(&seats, &accounts, &ratings);
                         groups
-                            .open_fill(code.clone(), self_tx.clone(), needed)
+                            .open_fill(code.clone(), self_tx.clone(), needed, rating)
                             .await;
                         searching = true;
                         broadcast(
@@ -558,6 +598,8 @@ async fn run(
                         &config,
                         &emote_palette,
                         pool.as_ref(),
+                        &accounts,
+                        &ratings,
                     )
                     .await;
                     idle.as_mut().reset(Instant::now() + IDLE_TIMEOUT);

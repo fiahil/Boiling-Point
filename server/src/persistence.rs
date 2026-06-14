@@ -121,10 +121,152 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), sqlx::Error> {
         .bind(MIGRATION_LOCK_KEY)
         .execute(&mut *tx)
         .await?;
-    for migration in [include_str!("../migrations/0001_init.sql")] {
+    for migration in [
+        include_str!("../migrations/0001_init.sql"),
+        include_str!("../migrations/0002_accounts_and_ratings.sql"),
+    ] {
         sqlx::raw_sql(migration).execute(&mut *tx).await?;
     }
     tx.commit().await
+}
+
+/// One persisted account row (boot-time hydrate). Tuple-shaped for `query_as`.
+pub type AccountRow = (
+    Uuid,           // id
+    Uuid,           // player_id
+    String,         // kind
+    String,         // display_name
+    i16,            // renames_remaining
+    Option<String>, // device_token
+    Option<String>, // oauth_provider
+    Option<String>, // oauth_subject
+    Option<String>, // passkey_credential
+);
+
+/// Write-through an account on creation (idempotent on the id). Plain arguments
+/// so this layer stays decoupled from the lobby's account types.
+#[allow(clippy::too_many_arguments)]
+pub async fn upsert_account(
+    pool: &PgPool,
+    id: Uuid,
+    player_id: Uuid,
+    kind: &str,
+    display_name: &str,
+    renames_remaining: i16,
+    device_token: Option<&str>,
+    oauth_provider: Option<&str>,
+    oauth_subject: Option<&str>,
+    passkey_credential: Option<&str>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO accounts \
+         (id, player_id, kind, display_name, renames_remaining, device_token, \
+          oauth_provider, oauth_subject, passkey_credential) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(id)
+    .bind(player_id)
+    .bind(kind)
+    .bind(display_name)
+    .bind(renames_remaining)
+    .bind(device_token)
+    .bind(oauth_provider)
+    .bind(oauth_subject)
+    .bind(passkey_credential)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// Persist a display-name change (the one allowed rename).
+pub async fn update_account_name(
+    pool: &PgPool,
+    id: Uuid,
+    display_name: &str,
+    renames_remaining: i16,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE accounts SET display_name = $2, renames_remaining = $3 WHERE id = $1")
+        .bind(id)
+        .bind(display_name)
+        .bind(renames_remaining)
+        .execute(pool)
+        .await
+        .map(|_| ())
+}
+
+/// Touch an account's last-login timestamp on a successful sign-in.
+pub async fn touch_last_login(pool: &PgPool, id: Uuid) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE accounts SET last_login_at = now() WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+}
+
+/// Delete an account (identity-only erasure): its rating, the account row, and
+/// the player record. Shared `game_replays` are immutable anonymous records and
+/// are intentionally left intact. Runs in one transaction.
+pub async fn delete_account(
+    pool: &PgPool,
+    account_id: Uuid,
+    player_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let mut tx: Transaction<'_, Postgres> = pool.begin().await?;
+    sqlx::query("DELETE FROM account_ratings WHERE account_id = $1")
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM accounts WHERE id = $1")
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM players WHERE id = $1")
+        .bind(player_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
+}
+
+/// Load every persisted account (boot-time hydrate).
+pub async fn load_accounts(pool: &PgPool) -> Result<Vec<AccountRow>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT id, player_id, kind, display_name, renames_remaining, device_token, \
+                oauth_provider, oauth_subject, passkey_credential FROM accounts",
+    )
+    .fetch_all(pool)
+    .await
+}
+
+/// Write-through an account's rating after a finished game (upsert).
+pub async fn persist_rating(
+    pool: &PgPool,
+    account_id: Uuid,
+    mu: f64,
+    sigma: f64,
+    games_played: u32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO account_ratings (account_id, mu, sigma, games_played, updated_at) \
+         VALUES ($1, $2, $3, $4, now()) \
+         ON CONFLICT (account_id) DO UPDATE \
+         SET mu = EXCLUDED.mu, sigma = EXCLUDED.sigma, \
+             games_played = EXCLUDED.games_played, updated_at = now()",
+    )
+    .bind(account_id)
+    .bind(mu)
+    .bind(sigma)
+    .bind(games_played as i32)
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// Load every persisted rating (boot-time hydrate). Returns rows as
+/// `(account_id, mu, sigma, games_played)`.
+pub async fn load_ratings(pool: &PgPool) -> Result<Vec<(Uuid, f64, f64, i32)>, sqlx::Error> {
+    sqlx::query_as("SELECT account_id, mu, sigma, games_played FROM account_ratings")
+        .fetch_all(pool)
+        .await
 }
 
 /// Persist a completed game — the anonymous player records and the consolidated

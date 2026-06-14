@@ -19,6 +19,7 @@ pub mod headless;
 pub mod lobby;
 pub mod observability;
 pub mod persistence;
+pub mod rating;
 pub mod replay;
 pub mod session;
 pub mod transport;

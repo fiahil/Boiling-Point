@@ -41,6 +41,19 @@ metrics = "0.24"
 metrics-exporter-prometheus = "0.16"
 rmp-serde = { workspace = true }
 sha2 = "0.10"
+# Dyn-compatible async trait for the OAuth verifier seam (the verifier awaits a
+# provider HTTP call; the default verifier and tests stay network-free).
+async-trait = "0.1"
+# The production OAuth verifier's provider HTTP calls (rustls: no system
+# OpenSSL, matching sqlx). Only constructed when OAuth is configured.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+# OIDC id-token (JWT) verification for the OAuth providers (Google/Apple/
+# Microsoft); the `jwk` support decodes the provider JWKS. We verify only —
+# `openidconnect` is the heavier full-flow alternative we don't need.
+jsonwebtoken = "9"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio",
     "tls-rustls",

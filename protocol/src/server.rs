@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::account::{AccountId, AccountType, RatingView};
 use crate::frame::PendingDecision;
 use crate::ids::{EmoteId, GroupCode, PlayerId};
 use crate::vocab::{
@@ -155,6 +156,15 @@ pub enum ErrorCode {
     StaleFrame,
     /// The emote id is not in the configured palette.
     InvalidEmote,
+    /// A presented account credential could not be verified (bad/expired token,
+    /// the provider rejected it / OAuth/passkey is not configured on this
+    /// server, or no account matches a passkey pseudonym).
+    AuthFailed,
+    /// A requested display name is unavailable — already taken by another
+    /// account, or malformed (length/characters).
+    NameUnavailable,
+    /// The account's single display-name change has already been spent.
+    RenameLocked,
     /// An unexpected server-side error.
     Internal,
 }
@@ -396,6 +406,40 @@ pub enum ServerMessage {
     /// Acknowledges a `LeaveGroup`: the seat is freed and the connection is now in
     /// the unbound menu state, ready for another entry message. (private)
     LeftGroup,
+    /// Confirms that a durable account is now bound to this connection — from an
+    /// entry-time sign-in, a `CreateDeviceAccount`, or a `LinkOAuth`. The
+    /// connection's player identity is `player_id` (unchanged on an upgrade;
+    /// adopted from the account on a sign-in). (private)
+    AccountEstablished {
+        /// The durable account id.
+        account_id: AccountId,
+        /// The account kind.
+        account_type: AccountType,
+        /// The durable player identity now bound to the account.
+        player_id: PlayerId,
+        /// The account's current display name — auto-assigned (a unique, themed
+        /// pseudonym; never a real name) and, for a passkey account, its sign-in
+        /// pseudonym. Re-sent after a [`crate::ClientMessage::SetDisplayName`].
+        display_name: String,
+        /// How many display-name changes remain (1 for a fresh account, 0 once
+        /// the single rename is spent).
+        renames_remaining: u8,
+        /// The device account token to persist — present **only** for a freshly
+        /// minted device-bound account (the one secret the client stores and
+        /// replays). `None` for passkey/OAuth and for resuming an existing account.
+        account_token: Option<String>,
+    },
+    /// Confirms a [`crate::ClientMessage::DeleteAccount`]: the account, its
+    /// rating, and its player record are erased; the connection is now an
+    /// anonymous player again. (private)
+    AccountDeleted,
+    /// The connection's current FFA rating readout, sent on account establishment
+    /// and after each rated game completes. Only accounts are rated; an
+    /// anonymous connection never receives this. (private)
+    RatingUpdate {
+        /// The account's current rating.
+        rating: RatingView,
+    },
     /// The group is searching matchmaking for more players to fill the table
     /// ("looking for a 4th…"). (broadcast)
     GroupSearching {
@@ -450,6 +494,9 @@ impl ServerMessage {
                 | ServerMessage::GroupJoined { .. }
                 | ServerMessage::StateSnapshot { .. }
                 | ServerMessage::LeftGroup
+                | ServerMessage::AccountEstablished { .. }
+                | ServerMessage::AccountDeleted
+                | ServerMessage::RatingUpdate { .. }
         )
     }
 

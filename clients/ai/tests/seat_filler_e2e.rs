@@ -53,6 +53,8 @@ async fn start_server() -> String {
         queue,
         conn_timeout: Duration::from_secs(60),
         pool: None,
+        accounts: Default::default(),
+        ratings: Default::default(),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

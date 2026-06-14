@@ -436,6 +436,8 @@ async fn run_cell_websocket(
         queue,
         conn_timeout: Duration::from_secs(60),
         pool: None,
+        accounts: Default::default(),
+        ratings: Default::default(),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -462,7 +464,7 @@ async fn run_cell_websocket(
                 None => EntryMode::Create,
                 Some(code) => EntryMode::Join(code.clone()),
             };
-            let joined = enter(&mut conn, &mode, &seat_spec.brain.label(), None).await?;
+            let joined = enter(&mut conn, &mode, &seat_spec.brain.label(), None, None).await?;
             if seat_index == 0 {
                 group_code = Some(joined.group_code.clone());
             }

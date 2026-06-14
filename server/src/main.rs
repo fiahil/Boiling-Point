@@ -8,10 +8,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use boiling_point_protocol::AccountId;
 use boiling_point_server::admin::{self, AdminProjection, AdminState, OperatorAuth};
 use boiling_point_server::config::ContentConfig;
-use boiling_point_server::lobby::{GroupRegistry, MatchQueue, SessionStore};
+use boiling_point_server::lobby::accounts::{AccountRecord, AccountStore};
+use boiling_point_server::lobby::verifiers::{OAuthConfig, oauth_verifier};
+use boiling_point_server::lobby::{GroupRegistry, MatchQueue, SessionStore, SkillBased};
 use boiling_point_server::observability;
+use boiling_point_server::persistence;
+use boiling_point_server::rating::{RatingStore, Skill};
 use boiling_point_server::transport::{AppState, app};
 use clap::Parser;
 
@@ -135,8 +140,92 @@ async fn main() {
         }
     };
 
-    let groups = Arc::new(GroupRegistry::new(registry, config).with_pool(pool.clone()));
-    let queue = Arc::new(MatchQueue::new(groups.clone()));
+    // The identity stack (`boom2-identity`). OAuth is the heaviest dependency and
+    // opt-in per provider: a provider with no configured client id (`BP_OAUTH_*`)
+    // is disabled, and with none configured the HTTP verifier is never built —
+    // device-bound, passkey, and anonymous play are unaffected. (Passkeys: the
+    // production WebAuthn verifier lands with the web client; until then the
+    // store's passkey verifier is the disabled default.) The account and rating
+    // stores are shared (one `Arc` each) across the registry, queue, and transport
+    // so identity is consistent everywhere.
+    let oauth_config = OAuthConfig::from_env();
+    let mut account_store = AccountStore::new().with_pool(pool.clone());
+    match oauth_verifier(oauth_config) {
+        Some(verifier) => {
+            tracing::info!("OAuth sign-in enabled for the configured providers");
+            account_store = account_store.with_oauth_verifier(verifier);
+        }
+        None => tracing::info!(
+            "OAuth sign-in disabled (configure BP_OAUTH_<PROVIDER>_CLIENT_ID / \
+             BP_OAUTH_DISCORD_ENABLED to enable)"
+        ),
+    }
+    let accounts = Arc::new(account_store);
+    let ratings = Arc::new(RatingStore::default());
+
+    // Hydrate accounts + ratings from durable storage so identities and skill
+    // survive a restart. Best effort: a load failure logs and leaves the stores
+    // empty (anonymous play is unaffected).
+    if let Some(p) = &pool {
+        match persistence::load_accounts(p).await {
+            Ok(rows) => {
+                for (
+                    id,
+                    player_id,
+                    kind,
+                    display_name,
+                    renames_remaining,
+                    device_token,
+                    oauth_provider,
+                    oauth_subject,
+                    passkey_credential,
+                ) in rows
+                {
+                    accounts.hydrate(AccountRecord {
+                        id,
+                        player_id,
+                        kind,
+                        display_name,
+                        renames_remaining,
+                        device_token,
+                        oauth_provider,
+                        oauth_subject,
+                        passkey_credential,
+                    });
+                }
+                tracing::info!(accounts = accounts.len(), "hydrated accounts");
+            }
+            Err(e) => tracing::error!(error = %e, "failed to load accounts"),
+        }
+        match persistence::load_ratings(p).await {
+            Ok(rows) => {
+                for (account_id, mu, sigma, games) in rows {
+                    ratings.seed(
+                        AccountId(account_id),
+                        Skill { mu, sigma },
+                        games.max(0) as u32,
+                    );
+                }
+                tracing::info!(rated = ratings.len(), "hydrated ratings");
+            }
+            Err(e) => tracing::error!(error = %e, "failed to load ratings"),
+        }
+    }
+
+    let groups = Arc::new(
+        GroupRegistry::new(registry, config)
+            .with_pool(pool.clone())
+            .with_identity(accounts.clone(), ratings.clone()),
+    );
+    // Skill-based matchmaking (capability `lobby-and-matchmaking`): the queue uses
+    // the skill policy, which groups rated players by skill and falls back to
+    // first-come for unrated play (so anonymous matchmaking is unchanged).
+    let queue = Arc::new(MatchQueue::with_identity(
+        groups.clone(),
+        Arc::new(SkillBased),
+        accounts.clone(),
+        ratings.clone(),
+    ));
     // Wire the queue back into the registry so groups can request matchmaking fill.
     groups.set_queue(&queue);
 
@@ -177,6 +266,8 @@ async fn main() {
         queue,
         conn_timeout: Duration::from_secs(cli.conn_timeout_secs),
         pool,
+        accounts,
+        ratings,
     };
 
     let addr = cli.ws_addr;

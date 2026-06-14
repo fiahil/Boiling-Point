@@ -226,6 +226,8 @@ async fn a_seeded_boom_appears_in_spans_and_the_boom_rate_metric() {
     }
     drop(cmd_tx);
     let palette: HashSet<u16> = HashSet::new();
+    let accounts = boiling_point_server::lobby::accounts::AccountStore::new();
+    let ratings = boiling_point_server::rating::RatingStore::default();
     let group_span = tracing::info_span!("group.lifetime", group.code = "BOOM-E2E");
     let _ = tokio::time::timeout(
         Duration::from_secs(60),
@@ -238,6 +240,8 @@ async fn a_seeded_boom_appears_in_spans_and_the_boom_rate_metric() {
             &palette,
             SEED,
             None,
+            &accounts,
+            &ratings,
         )
         .instrument(group_span),
     )

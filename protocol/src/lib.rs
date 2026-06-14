@@ -9,6 +9,7 @@
 //! [`server::ServerMessage::Depile`] (which reveals it **every** round, boom and
 //! safe, per the boom2 combat core).
 
+pub mod account;
 pub mod client;
 pub mod codec;
 pub mod frame;
@@ -16,6 +17,7 @@ pub mod ids;
 pub mod server;
 pub mod vocab;
 
+pub use account::{AccountCredential, AccountId, AccountType, OAuthProvider, RatingView};
 pub use client::{ClientMessage, PROTOCOL_VERSION, ProtocolVersion};
 pub use codec::{CodecError, decode, decode_json, encode, encode_json};
 pub use frame::{CastableSpell, PendingDecision, PlayableIngredient, TargetOptions};
@@ -64,18 +66,34 @@ mod tests {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "alice".into(),
                 session_token: None,
+                account_credential: None,
                 group_code: GroupCode("BREW-7K3F".into()),
             },
             ClientMessage::CreateGroup {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "bob".into(),
                 session_token: Some("tok".into()),
+                account_credential: Some(crate::account::AccountCredential::Device {
+                    account_token: "dev-tok".into(),
+                }),
             },
             ClientMessage::EnqueueMatch {
                 protocol_version: PROTOCOL_VERSION,
                 display_name: "cara".into(),
                 session_token: None,
+                account_credential: Some(crate::account::AccountCredential::OAuth {
+                    provider: crate::account::OAuthProvider::Google,
+                    token: "id.token.google".into(),
+                }),
             },
+            ClientMessage::CreateDeviceAccount,
+            ClientMessage::RegisterPasskey {
+                registration: "webauthn.registration".into(),
+            },
+            ClientMessage::SetDisplayName {
+                display_name: "gilded-sapphire-moth".into(),
+            },
+            ClientMessage::DeleteAccount,
             ClientMessage::CommitIngredient {
                 card: CardId(7),
                 colorless: false,
@@ -142,6 +160,38 @@ mod tests {
                 }],
             },
             ServerMessage::LeftGroup,
+            ServerMessage::AccountEstablished {
+                account_id: crate::account::AccountId(uuid::Uuid::from_u128(7)),
+                account_type: crate::account::AccountType::DeviceBound,
+                player_id: p,
+                display_name: "simmering-ruby-newt".into(),
+                renames_remaining: 1,
+                account_token: Some("dev-tok-abc".into()),
+            },
+            ServerMessage::AccountEstablished {
+                account_id: crate::account::AccountId(uuid::Uuid::from_u128(8)),
+                account_type: crate::account::AccountType::OAuth,
+                player_id: p,
+                display_name: "gilded-sapphire-moth".into(),
+                renames_remaining: 0,
+                account_token: None,
+            },
+            ServerMessage::AccountEstablished {
+                account_id: crate::account::AccountId(uuid::Uuid::from_u128(9)),
+                account_type: crate::account::AccountType::Passkey,
+                player_id: p,
+                display_name: "volatile-emerald-toad".into(),
+                renames_remaining: 1,
+                account_token: None,
+            },
+            ServerMessage::AccountDeleted,
+            ServerMessage::RatingUpdate {
+                rating: crate::account::RatingView {
+                    display: 18,
+                    games_played: 3,
+                    provisional: true,
+                },
+            },
             ServerMessage::GroupSearching { needed: 1 },
             ServerMessage::StandingsUpdate {
                 members: vec![MemberStanding {

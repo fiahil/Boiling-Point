@@ -53,6 +53,10 @@ pub struct SeatOutcome {
     pub fallback_illegal: u32,
     /// Errors the server sent this seat (a frame-driven seat expects none).
     pub errors: Vec<String>,
+    /// The latest FFA rating readout the server sent this seat (`boom2-identity`),
+    /// or `None` if the seat played anonymously (no account ⇒ no rating). Updated
+    /// on account establishment and after each rated game.
+    pub rating: Option<boiling_point_protocol::RatingView>,
 }
 
 impl SeatOutcome {
@@ -276,6 +280,12 @@ pub async fn run_seat<C: Connection>(
             }
             ServerMessage::Error { code, message } => {
                 out.errors.push(format!("{code:?}: {message}"));
+            }
+            // The account/rating readout (`boom2-identity`): keep the latest so a
+            // signed-in seat can surface its rating; an anonymous seat never gets
+            // these and leaves `out.rating` as `None`.
+            ServerMessage::RatingUpdate { rating } => {
+                out.rating = Some(rating);
             }
             ServerMessage::GameOver {
                 final_scores,
@@ -511,6 +521,46 @@ mod tests {
             sent.first(),
             Some(ClientMessage::CommitIngredient { .. })
         ));
+    }
+
+    /// `boom2-identity` (task 4.2): a signed-in seat surfaces the server's FFA
+    /// rating readout on its outcome; the post-game `RatingUpdate` is captured
+    /// into `SeatOutcome.rating`. An anonymous seat leaves it `None`.
+    #[tokio::test]
+    async fn seat_captures_the_rating_readout() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = MockConn {
+            inbox: VecDeque::from([
+                ServerMessage::RatingUpdate {
+                    rating: boiling_point_protocol::RatingView {
+                        display: 1180,
+                        games_played: 7,
+                        provisional: false,
+                    },
+                },
+                ServerMessage::GameOver {
+                    final_scores: vec![],
+                    winners: vec![pid(1)],
+                },
+            ]),
+            sent: tx,
+        };
+        let mut brain = Counting(Arc::new(AtomicU32::new(0)));
+        let mut fallback = Counting(Arc::new(AtomicU32::new(0)));
+        let outcome = run_seat(
+            &mut { conn },
+            pid(1),
+            Color::Ruby,
+            &mut brain,
+            &mut fallback,
+            &SeatConfig::default(),
+        )
+        .await
+        .expect("seat runs");
+        let rating = outcome.rating.expect("a signed-in seat carries its rating");
+        assert_eq!(rating.display, 1180);
+        assert_eq!(rating.games_played, 7);
+        assert!(!rating.provisional);
     }
 
     /// A frame refresh for an already-answered decision is not re-acted on.

@@ -18,7 +18,11 @@ v1 deliberately keeps identity minimal — anonymous session tokens, a table-fil
 
 ### D1: Accounts are the unlock, and they are additive
 
-Anonymous sessions remain the default and the fallback. An account *binds* the existing player UUID rather than replacing it, so upgrading never disrupts a session. *Alternative rejected:* mandatory accounts — breaks the "join by invite link, play in seconds" ethos.
+Anonymous sessions remain the default and the fallback. A device or passkey account *binds* the existing player UUID rather than replacing it, so upgrading never disrupts a session; an OAuth sign-in adopts the provider's own account (find-or-create). *Alternative rejected:* mandatory accounts — breaks the "join by invite link, play in seconds" ethos.
+
+### D1a: Privacy-first identity (review)
+
+Accounts carry **no email and no real name**. Three kinds: **device-bound** (durable token), **passkey** (pseudonym + WebAuthn, no password, no password backup), and **OAuth** (Google/Apple/Microsoft/Discord). OAuth requests **no profile scopes** and reads only the stable subject; every account is auto-assigned a unique, themed pseudonym, changeable **once**. An account is bound to **one** identity — no provider linking and **no conflicts** (same provider identity ⇒ same account; a new identity ⇒ a fresh account). Players may **delete** their account (identity-only erasure: account, rating, player record; shared anonymous replays are immutable and left intact). The server records each account's **last-login** timestamp. *Library:* OIDC id-tokens (Google/Apple/Microsoft) are verified with `jsonwebtoken` + the provider JWKS (Apple has no userinfo endpoint); Discord uses a `users/@me` call; passkeys use `webauthn-rs` (the ceremony lands with the web client). `openidconnect` is the heavier full-flow alternative we did not need.
 
 ### D2: FFA rating, not Elo
 

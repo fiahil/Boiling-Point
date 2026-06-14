@@ -513,6 +513,11 @@ impl SeatView {
             | ServerMessage::LeftGroup
             | ServerMessage::Error { .. }
             | ServerMessage::DecisionFrame { .. }
+            // Account/rating readouts (`boom2-identity`) carry no game state the
+            // view models; the seat captures the rating onto its outcome directly.
+            | ServerMessage::AccountEstablished { .. }
+            | ServerMessage::AccountDeleted
+            | ServerMessage::RatingUpdate { .. }
             | ServerMessage::Heartbeat => {}
         }
     }

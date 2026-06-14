@@ -652,12 +652,20 @@ Mostly per prior decisions; see [server-infrastructure.md](03_architecture/02_se
   from solo players and **backfills partial groups** with guests. This works fine on
   anonymous sessions — no rating needed. Invite-link groups and the matchmaking
   queue both ship at launch.
-- **Auth (v1):** anonymous session tokens (per the server doc) — no persistent
-  accounts. The client persists its token and replays it so identity (and a held
-  seat) survives a socket drop.
-- **Deferred to v2:** player **rating** (FFA needs TrueSkill / Weng-Lin, not
-  Elo), **persistent accounts**, and **skill-based matchmaking** that depends on
-  them. See [05_roadmap.md](05_roadmap.md).
+- **Auth:** anonymous session tokens are the default (per the server doc); the
+  client persists its token and replays it so identity (and a held seat) survives
+  a socket drop. A player **may optionally upgrade** to a persistent account —
+  **device-bound** (a token), a **passkey** (pseudonym + WebAuthn, no password),
+  or **OAuth** (Google/Apple/Microsoft/Discord) — without disrupting the session.
+  Privacy-first: accounts hold **no email and no real name**, every account gets
+  an auto-assigned themed pseudonym (changeable once), and players can delete
+  their account. No account is required to play.
+- **Landed in v2** (change `boom2-identity`): player **rating** (an FFA
+  Weng-Lin/TrueSkill-family model, *not* Elo), **persistent accounts**, and a
+  **skill-based matchmaking** policy on the same queue (first-come fallback for
+  unrated play). Rating attaches to accounts only; anonymous participants stay
+  unrated. See [05_roadmap.md](05_roadmap.md) and
+  [03_architecture/05_identity-and-rating.md](03_architecture/05_identity-and-rating.md).
 - **Reconnection:** 60-second grace; a disconnected player **auto-passes (locked
   out)** each wave; full state snapshot on rejoin (only what they're allowed to
   know).
